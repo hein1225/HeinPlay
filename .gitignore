@@ -1,0 +1,25 @@
+# Plan folder contains design docs, reference projects and assets.
+# These should not be tracked by git.
+plan/
+
+# Flutter / Dart build artifacts
+.dart_tool/
+build/
+.packages
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Android signing & local config
+*.jks
+key.properties
+local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
