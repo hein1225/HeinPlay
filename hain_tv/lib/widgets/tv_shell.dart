@@ -62,7 +62,11 @@ class _TvShellState extends State<TvShell> {
   }
 
   Future<void> _checkUpdate() async {
-    await UpdateService.checkAndPrompt(context, silent: true);
+    await UpdateService.checkAndPrompt(
+      context,
+      silent: true,
+      channel: UpdateChannel.domestic,
+    );
   }
 
   void _onNavTap(int index) {

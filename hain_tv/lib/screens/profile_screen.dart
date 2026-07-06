@@ -9,6 +9,7 @@ import '../services/play_record_service.dart';
 import '../services/update_service.dart';
 import '../theme.dart';
 import '../widgets/tv_grid.dart';
+import '../widgets/update_channel_dialog.dart';
 import 'player_screen.dart';
 import 'settings_screen.dart';
 import 'source_loading_screen.dart';
@@ -186,7 +187,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.system_update,
                     title: '检测更新',
                     subtitle: '当前版本 ${UpdateService.currentVersion}',
-                    onTap: () => UpdateService.checkAndPrompt(context),
+                    onTap: () async {
+                      final channel = await showUpdateChannelDialog(context);
+                      if (channel != null && context.mounted) {
+                        await UpdateService.checkAndPrompt(
+                          context,
+                          channel: channel,
+                        );
+                      }
+                    },
                     focusNode: _menuFocusNodes[3],
                   ),
                 ),

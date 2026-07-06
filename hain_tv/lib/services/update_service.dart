@@ -11,54 +11,94 @@ import '../widgets/update_dialog.dart';
 import 'permission_service.dart';
 import 'user_data_service.dart';
 
+enum UpdateChannel {
+  domestic,
+  github,
+}
+
 class UpdateService {
-  static const String _repoReleasesUrl =
+  static const String _domesticReleasesUrl =
+      'https://gitcode.com/api/v5/repos/gcw_QbmhmbO8/HeinPlay/releases/latest';
+  static const String _githubReleasesUrl =
       'https://api.github.com/repos/hein1225/HeinPlay/releases/latest';
   static const String currentVersion = '1.0.0';
 
-  static Future<UpdateInfo?> checkUpdate() async {
-    try {
-      final response = await http.get(
-        Uri.parse(_repoReleasesUrl),
-        headers: {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'HeinPlay-App',
-        },
-      );
-      if (response.statusCode != 200) return null;
+  static String _channelName(UpdateChannel channel) {
+    switch (channel) {
+      case UpdateChannel.domestic:
+        return '国内渠道';
+      case UpdateChannel.github:
+        return 'GitHub 渠道';
+    }
+  }
 
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final tag = (json['tag_name'] as String? ?? '').trim();
-      final latestVersion = tag.toLowerCase().startsWith('v')
-          ? tag.substring(1)
-          : tag;
-      if (latestVersion.isEmpty) return null;
-      if (!_isNewer(latestVersion, currentVersion)) return null;
+  static Future<UpdateInfo?> checkUpdate({
+    UpdateChannel channel = UpdateChannel.domestic,
+  }) async {
+    final url = channel == UpdateChannel.domestic
+        ? _domesticReleasesUrl
+        : _githubReleasesUrl;
+    debugPrint(
+        'UpdateService: 开始检查更新，当前版本 $currentVersion，渠道 ${_channelName(channel)}，URL $url');
 
-      String? apkUrl;
-      final assets = json['assets'] as List<dynamic>? ?? [];
-      for (final asset in assets) {
-        if (asset is! Map<String, dynamic>) continue;
-        final name = (asset['name'] as String? ?? '').toLowerCase();
-        final url = asset['browser_download_url'] as String?;
-        if (name.endsWith('.apk') && url != null && url.isNotEmpty) {
-          apkUrl = url;
-          break;
-        }
-      }
+    final response = await http
+        .get(
+          Uri.parse(url),
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'HeinPlay-App',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
 
-      return UpdateInfo(
-        version: latestVersion,
-        tagName: tag,
-        title: json['name'] as String? ?? tag,
-        body: json['body'] as String? ?? '',
-        htmlUrl: json['html_url'] as String? ??
-            'https://github.com/hein1225/HeinPlay/releases',
-        apkUrl: apkUrl,
-      );
-    } catch (e) {
+    debugPrint(
+        'UpdateService: ${_channelName(channel)} API 状态码 ${response.statusCode}');
+    if (response.statusCode != 200) {
+      throw Exception(
+          '${_channelName(channel)} API 返回 ${response.statusCode}: ${response.body}');
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final tag = (json['tag_name'] as String? ?? '').trim();
+    final latestVersion = tag.toLowerCase().startsWith('v')
+        ? tag.substring(1)
+        : tag;
+    debugPrint('UpdateService: tag=$tag, latestVersion=$latestVersion');
+
+    if (latestVersion.isEmpty) {
+      debugPrint('UpdateService: tag 为空，放弃');
       return null;
     }
+
+    final newer = _isNewer(latestVersion, currentVersion);
+    debugPrint(
+        'UpdateService: latest=$latestVersion, current=$currentVersion, newer=$newer');
+    if (!newer) return null;
+
+    String? apkUrl;
+    final assets = json['assets'] as List<dynamic>? ?? [];
+    debugPrint('UpdateService: assets 数量 ${assets.length}');
+    for (final asset in assets) {
+      if (asset is! Map<String, dynamic>) continue;
+      final name = (asset['name'] as String? ?? '').toLowerCase();
+      final url = asset['browser_download_url'] as String?;
+      debugPrint('UpdateService: asset=$name, url=$url');
+      if (name.endsWith('.apk') && url != null && url.isNotEmpty) {
+        apkUrl = url;
+        break;
+      }
+    }
+    debugPrint('UpdateService: apkUrl=$apkUrl');
+
+    return UpdateInfo(
+      version: latestVersion,
+      tagName: tag,
+      title: json['name'] as String? ?? tag,
+      body: json['body'] as String? ?? '',
+      htmlUrl: json['html_url'] as String? ??
+          'https://github.com/hein1225/HeinPlay/releases',
+      apkUrl: apkUrl,
+    );
   }
 
   static bool _isNewer(String latest, String current) {
@@ -176,8 +216,20 @@ class UpdateService {
   static Future<void> checkAndPrompt(
     BuildContext context, {
     bool silent = false,
+    UpdateChannel channel = UpdateChannel.domestic,
   }) async {
-    final info = await checkUpdate();
+    UpdateInfo? info;
+    try {
+      info = await checkUpdate(channel: channel);
+    } catch (e) {
+      debugPrint('UpdateService: 检查更新失败: $e');
+      if (!silent && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('检查更新失败: $e')),
+        );
+      }
+      return;
+    }
     if (!context.mounted) return;
 
     if (info == null) {
@@ -202,7 +254,11 @@ class UpdateService {
     await showUpdateDialog(
       context,
       info,
-      onDownload: () => downloadAndInstallApk(context, info),
+      onDownload: (onProgress) => downloadAndInstallApk(
+        context,
+        info!,
+        onProgress: onProgress,
+      ),
     );
   }
 }

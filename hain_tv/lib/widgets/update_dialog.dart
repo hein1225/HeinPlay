@@ -7,7 +7,8 @@ import '../theme.dart';
 Future<void> showUpdateDialog(
   BuildContext context,
   UpdateInfo info, {
-  required Future<void> Function() onDownload,
+  required Future<void> Function(void Function(double progress) onProgress)
+      onDownload,
 }) async {
   await showDialog(
     context: context,
@@ -19,9 +20,10 @@ Future<void> showUpdateDialog(
   );
 }
 
-class UpdateDialog extends StatelessWidget {
+class UpdateDialog extends StatefulWidget {
   final UpdateInfo info;
-  final Future<void> Function() onDownload;
+  final Future<void> Function(void Function(double progress) onProgress)
+      onDownload;
 
   const UpdateDialog({
     super.key,
@@ -30,9 +32,40 @@ class UpdateDialog extends StatelessWidget {
   });
 
   @override
+  State<UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<UpdateDialog> {
+  bool _isDownloading = false;
+  double _progress = 0.0;
+
+  Future<void> _startDownload() async {
+    setState(() {
+      _isDownloading = true;
+      _progress = 0.0;
+    });
+
+    try {
+      await widget.onDownload((progress) {
+        if (mounted) {
+          setState(() {
+            _progress = progress;
+          });
+        }
+      });
+    } finally {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final progressText = '${(_progress * 100).toStringAsFixed(1)}%';
+
     return PopScope(
-      canPop: true,
+      canPop: !_isDownloading,
       child: FocusScope(
         autofocus: true,
         child: AlertDialog(
@@ -41,7 +74,7 @@ class UpdateDialog extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
           title: Text(
-            '发现新版本 ${info.version}',
+            '发现新版本 ${widget.info.version}',
             style: const TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 18,
@@ -52,14 +85,63 @@ class UpdateDialog extends StatelessWidget {
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
-              child: Text(
-                info.body.isEmpty ? '暂无更新说明' : info.body,
-                style: const TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  color: AppColors.textSecondary,
-                  height: 1.5,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.info.body.isEmpty ? '暂无更新说明' : widget.info.body,
+                    style: const TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                  if (_isDownloading) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius:
+                                BorderRadius.circular(AppRadius.sm),
+                            child: LinearProgressIndicator(
+                              value: _progress,
+                              backgroundColor: AppColors.bgElevated,
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                AppColors.primary,
+                              ),
+                              minHeight: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        SizedBox(
+                          width: 56,
+                          child: Text(
+                            progressText,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    const Text(
+                      '正在下载安装包，请稍候...',
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -68,6 +150,7 @@ class UpdateDialog extends StatelessWidget {
               children: [
                 Expanded(
                   child: FocusableWidget(
+                    enabled: !_isDownloading,
                     onTap: () => Navigator.of(context).pop(),
                     child: _buildButton(
                       label: '稍后更新',
@@ -79,8 +162,10 @@ class UpdateDialog extends StatelessWidget {
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: FocusableWidget(
+                    enabled: !_isDownloading,
                     onTap: () async {
-                      await UserDataService.saveSkippedVersion(info.version);
+                      await UserDataService.saveSkippedVersion(
+                          widget.info.version);
                       if (context.mounted) {
                         Navigator.of(context).pop();
                       }
@@ -96,11 +181,10 @@ class UpdateDialog extends StatelessWidget {
                 Expanded(
                   child: FocusableWidget(
                     autofocus: true,
-                    onTap: () async {
-                      await onDownload();
-                    },
+                    enabled: !_isDownloading,
+                    onTap: _startDownload,
                     child: _buildButton(
-                      label: '立即更新',
+                      label: _isDownloading ? '下载中...' : '立即更新',
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),
