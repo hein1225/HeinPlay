@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:volume_controller/volume_controller.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../focus/focusable.dart';
 import '../models/play_record.dart';
 import '../models/source_option.dart';
@@ -8,6 +11,8 @@ import '../models/skip_segment.dart';
 import '../models/video_detail.dart';
 import '../player/player_backend_factory.dart';
 import '../player/video_player_backend.dart';
+import '../services/ad_filter_engine.dart';
+import '../services/ad_filter_service.dart';
 import '../services/lunatv_service.dart';
 import '../services/play_record_service.dart';
 import '../services/user_data_service.dart';
@@ -69,6 +74,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   late final FocusScopeNode _bottomControlsFocusNode;
 
+  // 触摸手势状态
+  bool _gestureIndicatorVisible = false;
+  String _gestureIndicatorText = '';
+  IconData _gestureIndicatorIcon = Icons.touch_app;
+  Timer? _gestureIndicatorTimer;
+  bool _isLongPressSeeking = false;
+  String _longPressDirection = 'right';
+  double _currentBrightness = 0.5;
+  double _currentVolume = 0.5;
+  double _gestureStartBrightness = 0.5;
+  double _gestureStartVolume = 0.5;
+  Offset? _gestureStartPosition;
+  double _cumulativeDeltaY = 0.0;
+  double _cumulativeDeltaX = 0.0;
+  static const double _verticalGestureSensitivity = 0.005;
+  static const double _horizontalGestureSensitivity = 0.5;
+
   List<SourceOption> get _sources => widget.sources ?? [];
   bool get _canSwitchSource => _sources.length > 1;
 
@@ -86,6 +108,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _pendingInitialPositionMs = widget.initialPositionMs;
     _loadSkipConfig();
     _initBackend();
+    _initWakelock();
+    _initBrightnessAndVolume();
+    _updateAdFilter();
+  }
+
+  Future<void> _updateAdFilter() async {
+    try {
+      await AdFilterService.checkAndUpdate();
+    } catch (e) {
+      debugPrint('PlayerScreen: 更新去广告配置失败: $e');
+    }
+  }
+
+  Future<void> _initWakelock() async {
+    try {
+      await WakelockPlus.enable();
+      debugPrint('PlayerScreen: 已启用屏幕常亮');
+    } catch (e) {
+      debugPrint('PlayerScreen: 启用屏幕常亮失败: $e');
+    }
+  }
+
+  Future<void> _initBrightnessAndVolume() async {
+    try {
+      _currentBrightness = await ScreenBrightness().application;
+      debugPrint('PlayerScreen: 当前亮度 $_currentBrightness');
+    } catch (e) {
+      debugPrint('PlayerScreen: 获取亮度失败: $e');
+      _currentBrightness = 0.5;
+    }
+    _gestureStartBrightness = _currentBrightness;
+
+    try {
+      _currentVolume = await VolumeController.instance.getVolume();
+      debugPrint('PlayerScreen: 当前音量 $_currentVolume');
+    } catch (e) {
+      debugPrint('PlayerScreen: 获取音量失败: $e');
+      _currentVolume = 0.5;
+    }
+    _gestureStartVolume = _currentVolume;
   }
 
   Future<void> _loadSkipConfig() async {
@@ -226,7 +288,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     Future<bool> tryOpen(String url) async {
       try {
         debugPrint('PlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
-        await _backend?.open(url).timeout(openTimeout);
+        await _backend
+            ?.open(
+              url,
+              proxyMode: _currentVideoDetail.proxyMode,
+            )
+            .timeout(openTimeout);
         debugPrint('PlayerScreen 播放初始化成功 [$_currentPlayerBackend]');
         return true;
       } catch (e, stackTrace) {
@@ -238,7 +305,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final rawUrl = episodes[index];
-    final url = rawUrl.trim();
+    var url = rawUrl.trim();
     if (url.isEmpty) {
       setState(() {
         _error = '播放地址为空';
@@ -246,6 +313,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       return;
     }
+
+    // 对 M3U8 地址应用 LunaTV 去广告过滤
+    final filteredUrl = await AdFilterEngine.filterM3u8(
+      sourceType: _currentVideoDetail.source,
+      originalUrl: url,
+    );
+    if (filteredUrl != null && filteredUrl.isNotEmpty) {
+      url = filteredUrl;
+    }
+
     bool success = await tryOpen(url);
 
     final autoSwitchSource = await UserDataService.getAutoSwitchSource();
@@ -367,7 +444,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
           '自动切换源播放: ${option.title} -> ${newEpisodes[targetEpisodeIndex]}',
         );
         await _backend
-            ?.open(newEpisodes[targetEpisodeIndex])
+            ?.open(
+              newEpisodes[targetEpisodeIndex],
+              proxyMode: _currentVideoDetail.proxyMode,
+            )
             .timeout(Duration(seconds: timeoutSeconds));
         if (mounted) {
           setState(() => _initialized = true);
@@ -406,13 +486,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
+    final previousEpisodeIndex = _currentEpisodeIndex;
+
     _backend?.dispose();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
     _subscriptions.clear();
 
     setState(() {
       _currentVideoDetail = response.data!;
       _currentSourceIndex = index;
-      _currentEpisodeIndex = 0;
+      _currentEpisodeIndex = previousEpisodeIndex.clamp(
+        0,
+        response.data!.episodes.length - 1,
+      );
       _switchingSource = false;
       _skipConfig = null;
       _skippedSegments.clear();
@@ -830,6 +918,134 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  // 触摸手势相关方法
+  void _showGestureIndicator(String text, IconData icon) {
+    setState(() {
+      _gestureIndicatorVisible = true;
+      _gestureIndicatorText = text;
+      _gestureIndicatorIcon = icon;
+    });
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() => _gestureIndicatorVisible = false);
+      }
+    });
+  }
+
+  void _onTapScreen() {
+    _toggleControls();
+  }
+
+  void _onDoubleTapScreen() {
+    _togglePlay();
+    _showGestureIndicator(
+      _playing ? '播放' : '暂停',
+      _playing ? Icons.play_arrow : Icons.pause,
+    );
+  }
+
+  void _onLongPressStart(LongPressStartDetails details) {
+    final width = MediaQuery.of(context).size.width;
+    final isRight = details.globalPosition.dx >= width / 2;
+    _isLongPressSeeking = true;
+    _longPressDirection = isRight ? 'right' : 'left';
+    _showGestureIndicator(
+      isRight ? '3X 快进中' : '3X 快退中',
+      isRight ? Icons.fast_forward : Icons.fast_rewind,
+    );
+    _start3xSeek();
+  }
+
+  void _onLongPressEnd(LongPressEndDetails details) {
+    _isLongPressSeeking = false;
+    _stopLongPressSeek();
+    setState(() => _gestureIndicatorVisible = false);
+  }
+
+  void _start3xSeek() {
+    _longPressSeekTimer?.cancel();
+    _continuousSeekTimer?.cancel();
+    _continuousSeekTimer = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) {
+        if (!_isLongPressSeeking || _backend == null) return;
+        final step = _longPressDirection == 'right' ? _seekStep * 3 : -_seekStep * 3;
+        final target = _position + Duration(seconds: step);
+        _backend?.seek(_clampDuration(target));
+      },
+    );
+  }
+
+  void _onVerticalDragStart(DragStartDetails details) {
+    _gestureStartPosition = details.globalPosition;
+    _gestureStartBrightness = _currentBrightness;
+    _gestureStartVolume = _currentVolume;
+    _cumulativeDeltaY = 0.0;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    if (_gestureStartPosition == null) return;
+    _cumulativeDeltaY -= details.delta.dy;
+    final width = MediaQuery.of(context).size.width;
+    final isLeft = _gestureStartPosition!.dx < width / 2;
+    final delta = _cumulativeDeltaY * _verticalGestureSensitivity;
+
+    if (isLeft) {
+      _currentBrightness = (_gestureStartBrightness + delta).clamp(0.0, 1.0);
+      ScreenBrightness().setApplicationScreenBrightness(_currentBrightness);
+      _showGestureIndicator(
+        '亮度 ${(_currentBrightness * 100).toInt()}%',
+        Icons.brightness_6,
+      );
+    } else {
+      _currentVolume = (_gestureStartVolume + delta).clamp(0.0, 1.0);
+      VolumeController.instance.setVolume(_currentVolume);
+      _showGestureIndicator(
+        '音量 ${(_currentVolume * 100).toInt()}%',
+        _currentVolume > 0 ? Icons.volume_up : Icons.volume_off,
+      );
+    }
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _gestureStartPosition = null;
+    _cumulativeDeltaY = 0.0;
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _gestureIndicatorVisible = false);
+    });
+  }
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    _gestureStartPosition = details.globalPosition;
+    _cumulativeDeltaX = 0.0;
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (_gestureStartPosition == null) return;
+    _cumulativeDeltaX += details.delta.dx;
+    final deltaSeconds = _cumulativeDeltaX * _horizontalGestureSensitivity;
+    final target = _position + Duration(seconds: deltaSeconds.toInt());
+    _showGestureIndicator(
+      '跳转至 ${_formatDuration(_clampDuration(target))}',
+      deltaSeconds >= 0 ? Icons.fast_forward : Icons.fast_rewind,
+    );
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (_gestureStartPosition == null) return;
+    final deltaSeconds = _cumulativeDeltaX * _horizontalGestureSensitivity;
+    final target = _position + Duration(seconds: deltaSeconds.toInt());
+    _backend?.seek(_clampDuration(target));
+    _gestureStartPosition = null;
+    _cumulativeDeltaX = 0.0;
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _gestureIndicatorVisible = false);
+    });
+  }
+
   String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
@@ -911,6 +1127,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
+    _gestureIndicatorTimer?.cancel();
     _bottomControlsFocusNode.dispose();
     for (final sub in _subscriptions) {
       sub.cancel();
@@ -920,6 +1137,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _savePlayRecordToLunaTV();
 
     _backend?.dispose();
+
+    // 退出播放页后允许系统自动休眠/降亮度
+    WakelockPlus.disable().catchError((e) {
+      debugPrint('PlayerScreen: 禁用屏幕常亮失败: $e');
+    });
+
+    // 释放去广告 JS 运行时
+    AdFilterEngine.dispose();
+
     super.dispose();
   }
 
@@ -982,6 +1208,57 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Text('切换播放源中...', style: TextStyle(color: AppColors.textPrimary)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildGestureIndicator() {
+    if (!_gestureIndicatorVisible) return const SizedBox.shrink();
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: AppColors.bgOverlay,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _gestureIndicatorIcon,
+              color: AppColors.textPrimary,
+              size: 32,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              _gestureIndicatorText,
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGestureOverlay() {
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _onTapScreen,
+        onDoubleTap: _onDoubleTapScreen,
+        onLongPressStart: _onLongPressStart,
+        onLongPressEnd: _onLongPressEnd,
+        onVerticalDragStart: _onVerticalDragStart,
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        onHorizontalDragStart: _onHorizontalDragStart,
+        onHorizontalDragUpdate: _onHorizontalDragUpdate,
+        onHorizontalDragEnd: _onHorizontalDragEnd,
+        child: Container(color: Colors.transparent),
       ),
     );
   }
@@ -1340,7 +1617,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
               // 避免 PlatformView 在隐藏控制栏后仍残留影像。
               const Positioned.fill(child: ColoredBox(color: Colors.black)),
               // 视频层：只覆盖实际画面区域，黑边留给我 Flutter 背景。
-              Positioned.fill(child: _buildVideo()),
+              // IgnorePointer 避免 PlatformView 拦截触摸事件，确保手势层能正常工作。
+              Positioned.fill(child: IgnorePointer(child: _buildVideo())),
+              // 错误提示
+              Center(child: _buildError()),
+              // 切换源遮罩
+              _buildSwitchingOverlay(),
+              // 触摸手势层：响应点击、双击、长按、滑动等手势。
+              _buildGestureOverlay(),
               // 控制栏覆盖层：完全不可见时从渲染树/焦点树中彻底移除。
               Visibility(
                 visible: _controlsVisible,
@@ -1367,8 +1651,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
               ),
-              Center(child: _buildError()),
-              _buildSwitchingOverlay(),
+              // 手势操作提示（亮度/音量/进度）
+              _buildGestureIndicator(),
             ],
           ),
         ),

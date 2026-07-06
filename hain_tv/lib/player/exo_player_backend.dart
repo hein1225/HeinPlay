@@ -23,8 +23,14 @@ class ExoPlayerBackend implements VideoPlayerBackend {
     String url, {
     Duration? startAt,
     Map<String, String>? headers,
+    bool proxyMode = false,
   }) =>
-      _impl.open(url, startAt: startAt, headers: headers);
+      _impl.open(
+        url,
+        startAt: startAt,
+        headers: headers,
+        proxyMode: proxyMode,
+      );
 
   @override
   Future<void> play() => _impl.play();

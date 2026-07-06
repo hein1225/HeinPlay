@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../focus/focusable.dart';
+import '../services/ad_filter_service.dart';
 import '../services/cache_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/user_data_service.dart';
@@ -21,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoSwitchSource = true;
   int _autoSwitchSourceTimeout = 15;
   String _m3u8ProxyUrl = '';
+  bool _adFilterEnabled = true;
 
   @override
   void initState() {
@@ -36,6 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final autoSwitchSource = await UserDataService.getAutoSwitchSource();
     final autoSwitchSourceTimeout = await UserDataService.getAutoSwitchSourceTimeout();
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
+    final adFilterEnabled = await AdFilterService.isEnabled();
     setState(() {
       _playerBackend = backend;
       _doubanSource = douban;
@@ -44,6 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _autoSwitchSource = autoSwitchSource;
       _autoSwitchSourceTimeout = autoSwitchSourceTimeout;
       _m3u8ProxyUrl = m3u8ProxyUrl;
+      _adFilterEnabled = adFilterEnabled;
     });
   }
 
@@ -127,6 +131,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setM3u8ProxyUrl(String url) async {
     await UserDataService.saveM3u8ProxyUrl(url);
     setState(() => _m3u8ProxyUrl = url.trim());
+  }
+
+  Future<void> _setAdFilterEnabled(bool value) async {
+    await AdFilterService.setEnabled(value);
+    setState(() => _adFilterEnabled = value);
   }
 
 
@@ -213,6 +222,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           if (_autoSwitchSource) _buildAutoSwitchTimeoutTile(),
           _buildM3u8ProxyTile(),
+          _buildSwitchTile(
+            title: 'M3U8 去广告',
+            subtitle: '播放 M3U8 时自动应用 LunaTV 服务端下发的去广告规则',
+            value: _adFilterEnabled,
+            onChanged: _setAdFilterEnabled,
+          ),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('豆瓣数据源'),
           _buildDoubanSourceTile(),

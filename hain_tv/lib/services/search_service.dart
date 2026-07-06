@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/api_response.dart';
 import '../models/douban_movie.dart';
 import '../models/search_result.dart';
@@ -237,8 +239,8 @@ class SearchService {
     required SourceOption current,
   }) async {
     try {
-      final response = await LunaTVService.search(keyword: keyword)
-          .timeout(const Duration(seconds: 5));
+      // 使用 LunaTV 服务内部配置的超时（8 秒）与重试机制，不再额外限制 5 秒
+      final response = await LunaTVService.search(keyword: keyword);
       if (!response.success || response.data == null) {
         return [current];
       }
@@ -250,6 +252,7 @@ class SearchService {
           .toList();
       return [current, ...others];
     } catch (e) {
+      debugPrint('searchAlternativeSources: 搜索可用源失败 $e');
       return [current];
     }
   }

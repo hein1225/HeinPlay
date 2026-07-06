@@ -9,6 +9,22 @@ const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
+Map<String, String> _refererFor(String url) {
+  try {
+    final uri = Uri.parse(url);
+    if (uri.scheme.startsWith('http')) {
+      final referer = '${uri.scheme}://${uri.host}/';
+      return {
+        'Referer': referer,
+        'Origin': '${uri.scheme}://${uri.host}',
+      };
+    }
+  } catch (_) {
+    // 忽略无效 URL
+  }
+  return {};
+}
+
 class MediaKitBackend implements VideoPlayerBackend {
   late final Player _player;
   late final VideoController _controller;
@@ -45,25 +61,39 @@ class MediaKitBackend implements VideoPlayerBackend {
     String url, {
     Duration? startAt,
     Map<String, String>? headers,
+    bool proxyMode = false,
   }) async {
     String finalUrl = url;
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
     final lowerUrl = url.toLowerCase();
-    if (proxyUrl.isNotEmpty &&
-        (lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/'))) {
+    final needsProxy = proxyMode ||
+        lowerUrl.contains('.m3u8') ||
+        lowerUrl.contains('/hls/');
+    if (proxyUrl.isNotEmpty && needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
     debugPrint('MediaKitBackend open: $finalUrl');
+
     final effectiveHeaders = <String, String>{
       'User-Agent': _defaultUserAgent,
       'Accept': '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      ..._refererFor(url),
       ...?headers,
     };
-    await _player.open(
-      Media(finalUrl, httpHeaders: effectiveHeaders),
-      play: true,
-    );
+
+    try {
+      await _player.open(
+        Media(finalUrl, httpHeaders: effectiveHeaders),
+        play: true,
+      );
+    } catch (e, stackTrace) {
+      debugPrint('MediaKitBackend 打开失败: $finalUrl');
+      debugPrint('错误: $e');
+      debugPrint('$stackTrace');
+      rethrow;
+    }
+
     if (startAt != null && startAt > Duration.zero) {
       await seek(startAt);
     }

@@ -11,6 +11,7 @@ abstract class VideoPlayerBackend {
     String url, {
     Duration? startAt,
     Map<String, String>? headers,
+    bool proxyMode = false,
   });
 
   Future<void> play();

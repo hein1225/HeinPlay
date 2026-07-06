@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import '../models/douban_movie.dart';
 import '../models/play_record.dart';
 import '../services/douban_service.dart';
@@ -147,39 +148,48 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildBanner(),
-          const SizedBox(height: AppSpacing.xl),
-          if (_continueWatching.isNotEmpty)
+    return VisibilityDetector(
+      key: const Key('home_screen'),
+      onVisibilityChanged: (info) {
+        // IndexedStack 中切回首页时刷新继续播放记录
+        if (info.visibleFraction > 0.5) {
+          _loadContinueWatching();
+        }
+      },
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildBanner(),
+            const SizedBox(height: AppSpacing.xl),
+            if (_continueWatching.isNotEmpty)
+              TvHorizontalPosterList(
+                title: '继续播放',
+                items: _toContinueItems(_continueWatching),
+              ),
+            if (_continueWatching.isNotEmpty) const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
-              title: '继续播放',
-              items: _toContinueItems(_continueWatching),
+              title: '热门电影',
+              items: _toPosterItems(_hotMovies, context),
             ),
-          if (_continueWatching.isNotEmpty) const SizedBox(height: AppSpacing.xl),
-          TvHorizontalPosterList(
-            title: '热门电影',
-            items: _toPosterItems(_hotMovies, context),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          TvHorizontalPosterList(
-            title: '热门电视剧',
-            items: _toPosterItems(_hotTvShows, context),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          TvHorizontalPosterList(
-            title: '热门综艺',
-            items: _toPosterItems(_hotShows, context),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          TvHorizontalPosterList(
-            title: '热门动漫',
-            items: _toPosterItems(_hotAnimes, context),
-          ),
-          const SizedBox(height: AppSpacing.xxl),
-        ],
+            const SizedBox(height: AppSpacing.xl),
+            TvHorizontalPosterList(
+              title: '热门电视剧',
+              items: _toPosterItems(_hotTvShows, context),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            TvHorizontalPosterList(
+              title: '热门综艺',
+              items: _toPosterItems(_hotShows, context),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            TvHorizontalPosterList(
+              title: '热门动漫',
+              items: _toPosterItems(_hotAnimes, context),
+            ),
+            const SizedBox(height: AppSpacing.xxl),
+          ],
+        ),
       ),
     );
   }

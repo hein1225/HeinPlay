@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -8,6 +9,22 @@ import 'video_player_backend.dart';
 const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+
+Map<String, String> _refererFor(String url) {
+  try {
+    final uri = Uri.parse(url);
+    if (uri.scheme.startsWith('http')) {
+      final referer = '${uri.scheme}://${uri.host}/';
+      return {
+        'Referer': referer,
+        'Origin': '${uri.scheme}://${uri.host}',
+      };
+    }
+  } catch (_) {
+    // 忽略无效 URL
+  }
+  return {};
+}
 
 class VideoPlayerBackendImpl implements VideoPlayerBackend {
   VideoPlayerController? _controller;
@@ -84,14 +101,17 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     String url, {
     Duration? startAt,
     Map<String, String>? headers,
+    bool proxyMode = false,
   }) async {
     await dispose();
 
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
-    if (proxyUrl.isNotEmpty &&
-        (lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/'))) {
+    final needsProxy = proxyMode ||
+        lowerUrl.contains('.m3u8') ||
+        lowerUrl.contains('/hls/');
+    if (proxyUrl.isNotEmpty && needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
 
@@ -99,38 +119,61 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       'User-Agent': _defaultUserAgent,
       'Accept': '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      ..._refererFor(url),
       ...?headers,
     };
 
-    final isNetwork = url.startsWith('http://') || url.startsWith('https://');
+    final lowerFinalUrl = finalUrl.toLowerCase();
+    final isNetwork = lowerFinalUrl.startsWith('http://') ||
+        lowerFinalUrl.startsWith('https://');
+    final isFile = lowerFinalUrl.startsWith('file://');
+
     VideoFormat? formatHint;
-    if (lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/')) {
+    if (lowerFinalUrl.contains('.m3u8') || lowerFinalUrl.contains('/hls/')) {
       formatHint = VideoFormat.hls;
-    } else if (lowerUrl.contains('.mpd')) {
+    } else if (lowerFinalUrl.contains('.mpd')) {
       formatHint = VideoFormat.dash;
-    } else if (lowerUrl.contains('.ism')) {
+    } else if (lowerFinalUrl.contains('.ism')) {
       formatHint = VideoFormat.ss;
-    } else if (lowerUrl.contains('.mp4') ||
-        lowerUrl.contains('.mkv') ||
-        lowerUrl.contains('.flv') ||
-        lowerUrl.contains('.avi') ||
-        lowerUrl.contains('.mov') ||
-        lowerUrl.contains('.webm')) {
+    } else if (lowerFinalUrl.contains('.mp4') ||
+        lowerFinalUrl.contains('.mkv') ||
+        lowerFinalUrl.contains('.flv') ||
+        lowerFinalUrl.contains('.avi') ||
+        lowerFinalUrl.contains('.mov') ||
+        lowerFinalUrl.contains('.webm')) {
       formatHint = VideoFormat.other;
     }
 
-    _controller = isNetwork
-        ? VideoPlayerController.networkUrl(
-            Uri.parse(finalUrl),
-            httpHeaders: effectiveHeaders,
-            formatHint: formatHint,
-            viewType: VideoViewType.platformView,
-          )
-        : VideoPlayerController.asset(finalUrl);
+    debugPrint('VideoPlayerBackendImpl open: $finalUrl');
+
+    if (isNetwork) {
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(finalUrl),
+        httpHeaders: effectiveHeaders,
+        formatHint: formatHint,
+        viewType: VideoViewType.platformView,
+      );
+    } else if (isFile) {
+      final filePath = Uri.parse(finalUrl).toFilePath();
+      _controller = VideoPlayerController.file(
+        File(filePath),
+        httpHeaders: effectiveHeaders,
+      );
+    } else {
+      _controller = VideoPlayerController.asset(finalUrl);
+    }
 
     _controller!.addListener(_onControllerValueChanged);
 
-    await _controller!.initialize();
+    try {
+      await _controller!.initialize();
+    } catch (e, stackTrace) {
+      debugPrint('VideoPlayerBackendImpl 初始化失败: $finalUrl');
+      debugPrint('错误: $e');
+      debugPrint('$stackTrace');
+      rethrow;
+    }
+
     await _controller!.play();
 
     _durationController.add(_controller!.value.duration);
