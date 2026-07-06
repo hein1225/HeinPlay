@@ -73,6 +73,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isRecordSaveThrottled = false;
 
   late final FocusScopeNode _bottomControlsFocusNode;
+  late final FocusNode _playPauseFocusNode;
+  late final FocusNode _skipFocusNode;
+  late final FocusNode _rootFocusNode;
 
   // 触摸手势状态
   bool _gestureIndicatorVisible = false;
@@ -98,6 +101,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void initState() {
     super.initState();
     _bottomControlsFocusNode = FocusScopeNode();
+    _playPauseFocusNode = FocusNode(debugLabel: 'playPause');
+    _skipFocusNode = FocusNode(debugLabel: 'skip');
+    _rootFocusNode = FocusNode(debugLabel: 'playerRoot');
     _currentVideoDetail = widget.videoDetail;
     _currentEpisodeIndex = widget.episodeIndex;
     _currentSourceIndex = widget.initialSourceIndex.clamp(
@@ -111,6 +117,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _initWakelock();
     _initBrightnessAndVolume();
     _updateAdFilter();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      }
+    });
   }
 
   Future<void> _updateAdFilter() async {
@@ -568,8 +579,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _controlsVisible = true);
     _startControlsTimer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _controlsVisible) {
-        _bottomControlsFocusNode.requestFocus();
+      if (!mounted || !_controlsVisible) return;
+      // 按下键显示控制栏时，优先聚焦“跳过”按钮；不可用则回退到播放/暂停
+      final hasSkipButton =
+          _currentVideoDetail.source.isNotEmpty &&
+          _currentVideoDetail.id.isNotEmpty;
+      if (hasSkipButton && !_skipFocusNode.hasPrimaryFocus) {
+        _skipFocusNode.requestFocus();
+      } else if (!_playPauseFocusNode.hasPrimaryFocus) {
+        _playPauseFocusNode.requestFocus();
       }
     });
   }
@@ -584,17 +602,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     debugPrint('隐藏控制栏: _controlsVisible=$_controlsVisible');
     _controlsTimer?.cancel();
     _controlsTimer = null;
-    // 先释放控制栏焦点，再触发重建，确保隐藏时不会有焦点残留
+    // 仅释放控制栏焦点，避免 unfocus 全局焦点后被平台视图夺走
     _bottomControlsFocusNode.unfocus();
-    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _controlsVisible = false);
-    // 在下一帧确认焦点已回到根 Focus，避免控制栏子树仍被焦点系统持有
+    // 在下一帧把焦点移回根 Focus，保证隐藏控制栏后按键仍能进入 _handleKeyEvent
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       debugPrint(
         '控制栏隐藏后焦点: ${FocusManager.instance.primaryFocus?.debugLabel}',
       );
-      FocusScope.of(context).requestFocus();
+      _rootFocusNode.requestFocus();
     });
   }
 
@@ -918,6 +935,66 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// 全局硬件按键兜底处理。
+  ///
+  /// 当控制栏隐藏、平台视图或其他焦点节点夺走焦点时，根 Focus 的 onKeyEvent
+  /// 可能无法收到事件。此 handler 在 HardwareKeyboard 层面监听，确保遥控器
+  /// 按键始终能响应播放控制。
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    // 只处理按下事件，避免重复触发
+    if (event is! KeyDownEvent) return false;
+
+    // 仅在当前页面位于栈顶时处理，避免影响其他页面/对话框
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+
+    // 控制栏显示时交给焦点系统处理按钮选择
+    if (_controlsVisible) return false;
+
+    debugPrint('HardwareKeyboard 兜底: ${event.logicalKey}');
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.select:
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.mediaPlayPause:
+        _togglePlay();
+        return true;
+      case LogicalKeyboardKey.mediaPlay:
+        _backend?.play();
+        return true;
+      case LogicalKeyboardKey.mediaPause:
+        _backend?.pause();
+        return true;
+      case LogicalKeyboardKey.arrowLeft:
+        _seekBy(Duration(seconds: -_seekStep));
+        _startLongPressSeek('left');
+        return true;
+      case LogicalKeyboardKey.arrowRight:
+        _seekBy(Duration(seconds: _seekStep));
+        _startLongPressSeek('right');
+        return true;
+      case LogicalKeyboardKey.arrowUp:
+        _showControlsWithoutFocusShift();
+        return true;
+      case LogicalKeyboardKey.arrowDown:
+        _showControls();
+        return true;
+      case LogicalKeyboardKey.mediaTrackNext:
+        _nextEpisode();
+        return true;
+      case LogicalKeyboardKey.mediaTrackPrevious:
+        _previousEpisode();
+        return true;
+      case LogicalKeyboardKey.contextMenu:
+      case LogicalKeyboardKey.mediaFastForward:
+      case LogicalKeyboardKey.mediaRewind:
+        _toggleControls();
+        return true;
+      default:
+        return false;
+    }
+  }
+
   // 触摸手势相关方法
   void _showGestureIndicator(String text, IconData icon) {
     setState(() {
@@ -1124,6 +1201,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
@@ -1145,6 +1223,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     // 释放去广告 JS 运行时
     AdFilterEngine.dispose();
+
+    _playPauseFocusNode.dispose();
+    _skipFocusNode.dispose();
+    _rootFocusNode.dispose();
 
     super.dispose();
   }
@@ -1361,6 +1443,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Row(
                   children: [
                     IconButton(
+                      focusNode: _playPauseFocusNode,
                       onPressed: _togglePlay,
                       icon: Icon(
                         _playing ? Icons.pause : Icons.play_arrow,
@@ -1380,6 +1463,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     if (_currentVideoDetail.source.isNotEmpty &&
                         _currentVideoDetail.id.isNotEmpty)
                       FocusableWidget(
+                        focusNode: _skipFocusNode,
                         onTap: _showSkipConfigDialog,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -1606,6 +1690,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _hideControls();
       },
       child: Focus(
+        focusNode: _rootFocusNode,
         autofocus: true,
         onKeyEvent: (_, event) => _handleKeyEvent(event),
         child: Scaffold(
