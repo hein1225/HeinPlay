@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import '../focus/focusable.dart';
 import '../models/skip_segment.dart';
@@ -5,11 +7,15 @@ import '../theme.dart';
 
 class SkipConfigDialog extends StatefulWidget {
   final List<SkipSegment> segments;
+  final Duration Function() getCurrentPosition;
+  final Duration duration;
   final ValueChanged<List<SkipSegment>>? onSave;
 
   const SkipConfigDialog({
     super.key,
     required this.segments,
+    required this.getCurrentPosition,
+    required this.duration,
     this.onSave,
   });
 
@@ -27,15 +33,63 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
   }
 
   void _addSegment(String type) {
+    final position = widget.getCurrentPosition();
+    final seconds = position.inMilliseconds / 1000.0;
+    final totalSeconds = widget.duration.inMilliseconds / 1000.0;
+
     setState(() {
-      _segments.add(SkipSegment(
-        start: 0,
-        end: 0,
-        type: type,
-        title: type == 'opening' ? '片头' : '片尾',
-        autoSkip: true,
-        autoNextEpisode: type == 'ending',
-      ));
+      final existingIndex = _segments.indexWhere((s) => s.type == type);
+      if (type == 'opening') {
+        // 片头结束时间不能超过片尾开始时间，避免一跳就进片尾导致直接下一集
+        final ending = _segments.cast<SkipSegment?>().firstWhere(
+              (s) => s?.type == 'ending',
+              orElse: () => null,
+            );
+        var endSeconds = min(seconds, totalSeconds);
+        if (ending != null) {
+          endSeconds = min(endSeconds, max(0.0, ending.start - 1.0));
+        }
+        final segment = SkipSegment(
+          start: 0,
+          end: endSeconds,
+          type: 'opening',
+          title: '片头',
+          autoSkip: true,
+          autoNextEpisode: false,
+        );
+        if (existingIndex >= 0) {
+          _segments[existingIndex] = segment;
+        } else {
+          _segments.add(segment);
+        }
+      } else {
+        // 片尾开始时间不能早于片头结束时间
+        final opening = _segments.cast<SkipSegment?>().firstWhere(
+              (s) => s?.type == 'opening',
+              orElse: () => null,
+            );
+        var startSeconds = max(0.0, seconds);
+        if (opening != null) {
+          startSeconds = max(startSeconds, opening.end + 1.0);
+        }
+        startSeconds = min(startSeconds, totalSeconds);
+        final segment = SkipSegment(
+          start: startSeconds,
+          end: totalSeconds,
+          type: 'ending',
+          title: '片尾',
+          autoSkip: true,
+          autoNextEpisode: true,
+          remainingTime: totalSeconds > startSeconds
+              ? totalSeconds - startSeconds
+              : 0,
+        );
+        if (existingIndex >= 0) {
+          _segments[existingIndex] = segment;
+        } else {
+          _segments.add(segment);
+        }
+      }
     });
   }
 
@@ -48,24 +102,19 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
   }
 
   String _formatSeconds(double seconds) {
-    final m = seconds ~/ 60;
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
     final s = (seconds % 60).toInt();
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
-
-  double _parseSeconds(String text) {
-    final parts = text.split(':');
-    if (parts.length == 2) {
-      final m = int.tryParse(parts[0]) ?? 0;
-      final s = int.tryParse(parts[1]) ?? 0;
-      return (m * 60 + s).toDouble();
+    if (h > 0) {
+      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     }
-    return double.tryParse(text) ?? 0;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       backgroundColor: AppColors.bgApp,
       title: const Text(
         '跳过片头片尾',
@@ -76,17 +125,18 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
           color: AppColors.textPrimary,
         ),
       ),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                FocusableWidget(
-                  autofocus: true,
-                  onTap: () => _addSegment('opening'),
+      content: FocusScope(
+        autofocus: true,
+        child: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  FocusableWidget(
+                    onTap: () => _addSegment('opening'),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
@@ -209,18 +259,12 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
             ),
           ],
         ),
+        ),
       ),
     );
   }
 
   Widget _buildSegmentEditor(int index, SkipSegment segment) {
-    final startController = TextEditingController(
-      text: _formatSeconds(segment.start),
-    );
-    final endController = TextEditingController(
-      text: _formatSeconds(segment.end),
-    );
-
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Container(
@@ -255,34 +299,13 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildTimeField(
-                    label: '开始',
-                    controller: startController,
-                    onChanged: (value) {
-                      _updateSegment(
-                        index,
-                        segment.copyWith(start: _parseSeconds(value)),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: _buildTimeField(
-                    label: '结束',
-                    controller: endController,
-                    onChanged: (value) {
-                      _updateSegment(
-                        index,
-                        segment.copyWith(end: _parseSeconds(value)),
-                      );
-                    },
-                  ),
-                ),
-              ],
+            Text(
+              '${_formatSeconds(segment.start)} - ${_formatSeconds(segment.end)}',
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
@@ -295,61 +318,22 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                     segment.copyWith(autoSkip: value),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
-                _buildToggle(
-                  label: '自动下一集',
-                  value: segment.autoNextEpisode,
-                  onChanged: (value) => _updateSegment(
-                    index,
-                    segment.copyWith(autoNextEpisode: value),
+                if (segment.type == 'ending') ...[
+                  const SizedBox(width: AppSpacing.md),
+                  _buildToggle(
+                    label: '自动下一集',
+                    value: segment.autoNextEpisode,
+                    onChanged: (value) => _updateSegment(
+                      index,
+                      segment.copyWith(autoNextEpisode: value),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildTimeField({
-    required String label,
-    required TextEditingController controller,
-    required ValueChanged<String> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontFamily: 'NotoSansSC',
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        TextField(
-          controller: controller,
-          onChanged: onChanged,
-          style: const TextStyle(
-            fontFamily: 'NotoSansSC',
-            color: AppColors.textPrimary,
-          ),
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: AppColors.bgSurface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
-            ),
-          ),
-        ),
-      ],
     );
   }
 

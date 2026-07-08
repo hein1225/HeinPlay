@@ -93,4 +93,44 @@ class PlayRecordService {
       searchTitle: r.title,
     );
   }
+
+  /// 删除多条播放记录（本地 + 远程）。
+  static Future<void> deleteByKeys(List<String> keys) async {
+    final localRecords = await local.LocalStorageService.getPlayHistory();
+    final remaining = localRecords
+        .where((r) => !keys.contains('${r.source}+${r.id}'))
+        .toList();
+    await local.LocalStorageService.setPlayHistory(remaining);
+
+    for (final key in keys) {
+      unawaited(_deleteRemote(key));
+    }
+  }
+
+  /// 清空所有播放记录（本地 + 远程）。
+  static Future<void> clear() async {
+    await local.LocalStorageService.clearPlayHistory();
+
+    try {
+      final response = await LunaTVService.getPlayRecords();
+      if (response.success && response.data != null) {
+        for (final key in response.data!.keys) {
+          unawaited(_deleteRemote(key));
+        }
+      }
+    } catch (e) {
+      debugPrint('清空远程播放记录失败: $e');
+    }
+  }
+
+  static Future<void> _deleteRemote(String key) async {
+    try {
+      final response = await LunaTVService.deletePlayRecord(key);
+      if (!response.success) {
+        debugPrint('删除远程播放记录失败: ${response.message}');
+      }
+    } catch (e) {
+      debugPrint('删除远程播放记录异常: $e');
+    }
+  }
 }

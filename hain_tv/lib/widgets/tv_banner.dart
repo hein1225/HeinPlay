@@ -12,6 +12,8 @@ class TvBanner extends StatelessWidget {
   final VoidCallback? onFavorite;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
+  final FocusNode? playFocusNode;
+  final FocusOnKeyEventCallback? onPlayKeyEvent;
 
   const TvBanner({
     super.key,
@@ -22,6 +24,8 @@ class TvBanner extends StatelessWidget {
     this.onFavorite,
     this.onPrevious,
     this.onNext,
+    this.playFocusNode,
+    this.onPlayKeyEvent,
   });
 
   Widget _buildBackground() {
@@ -52,10 +56,14 @@ class TvBanner extends StatelessWidget {
     required VoidCallback? onTap,
     bool primary = true,
     bool autofocus = false,
+    FocusNode? focusNode,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) {
     return FocusableWidget(
       autofocus: autofocus,
+      focusNode: focusNode,
       onTap: onTap,
+      onKeyEvent: onKeyEvent,
       child: Container(
         height: 48,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
@@ -151,6 +159,8 @@ class TvBanner extends StatelessWidget {
                       onTap: onPlay,
                       primary: true,
                       autofocus: true,
+                      focusNode: playFocusNode,
+                      onKeyEvent: onPlayKeyEvent,
                     ),
                     const SizedBox(width: AppSpacing.md),
                     _buildActionButton(

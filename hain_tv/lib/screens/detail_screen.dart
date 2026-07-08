@@ -10,7 +10,9 @@ import '../models/video_detail.dart';
 import '../player/video_player_backend.dart';
 import '../services/douban_service.dart';
 import '../services/hain_tv_cache_manager.dart';
+import '../services/local_storage_service.dart' as local;
 import '../services/lunatv_service.dart';
+import '../services/profile_refresh_notifier.dart';
 import '../services/search_service.dart';
 import '../services/user_data_service.dart';
 import '../theme.dart';
@@ -380,7 +382,27 @@ class _DetailScreenState extends State<DetailScreen> {
       cover: widget.poster ?? _doubanDetails?.poster ?? '',
       sourceName: _currentSource.sourceName,
     );
-    await LunaTVService.toggleFavorite(key: key, favorite: favorite);
+
+    try {
+      final added = await LunaTVService.toggleFavorite(key: key, favorite: favorite);
+      final record = local.FavoriteRecord(
+        source: source,
+        id: id,
+        title: widget.title,
+        posterUrl: widget.poster ?? _doubanDetails?.poster,
+        year: widget.year,
+        createdAt: DateTime.now(),
+      );
+      if (added) {
+        await local.LocalStorageService.addFavorite(record);
+      } else {
+        await local.LocalStorageService.removeFavorite(source, id);
+      }
+      ProfileRefreshNotifier.instance.notify();
+    } catch (e) {
+      debugPrint('切换收藏失败: $e');
+    }
+
     await _loadFavoriteStatus();
   }
 

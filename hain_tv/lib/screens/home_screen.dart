@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import '../models/douban_movie.dart';
@@ -5,7 +7,6 @@ import '../models/play_record.dart';
 import '../services/douban_service.dart';
 import '../services/play_record_service.dart';
 import '../theme.dart';
-import '../widgets/tv_banner.dart';
 import '../widgets/tv_grid.dart';
 import 'detail_screen.dart';
 import 'source_loading_screen.dart';
@@ -14,10 +15,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   String? _error;
 
@@ -27,10 +28,39 @@ class _HomeScreenState extends State<HomeScreen> {
   List<DoubanMovie> _hotAnimes = [];
   List<PlayRecord> _continueWatching = [];
 
+  late final FocusNode _continueFirstFocusNode;
+  late final FocusNode _hotMoviesFirstFocusNode;
+  late final FocusNode _hotTvFirstFocusNode;
+  late final FocusNode _hotShowsFirstFocusNode;
+  late final FocusNode _hotAnimesFirstFocusNode;
+
   @override
   void initState() {
     super.initState();
+    _continueFirstFocusNode = FocusNode(debugLabel: 'homeContinueFirst');
+    _hotMoviesFirstFocusNode = FocusNode(debugLabel: 'homeHotMoviesFirst');
+    _hotTvFirstFocusNode = FocusNode(debugLabel: 'homeHotTvFirst');
+    _hotShowsFirstFocusNode = FocusNode(debugLabel: 'homeHotShowsFirst');
+    _hotAnimesFirstFocusNode = FocusNode(debugLabel: 'homeHotAnimesFirst');
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _continueFirstFocusNode.dispose();
+    _hotMoviesFirstFocusNode.dispose();
+    _hotTvFirstFocusNode.dispose();
+    _hotShowsFirstFocusNode.dispose();
+    _hotAnimesFirstFocusNode.dispose();
+    super.dispose();
+  }
+
+  void focusFirstContent() {
+    if (_continueWatching.isNotEmpty) {
+      _continueFirstFocusNode.requestFocus();
+    } else {
+      _hotMoviesFirstFocusNode.requestFocus();
+    }
   }
 
   Future<void> _loadData() async {
@@ -116,21 +146,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
-  Widget _buildBanner() {
-    final bannerMovie = _hotMovies.isNotEmpty ? _hotMovies.first : null;
-    if (bannerMovie == null) return const SizedBox.shrink();
-
-    return TvBanner(
-      title: bannerMovie.title,
-      overview: null,
-      backdropUrl: bannerMovie.poster,
-      onPlay: () => _openDetail(context, bannerMovie),
-      onFavorite: () {
-        // TODO: 加入收藏
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -160,32 +175,46 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildBanner(),
             const SizedBox(height: AppSpacing.xl),
             if (_continueWatching.isNotEmpty)
               TvHorizontalPosterList(
                 title: '继续播放',
                 items: _toContinueItems(_continueWatching),
+                firstItemFocusNode: _continueFirstFocusNode,
+                onMoveDown: () => _hotMoviesFirstFocusNode.requestFocus(),
               ),
             if (_continueWatching.isNotEmpty) const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
               title: '热门电影',
               items: _toPosterItems(_hotMovies, context),
+              firstItemFocusNode: _hotMoviesFirstFocusNode,
+              onMoveUp: _continueWatching.isNotEmpty
+                  ? () => _continueFirstFocusNode.requestFocus()
+                  : null,
+              onMoveDown: () => _hotTvFirstFocusNode.requestFocus(),
             ),
             const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
               title: '热门电视剧',
               items: _toPosterItems(_hotTvShows, context),
+              firstItemFocusNode: _hotTvFirstFocusNode,
+              onMoveUp: () => _hotMoviesFirstFocusNode.requestFocus(),
+              onMoveDown: () => _hotShowsFirstFocusNode.requestFocus(),
             ),
             const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
               title: '热门综艺',
               items: _toPosterItems(_hotShows, context),
+              firstItemFocusNode: _hotShowsFirstFocusNode,
+              onMoveUp: () => _hotTvFirstFocusNode.requestFocus(),
+              onMoveDown: () => _hotAnimesFirstFocusNode.requestFocus(),
             ),
             const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
               title: '热门动漫',
               items: _toPosterItems(_hotAnimes, context),
+              firstItemFocusNode: _hotAnimesFirstFocusNode,
+              onMoveUp: () => _hotShowsFirstFocusNode.requestFocus(),
             ),
             const SizedBox(height: AppSpacing.xxl),
           ],

@@ -51,10 +51,10 @@ class CategoryScreen extends StatefulWidget {
   });
 
   @override
-  State<CategoryScreen> createState() => _CategoryScreenState();
+  State<CategoryScreen> createState() => CategoryScreenState();
 }
 
-class _CategoryScreenState extends State<CategoryScreen> {
+class CategoryScreenState extends State<CategoryScreen> {
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
@@ -243,6 +243,16 @@ class _CategoryScreenState extends State<CategoryScreen> {
     // 延迟加载数据，等待页面可见
   }
 
+  void focusFilterButton() {
+    _filterButtonFocusNode.requestFocus();
+  }
+
+  void _focusFirstPoster() {
+    if (_posterFocusNodes.isNotEmpty) {
+      _posterFocusNodes.first.requestFocus();
+    }
+  }
+
   void _createFilterFocusNodes() {
     for (final dimension in _dimensions) {
       _dimensionFocusNodes.putIfAbsent(dimension.key, () => FocusNode());
@@ -314,7 +324,23 @@ class _CategoryScreenState extends State<CategoryScreen> {
     String dimensionKey,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    final dimensions = _dimensions;
+    final index = dimensions.indexWhere((d) => d.key == dimensionKey);
+    if (index == -1) return KeyEventResult.ignored;
+
+    // 手动处理上下键焦点移动，避免 ListView 默认遍历在 TV 遥控器短按上键时失效
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp && index > 0) {
+      final prevKey = dimensions[index - 1].key;
+      _dimensionFocusNodes[prevKey]?.requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+        index < dimensions.length - 1) {
+      final nextKey = dimensions[index + 1].key;
+      _dimensionFocusNodes[nextKey]?.requestFocus();
+      return KeyEventResult.handled;
+    }
     if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
       // 先切换右侧为当前维度对应的选项，确保选项 Widget 已加入树后再请求焦点
       setState(() => _selectedDimension = dimensionKey);
@@ -327,7 +353,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
   }
 
   KeyEventResult _handleOptionKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       _dimensionFocusNodes[_selectedDimension]?.requestFocus();
       return KeyEventResult.handled;
@@ -388,37 +414,42 @@ class _CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowLeft:
-        // 第一列按左键返回到顶部筛选按钮，避免焦点丢失
         if (index % crossAxisCount == 0) {
-          _filterButtonFocusNode.requestFocus();
-          return KeyEventResult.handled;
+          if (index == 0) {
+            // 海报墙第一个海报按左键返回到顶部筛选按钮
+            _filterButtonFocusNode.requestFocus();
+          } else {
+            // 其他行第一列按左键跳到上一行最后一列
+            _focusPosterIndex(index - 1, crossAxisCount);
+          }
+        } else {
+          _focusPosterIndex(index - 1, crossAxisCount);
         }
-        _focusPosterIndex(index - 1, crossAxisCount);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowRight:
         if (index < _posterFocusNodes.length - 1) {
           _focusPosterIndex(index + 1, crossAxisCount);
-          return KeyEventResult.handled;
         }
-        return KeyEventResult.ignored;
+        // 在最后一个海报消费右键，防止默认遍历跳到海报墙外部
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
         // 第一行按上键返回到顶部筛选按钮
         if (index < crossAxisCount) {
           _filterButtonFocusNode.requestFocus();
-          return KeyEventResult.handled;
+        } else {
+          _focusPosterIndex(index - crossAxisCount, crossAxisCount);
         }
-        _focusPosterIndex(index - crossAxisCount, crossAxisCount);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowDown:
         if (index + crossAxisCount < _posterFocusNodes.length) {
           _focusPosterIndex(index + crossAxisCount, crossAxisCount);
-          return KeyEventResult.handled;
         }
-        return KeyEventResult.ignored;
+        // 在最后一行消费下键，防止默认遍历跳到海报墙外部
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.escape:
         // 返回键从海报墙返回到顶部筛选按钮
@@ -644,7 +675,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
 
     // TV 遥控器返回键统一交给 PopScope/BackInterceptor 处理，
     // 这里仅保留键盘 Escape 的兜底关闭，避免与系统返回事件重复响应。
@@ -684,11 +715,20 @@ class _CategoryScreenState extends State<CategoryScreen> {
 }
 
 KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
       if (_categoryTagFocusNodes.isNotEmpty) {
         _categoryTagFocusNodes.first.requestFocus();
       }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _focusFirstPoster();
+      return KeyEventResult.handled;
+    }
+    // 左键在筛选按钮上无内部移动，消费掉避免默认遍历跳到其他区域；
+    // 上键继续冒泡，由 TvShell 回到顶部导航栏。
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -752,7 +792,7 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       if (index > 0) {
         _categoryTagFocusNodes[index - 1].requestFocus();
@@ -765,6 +805,10 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
       if (index < _categoryTagFocusNodes.length - 1) {
         _categoryTagFocusNodes[index + 1].requestFocus();
       }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _focusFirstPoster();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -922,7 +966,7 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
   }
 
   KeyEventResult _handleFilterPanelKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
     // TV 遥控器返回键统一交给 TvShell 的 PopScope + BackInterceptor 处理，
     // 防止 Focus 先关闭面板后 PopScope 再次触发，导致 BackInterceptor 看到 _filterPanelOpen=false 而弹出退出框。
     if (event.logicalKey == LogicalKeyboardKey.escape) {

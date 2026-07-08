@@ -28,6 +28,12 @@ class _TvShellState extends State<TvShell> {
   int _selectedIndex = 2;
   final List<FocusNode> _navFocusNodes = [];
   bool _exitDialogShowing = false;
+  final _searchScreenKey = GlobalKey<SearchScreenState>();
+  final _homeScreenKey = GlobalKey<HomeScreenState>();
+  final _movieScreenKey = GlobalKey<CategoryScreenState>();
+  final _tvScreenKey = GlobalKey<CategoryScreenState>();
+  final _showScreenKey = GlobalKey<CategoryScreenState>();
+  final _animeScreenKey = GlobalKey<CategoryScreenState>();
 
   final List<_NavItem> _items = const [
     _NavItem(label: '我的', icon: Icons.person_outline),
@@ -108,6 +114,34 @@ class _TvShellState extends State<TvShell> {
           case LogicalKeyboardKey.arrowRight:
             _moveNavFocus(1);
             return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowDown:
+            // 从顶部导航栏按下键时，将焦点直接移动到当前页面的首个输入区域，
+            // 避免 ReadingOrderTraversalPolicy 在 IndexedStack 的隐藏页面中找不到焦点。
+            if (index == 1) {
+              _searchScreenKey.currentState?.requestSearchBoxFocus();
+              return KeyEventResult.handled;
+            }
+            if (index == 2) {
+              _homeScreenKey.currentState?.focusFirstContent();
+              return KeyEventResult.handled;
+            }
+            if (index == 3) {
+              _movieScreenKey.currentState?.focusFilterButton();
+              return KeyEventResult.handled;
+            }
+            if (index == 4) {
+              _tvScreenKey.currentState?.focusFilterButton();
+              return KeyEventResult.handled;
+            }
+            if (index == 5) {
+              _showScreenKey.currentState?.focusFilterButton();
+              return KeyEventResult.handled;
+            }
+            if (index == 6) {
+              _animeScreenKey.currentState?.focusFilterButton();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
           case LogicalKeyboardKey.select:
           case LogicalKeyboardKey.enter:
             _onNavTap(index);
@@ -286,11 +320,9 @@ class _TvShellState extends State<TvShell> {
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
             final currentFocus = FocusManager.instance.primaryFocus;
             if (currentFocus != null && !_navFocusNodes.contains(currentFocus)) {
-              // 搜索/我的页面、电影/电视剧/综艺/动漫分类页：按上直接回到当前顶部导航项，
+              // 首页、搜索/我的页面、电影/电视剧/综艺/动漫分类页：按上直接回到当前顶部导航项，
               // 避免 ReadingOrderTraversalPolicy 按几何位置找到错误的导航项。
-              if (_selectedIndex == 0 ||
-                  _selectedIndex == 1 ||
-                  (_selectedIndex >= 3 && _selectedIndex <= 6)) {
+              if (_selectedIndex >= 0 && _selectedIndex <= 6) {
                 _navFocusNodes[_selectedIndex].requestFocus();
                 return KeyEventResult.handled;
               }
@@ -341,23 +373,27 @@ class _TvShellState extends State<TvShell> {
               Expanded(
                 child: IndexedStack(
                   index: _selectedIndex,
-                  children: const [
-                    ProfileScreen(),
-                    SearchScreen(),
-                    HomeScreen(),
+                  children: [
+                    const ProfileScreen(),
+                    SearchScreen(key: _searchScreenKey),
+                    HomeScreen(key: _homeScreenKey),
                     CategoryScreen(
+                      key: _movieScreenKey,
                       kind: 'movie',
                       title: '电影',
                     ),
                     CategoryScreen(
+                      key: _tvScreenKey,
                       kind: 'tv',
                       title: '电视剧',
                     ),
                     CategoryScreen(
+                      key: _showScreenKey,
                       kind: 'show',
                       title: '综艺',
                     ),
                     CategoryScreen(
+                      key: _animeScreenKey,
                       kind: 'anime',
                       title: '动漫',
                     ),

@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../focus/focusable.dart';
-import '../models/douban_movie.dart';
 import '../models/search_result.dart';
-import '../services/douban_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/remote_input_service.dart';
 import '../services/search_service.dart';
@@ -17,15 +15,16 @@ class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
   @override
-  State<SearchScreen> createState() => _SearchScreenState();
+  State<SearchScreen> createState() => SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+enum _KeyAction { handled, ignored }
+
+class SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   final _qrFocusNode = FocusNode();
   final List<FocusNode> _historyFocusNodes = [];
-  final List<FocusNode> _suggestionFocusNodes = [];
   final List<FocusNode> _resultFocusNodes = [];
   final _resultScrollController = ScrollController();
   BoxConstraints? _resultGridConstraints;
@@ -35,19 +34,25 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _error;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
-  List<DoubanMovie> _hotMovies = [];
-  bool _hotLoading = false;
 
   final _remoteInputService = RemoteInputService();
   StreamSubscription<String>? _remoteInputSub;
   bool _qrDialogShowing = false;
+
+  void requestSearchBoxFocus() {
+    _focusNode.requestFocus();
+  }
 
   @override
   void initState() {
     super.initState();
     _setupRemoteInput();
     _loadSearchHistory();
-    _loadHotMovies();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      }
+    });
   }
 
   void _setupRemoteInput() {
@@ -68,13 +73,11 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _controller.dispose();
     _focusNode.dispose();
     _qrFocusNode.dispose();
     for (final node in _historyFocusNodes) {
-      node.dispose();
-    }
-    for (final node in _suggestionFocusNodes) {
       node.dispose();
     }
     for (final node in _resultFocusNodes) {
@@ -101,53 +104,12 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  void _syncSuggestionFocusNodes() {
-    while (_suggestionFocusNodes.length < _hotMovies.length) {
-      _suggestionFocusNodes.add(FocusNode());
-    }
-    while (_suggestionFocusNodes.length > _hotMovies.length) {
-      _suggestionFocusNodes.removeLast().dispose();
-    }
-  }
-
   void _syncResultFocusNodes() {
     while (_resultFocusNodes.length < _results.length) {
       _resultFocusNodes.add(FocusNode());
     }
     while (_resultFocusNodes.length > _results.length) {
       _resultFocusNodes.removeLast().dispose();
-    }
-  }
-
-  Future<void> _loadHotMovies() async {
-    setState(() => _hotLoading = true);
-    try {
-      final movies = await DoubanService.getHotMovies();
-      final tvShows = await DoubanService.getHotTvShows();
-      final shows = await DoubanService.getHotShows();
-
-      final allHot = <DoubanMovie>[];
-      if (movies.success && movies.data != null) {
-        allHot.addAll(movies.data!.take(2));
-      }
-      if (tvShows.success && tvShows.data != null) {
-        allHot.addAll(tvShows.data!.take(2));
-      }
-      if (shows.success && shows.data != null) {
-        allHot.addAll(shows.data!.take(2));
-      }
-
-      if (mounted) {
-        setState(() {
-          _hotMovies = allHot;
-          _hotLoading = false;
-        });
-        _syncSuggestionFocusNodes();
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _hotLoading = false);
-      }
     }
   }
 
@@ -332,15 +294,6 @@ class _SearchScreenState extends State<SearchScreen> {
     return null;
   }
 
-  int? get _currentSuggestionIndex {
-    final focus = FocusManager.instance.primaryFocus;
-    if (focus == null) return null;
-    for (int i = 0; i < _suggestionFocusNodes.length; i++) {
-      if (_suggestionFocusNodes[i] == focus) return i;
-    }
-    return null;
-  }
-
   int? get _currentResultIndex {
     final focus = FocusManager.instance.primaryFocus;
     if (focus == null) return null;
@@ -353,17 +306,122 @@ class _SearchScreenState extends State<SearchScreen> {
   bool get _focusInSearchBox => _focusNode.hasFocus;
   bool get _focusInQr => _qrFocusNode.hasFocus;
   bool get _focusInHistory => _currentHistoryIndex != null;
-  bool get _focusInSuggestions => _currentSuggestionIndex != null;
   bool get _focusInResults => _currentResultIndex != null;
+  bool get _focusInSearchPage =>
+      _focusInSearchBox ||
+      _focusInQr ||
+      _focusInHistory ||
+      _focusInResults;
 
-  FocusNode? get _middleFirstNode {
-    if (_historyFocusNodes.isNotEmpty) return _historyFocusNodes.first;
-    if (_suggestionFocusNodes.isNotEmpty) return _suggestionFocusNodes.first;
-    return null;
+  /// 全局硬件按键兜底处理。
+  ///
+  /// 搜索框（TextField）会消耗方向键事件，外层 Focus 的 onKeyEvent 无法收到，
+  /// 因此通过 HardwareKeyboard 层面监听，确保 TV 遥控器方向键能按预期在各个区域移动。
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+
+    // 仅在本页面获得焦点时处理，避免影响顶部导航栏或其他页面
+    if (!_focusInSearchPage) return false;
+
+    return _handleDirectionKey(event.logicalKey) == _KeyAction.handled;
   }
 
-  void _focusMiddleFirst() {
-    _middleFirstNode?.requestFocus();
+  _KeyAction _handleDirectionKey(LogicalKeyboardKey key) {
+    // 按右：左侧任意位置移动到搜索结果第一项（有结果时）
+    if (key == LogicalKeyboardKey.arrowRight) {
+      if (_focusInSearchBox || _focusInQr || _focusInHistory) {
+        if (_resultFocusNodes.isNotEmpty) {
+          _resultFocusNodes.first.requestFocus();
+          return _KeyAction.handled;
+        }
+        return _KeyAction.ignored;
+      }
+      if (_focusInResults) {
+        final idx = _currentResultIndex!;
+        if (idx % _resultCrossAxisCount != _resultCrossAxisCount - 1 &&
+            idx + 1 < _resultFocusNodes.length) {
+          _focusResultIndex(idx + 1, _resultCrossAxisCount);
+        }
+        return _KeyAction.handled;
+      }
+      return _KeyAction.ignored;
+    }
+
+    // 按左：搜索结果任意行最左列回到搜索框
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (_focusInResults) {
+        final idx = _currentResultIndex!;
+        if (idx % _resultCrossAxisCount == 0) {
+          _focusNode.requestFocus();
+        } else {
+          _focusResultIndex(idx - 1, _resultCrossAxisCount);
+        }
+        return _KeyAction.handled;
+      }
+      return _KeyAction.ignored;
+    }
+
+    // 按下
+    if (key == LogicalKeyboardKey.arrowDown) {
+      if (_focusInSearchBox) {
+        _qrFocusNode.requestFocus();
+        return _KeyAction.handled;
+      }
+      if (_focusInQr) {
+        if (_historyFocusNodes.isNotEmpty) {
+          _historyFocusNodes.first.requestFocus();
+          return _KeyAction.handled;
+        }
+        return _KeyAction.ignored;
+      }
+      if (_focusInHistory) {
+        final idx = _currentHistoryIndex!;
+        if (idx < _historyFocusNodes.length - 1) {
+          _historyFocusNodes[idx + 1].requestFocus();
+        } else if (_resultFocusNodes.isNotEmpty) {
+          _resultFocusNodes.first.requestFocus();
+        }
+        return _KeyAction.handled;
+      }
+      if (_focusInResults) {
+        final idx = _currentResultIndex!;
+        final next = idx + _resultCrossAxisCount;
+        if (next < _resultFocusNodes.length) {
+          _focusResultIndex(next, _resultCrossAxisCount);
+        }
+        return _KeyAction.handled;
+      }
+      return _KeyAction.ignored;
+    }
+
+    // 按上
+    if (key == LogicalKeyboardKey.arrowUp) {
+      if (_focusInQr) {
+        _focusNode.requestFocus();
+        return _KeyAction.handled;
+      }
+      if (_focusInHistory) {
+        final idx = _currentHistoryIndex!;
+        if (idx > 0) {
+          _historyFocusNodes[idx - 1].requestFocus();
+        } else {
+          _qrFocusNode.requestFocus();
+        }
+        return _KeyAction.handled;
+      }
+      if (_focusInResults) {
+        final idx = _currentResultIndex!;
+        if (idx >= _resultCrossAxisCount) {
+          _focusResultIndex(idx - _resultCrossAxisCount, _resultCrossAxisCount);
+          return _KeyAction.handled;
+        }
+        // 位于结果网格第一行，把回到顶部导航栏交给 TvShell 处理
+        return _KeyAction.ignored;
+      }
+      return _KeyAction.ignored;
+    }
+
+    return _KeyAction.ignored;
   }
 
   void _focusResultIndex(int target, int crossAxisCount) {
@@ -414,169 +472,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-
-    // 按上：在列表/网格内逐行上移，到达每列顶部再回到搜索框
-    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      if (_focusInQr) {
-        _focusNode.requestFocus();
-        return KeyEventResult.handled;
-      }
-      if (_focusInHistory) {
-        final idx = _currentHistoryIndex!;
-        if (idx == 0) {
-          _focusNode.requestFocus();
-        } else {
-          _historyFocusNodes[idx - 1].requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInSuggestions) {
-        final idx = _currentSuggestionIndex!;
-        if (idx == 0) {
-          if (_historyFocusNodes.isNotEmpty) {
-            _historyFocusNodes.last.requestFocus();
-          } else {
-            _focusNode.requestFocus();
-          }
-        } else {
-          _suggestionFocusNodes[idx - 1].requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInResults) {
-        final idx = _currentResultIndex!;
-        if (idx >= _resultCrossAxisCount) {
-          _focusResultIndex(idx - _resultCrossAxisCount, _resultCrossAxisCount);
-        } else {
-          _focusNode.requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    }
-
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      if (_focusInSearchBox) {
-        _qrFocusNode.requestFocus();
-        return KeyEventResult.handled;
-      }
-      if (_focusInQr) {
-        if (_middleFirstNode != null) {
-          _middleFirstNode!.requestFocus();
-        } else if (_resultFocusNodes.isNotEmpty) {
-          _resultFocusNodes.first.requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInHistory) {
-        final idx = _currentHistoryIndex!;
-        if (idx == _historyFocusNodes.length - 1) {
-          if (_suggestionFocusNodes.isNotEmpty) {
-            _suggestionFocusNodes.first.requestFocus();
-          } else if (_resultFocusNodes.isNotEmpty) {
-            _resultFocusNodes.first.requestFocus();
-          }
-        } else {
-          _historyFocusNodes[idx + 1].requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInSuggestions) {
-        final idx = _currentSuggestionIndex!;
-        if (idx == _suggestionFocusNodes.length - 1) {
-          if (_results.isNotEmpty) {
-            _resultFocusNodes.first.requestFocus();
-          }
-        } else {
-          _suggestionFocusNodes[idx + 1].requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInResults) {
-        final idx = _currentResultIndex!;
-        final next = idx + _resultCrossAxisCount;
-        if (next < _resultFocusNodes.length) {
-          _focusResultIndex(next, _resultCrossAxisCount);
-        }
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    }
-
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      if (_focusInSearchBox || _focusInQr) {
-        _focusMiddleFirst();
-        return KeyEventResult.handled;
-      }
-      if (_focusInHistory) {
-        final idx = _currentHistoryIndex!;
-        if (idx == _historyFocusNodes.length - 1) {
-          if (_suggestionFocusNodes.isNotEmpty) {
-            _suggestionFocusNodes.first.requestFocus();
-          } else if (_resultFocusNodes.isNotEmpty) {
-            _resultFocusNodes.first.requestFocus();
-          }
-          return KeyEventResult.handled;
-        }
-        // 非末项禁止默认遍历跳到右侧区域，避免焦点丢失
-        return KeyEventResult.handled;
-      }
-      if (_focusInSuggestions) {
-        final idx = _currentSuggestionIndex!;
-        if (idx == _suggestionFocusNodes.length - 1 && _resultFocusNodes.isNotEmpty) {
-          _resultFocusNodes.first.requestFocus();
-          return KeyEventResult.handled;
-        }
-        // 非末项禁止默认遍历跳到右侧区域
-        return KeyEventResult.handled;
-      }
-      if (_focusInResults) {
-        final idx = _currentResultIndex!;
-        if (idx % _resultCrossAxisCount != _resultCrossAxisCount - 1 &&
-            idx + 1 < _resultFocusNodes.length) {
-          _focusResultIndex(idx + 1, _resultCrossAxisCount);
-        }
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    }
-
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      if (_focusInResults) {
-        final idx = _currentResultIndex!;
-        if (idx % _resultCrossAxisCount == 0) {
-          _focusMiddleFirst();
-        } else {
-          _focusResultIndex(idx - 1, _resultCrossAxisCount);
-        }
-        return KeyEventResult.handled;
-      }
-      if (_focusInSuggestions) {
-        final idx = _currentSuggestionIndex!;
-        if (idx == 0) {
-          if (_historyFocusNodes.isNotEmpty) {
-            _historyFocusNodes.last.requestFocus();
-          } else {
-            _focusNode.requestFocus();
-          }
-          return KeyEventResult.handled;
-        }
-        // 非首项禁止默认遍历跳到左侧区域
-        return KeyEventResult.handled;
-      }
-      if (_focusInHistory) {
-        final idx = _currentHistoryIndex!;
-        if (idx == 0) {
-          _focusNode.requestFocus();
-          return KeyEventResult.handled;
-        }
-        // 非首项禁止默认遍历跳到左侧区域
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    }
-
-    return KeyEventResult.ignored;
+    final action = _handleDirectionKey(event.logicalKey);
+    return action == _KeyAction.handled
+        ? KeyEventResult.handled
+        : KeyEventResult.ignored;
   }
 
   @override
@@ -588,7 +487,7 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 左列：搜索框 + 手机扫码
+            // 左列：搜索框 + 手机扫码 + 搜索历史
             SizedBox(
               width: 320,
               child: Column(
@@ -597,28 +496,14 @@ class _SearchScreenState extends State<SearchScreen> {
                   _buildSearchBox(),
                   const SizedBox(height: AppSpacing.lg),
                   _buildQrButton(),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.lg),
-            // 中列：近期搜索 + 搜索推荐
-            Expanded(
-              flex: 1,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHistorySection(),
                   const SizedBox(height: AppSpacing.lg),
-                  _buildSuggestionSection(),
+                  Expanded(child: _buildHistorySection()),
                 ],
               ),
             ),
             const SizedBox(width: AppSpacing.lg),
             // 右列：搜索结果
-            Expanded(
-              flex: 2,
-              child: _buildResultsArea(),
-            ),
+            Expanded(child: _buildResultsArea()),
           ],
         ),
       ),
@@ -737,269 +622,100 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.history, color: AppColors.textSecondary, size: 16),
-                const SizedBox(width: AppSpacing.xs),
-                const Text(
-                  '近期搜索',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
+          Row(
+            children: [
+              const Icon(Icons.history, color: AppColors.textSecondary, size: 16),
+              const SizedBox(width: AppSpacing.xs),
+              const Text(
+                '近期搜索',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Expanded(
-              child: _searchHistory.isEmpty
-                  ? const Center(
-                      child: Text(
-                        '暂无近期搜索',
-                        style: TextStyle(
-                          fontFamily: 'NotoSansSC',
-                          fontSize: 13,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    )
-                  : SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (int index = 0;
-                              index < _searchHistory.length;
-                              index++) ...[
-                            Builder(
-                              builder: (context) {
-                                final query = _searchHistory[index];
-                                return FocusableWidget(
-                                  focusNode: _historyFocusNodes[index],
-                                  onTap: () => _search(query),
-                                  onKeyEvent: _handleKeyEvent,
-                                  onFocusChange: (focused) {
-                                    if (focused) {
-                                      WidgetsBinding.instance
-                                          .addPostFrameCallback((_) {
-                                        if (context.mounted) {
-                                          Scrollable.ensureVisible(
-                                            context,
-                                            duration: const Duration(
-                                                milliseconds: 200),
-                                            curve: Curves.easeOut,
-                                            alignment: 0.5,
-                                          );
-                                        }
-                                      });
-                                    }
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: AppSpacing.md,
-                                      vertical: AppSpacing.sm,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.bgApp,
-                                      borderRadius:
-                                          BorderRadius.circular(AppRadius.sm),
-                                      border:
-                                          Border.all(color: AppColors.border),
-                                    ),
-                                    child: Text(
-                                      query,
-                                      style: const TextStyle(
-                                        fontFamily: 'NotoSansSC',
-                                        fontSize: 13,
-                                        color: AppColors.textPrimary,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                            if (index < _searchHistory.length - 1)
-                              const SizedBox(height: AppSpacing.sm),
-                          ],
-                        ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Expanded(
+            child: _searchHistory.isEmpty
+                ? const Center(
+                    child: Text(
+                      '暂无近期搜索',
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 13,
+                        color: AppColors.textMuted,
                       ),
                     ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSuggestionSection() {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        decoration: BoxDecoration(
-          color: AppColors.bgElevated,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.whatshot, color: AppColors.primary, size: 16),
-                const SizedBox(width: AppSpacing.xs),
-                const Text(
-                  '搜索推荐',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (int index = 0;
+                            index < _searchHistory.length;
+                            index++) ...[
+                          Builder(
+                            builder: (context) {
+                              final query = _searchHistory[index];
+                              return FocusableWidget(
+                                focusNode: _historyFocusNodes[index],
+                                onTap: () => _search(query),
+                                onKeyEvent: _handleKeyEvent,
+                                onFocusChange: (focused) {
+                                  if (focused) {
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) {
+                                      if (context.mounted) {
+                                        Scrollable.ensureVisible(
+                                          context,
+                                          duration: const Duration(
+                                              milliseconds: 200),
+                                          curve: Curves.easeOut,
+                                          alignment: 0.5,
+                                        );
+                                      }
+                                    });
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.md,
+                                    vertical: AppSpacing.sm,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.bgApp,
+                                    borderRadius:
+                                        BorderRadius.circular(AppRadius.sm),
+                                    border:
+                                        Border.all(color: AppColors.border),
+                                  ),
+                                  child: Text(
+                                    query,
+                                    style: const TextStyle(
+                                      fontFamily: 'NotoSansSC',
+                                      fontSize: 13,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          if (index < _searchHistory.length - 1)
+                            const SizedBox(height: AppSpacing.sm),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            Expanded(
-              child: _hotLoading
-                  ? const Center(
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    )
-                  : _hotMovies.isEmpty
-                      ? const Center(
-                          child: Text(
-                            '暂无搜索推荐',
-                            style: TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 13,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              for (int index = 0;
-                                  index < _hotMovies.length;
-                                  index++) ...[
-                                Builder(
-                                  builder: (context) {
-                                    final movie = _hotMovies[index];
-                                    return FocusableWidget(
-                                      focusNode: _suggestionFocusNodes[index],
-                                      onTap: () => _search(movie.title),
-                                      onKeyEvent: _handleKeyEvent,
-                                      onFocusChange: (focused) {
-                                        if (focused) {
-                                          WidgetsBinding.instance
-                                              .addPostFrameCallback((_) {
-                                            if (context.mounted) {
-                                              Scrollable.ensureVisible(
-                                                context,
-                                                duration: const Duration(
-                                                    milliseconds: 200),
-                                                curve: Curves.easeOut,
-                                                alignment: 0.5,
-                                              );
-                                            }
-                                          });
-                                        }
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: AppSpacing.md,
-                                          vertical: AppSpacing.sm,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.bgApp,
-                                          borderRadius: BorderRadius.circular(
-                                              AppRadius.sm),
-                                          border: Border.all(
-                                              color: AppColors.border),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            if (movie.poster.isNotEmpty)
-                                              ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                        AppRadius.sm),
-                                                child: Image.network(
-                                                  movie.poster.startsWith('//')
-                                                      ? 'https:${movie.poster}'
-                                                      : movie.poster,
-                                                  width: 24,
-                                                  height: 36,
-                                                  fit: BoxFit.cover,
-                                                  errorBuilder: (_, __, ___) =>
-                                                      const SizedBox(width: 24),
-                                                ),
-                                              )
-                                            else
-                                              Container(
-                                                width: 24,
-                                                height: 36,
-                                                color: AppColors.bgSurface,
-                                              ),
-                                            const SizedBox(
-                                                width: AppSpacing.sm),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    movie.title,
-                                                    style: const TextStyle(
-                                                      fontFamily: 'NotoSansSC',
-                                                      fontSize: 13,
-                                                      color: AppColors
-                                                          .textPrimary,
-                                                    ),
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                  if (movie.year.isNotEmpty)
-                                                    Text(
-                                                      movie.year,
-                                                      style: const TextStyle(
-                                                        fontFamily:
-                                                            'NotoSansSC',
-                                                        fontSize: 11,
-                                                        color: AppColors
-                                                            .textSecondary,
-                                                      ),
-                                                    ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                                if (index < _hotMovies.length - 1)
-                                  const SizedBox(height: AppSpacing.sm),
-                              ],
-                            ],
-                          ),
-                        ),
-            ),
-          ],
-        ),
-      ),
-    );
+          ),
+        );
   }
 
   Widget _buildResultsArea() {

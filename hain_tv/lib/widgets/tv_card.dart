@@ -13,6 +13,8 @@ class TvPosterCard extends StatelessWidget {
   final bool autofocus;
   final FocusNode? focusNode;
   final FocusOnKeyEventCallback? onKeyEvent;
+  final ValueChanged<bool>? onFocusChange;
+  final bool selected;
 
   const TvPosterCard({
     super.key,
@@ -24,6 +26,8 @@ class TvPosterCard extends StatelessWidget {
     this.autofocus = false,
     this.focusNode,
     this.onKeyEvent,
+    this.onFocusChange,
+    this.selected = false,
   });
 
   Widget _buildImage(BuildContext context) {
@@ -66,11 +70,12 @@ class TvPosterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FocusableWidget(
+    Widget card = FocusableWidget(
       autofocus: autofocus,
       focusNode: focusNode,
       onTap: onTap,
       onKeyEvent: onKeyEvent,
+      onFocusChange: onFocusChange,
       focusedScale: 1.04,
       child: AspectRatio(
         aspectRatio: 2 / 3,
@@ -88,11 +93,11 @@ class TvPosterCard extends StatelessWidget {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
+                color: selected ? AppColors.primary : AppColors.textPrimary,
               ),
             ),
             const SizedBox(height: AppSpacing.xs),
@@ -124,5 +129,31 @@ class TvPosterCard extends StatelessWidget {
         ),
       ),
     );
+
+    if (selected) {
+      card = Stack(
+        children: [
+          card,
+          Positioned(
+            top: AppSpacing.sm,
+            right: AppSpacing.sm,
+            child: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.check,
+                color: Colors.white,
+                size: 14,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return card;
   }
 }

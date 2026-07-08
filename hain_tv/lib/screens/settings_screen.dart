@@ -258,7 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('关于'),
           _buildInfoTile(
             title: '版本',
-            value: '1.0.1',
+            value: '1.0.2',
           ),
           _buildInfoTile(
             title: '作者',

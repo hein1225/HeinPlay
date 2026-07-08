@@ -233,6 +233,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _openEpisode(_currentEpisodeIndex);
   }
 
+  void _safeSeekToSeconds(double targetSeconds) {
+    if (_backend == null || _duration.inMilliseconds <= 0) return;
+    final currentMs = _position.inMilliseconds;
+    var targetMs = (targetSeconds * 1000).toInt();
+    // 避免跳到片尾导致播放器卡死，最多跳到总时长前 500ms
+    final maxMs = _duration.inMilliseconds - 500;
+    if (targetMs > maxMs) targetMs = maxMs;
+    if (targetMs < 0) targetMs = 0;
+    // 目标与当前位置太近时不执行 seek，减少抖动
+    if ((targetMs - currentMs).abs() < 500) return;
+    _backend?.seek(Duration(milliseconds: targetMs));
+  }
+
   void _checkSkipSegments(Duration position) {
     if (_skipConfig == null || _skipConfig!.segments.isEmpty) return;
     final seconds = position.inMilliseconds / 1000.0;
@@ -248,20 +261,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
         debugPrint(
           '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
         );
-        _backend?.seek(Duration(milliseconds: (segment.end * 1000).toInt()));
+        _safeSeekToSeconds(segment.end);
         break;
       }
     }
 
     if (totalSeconds > 0) {
       for (final segment in _skipConfig!.segments) {
-        if (segment.autoNextEpisode &&
-            !_autoNextTriggered &&
-            segment.remainingTime != null &&
-            totalSeconds - seconds <= segment.remainingTime!) {
+        // 只有片尾类型的 segment 才允许触发自动下一集
+        if (segment.type != 'ending' ||
+            !segment.autoNextEpisode ||
+            _autoNextTriggered) continue;
+        var remainingTime = segment.remainingTime;
+        if (remainingTime == null) {
+          remainingTime = totalSeconds - segment.start;
+        }
+        // 小于 1 秒视为无效，防止立即触发下一集导致卡死
+        if (remainingTime < 1.0) continue;
+        if (totalSeconds - seconds <= remainingTime) {
           _autoNextTriggered = true;
           debugPrint(
-            '触发自动下一集: type=${segment.type} remainingTime=${segment.remainingTime}',
+            '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
           );
           _nextEpisode();
           break;
@@ -631,6 +651,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       context: context,
       builder: (context) => SkipConfigDialog(
         segments: _skipConfig?.segments ?? [],
+        getCurrentPosition: () => _position,
+        duration: _duration,
         onSave: _saveSkipConfig,
       ),
     );
@@ -885,6 +907,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
+        case LogicalKeyboardKey.arrowDown:
+          // 无论控制栏是否显示，下键都重新激活控制栏焦点
+          _showControls();
+          return KeyEventResult.handled;
         default:
           // 其他方向键交给焦点遍历处理
           return KeyEventResult.ignored;
@@ -948,8 +974,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
 
-    // 控制栏显示时交给焦点系统处理按钮选择
-    if (_controlsVisible) return false;
+    // 控制栏显示时交给焦点系统处理按钮选择，但下键始终用于激活控制栏焦点
+    if (_controlsVisible && event.logicalKey != LogicalKeyboardKey.arrowDown) {
+      return false;
+    }
 
     debugPrint('HardwareKeyboard 兜底: ${event.logicalKey}');
 

@@ -118,7 +118,6 @@ class LocalStorageService {
   }
 
   static Future<void> savePlayRecord(PlayRecord record) async {
-    final prefs = await _prefs();
     final history = await getPlayHistory();
     final index = history.indexWhere(
       (r) => r.source == record.source && r.id == record.id,
@@ -129,15 +128,25 @@ class LocalStorageService {
       history.add(record);
     }
     final limited = history.take(200).toList();
+    await setPlayHistory(limited);
+  }
+
+  static Future<void> setPlayHistory(List<PlayRecord> records) async {
+    final prefs = await _prefs();
     await prefs.setString(
       _playHistoryKey,
-      json.encode(limited.map((e) => e.toJson()).toList()),
+      json.encode(records.map((e) => e.toJson()).toList()),
     );
   }
 
   static Future<void> clearPlayHistory() async {
     final prefs = await _prefs();
     await prefs.remove(_playHistoryKey);
+  }
+
+  static Future<void> clearFavorites() async {
+    final prefs = await _prefs();
+    await prefs.remove(_favoritesKey);
   }
 
   static Future<List<FavoriteRecord>> getFavorites() async {
