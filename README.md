@@ -2,6 +2,8 @@
 
 基于 Flutter 开发的智能电视端影视播放应用，面向 Android TV 及大屏设备优化，同时支持 Web 与 Windows 桌面端。
 
+![海因影视 TV 版界面预览](./docs/screenshots/home.png)
+
 ## 功能特性
 
 ### 影视浏览
