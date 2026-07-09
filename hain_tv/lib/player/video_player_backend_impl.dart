@@ -26,6 +26,16 @@ Map<String, String> _refererFor(String url) {
   return {};
 }
 
+bool _isLocalProxyUrl(String url) {
+  try {
+    final uri = Uri.parse(url);
+    return uri.scheme.startsWith('http') &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost');
+  } catch (_) {
+    return false;
+  }
+}
+
 class VideoPlayerBackendImpl implements VideoPlayerBackend {
   VideoPlayerController? _controller;
   final _positionController = StreamController<Duration>.broadcast();
@@ -108,9 +118,11 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
-    final needsProxy = proxyMode ||
-        lowerUrl.contains('.m3u8') ||
-        lowerUrl.contains('/hls/');
+    final isLocalProxy = _isLocalProxyUrl(url);
+    final needsProxy = !isLocalProxy &&
+        (proxyMode ||
+            lowerUrl.contains('.m3u8') ||
+            lowerUrl.contains('/hls/'));
     if (proxyUrl.isNotEmpty && needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }

@@ -1,0 +1,373 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+/// 本地 M3U8/TS 代理服务。
+///
+/// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / media_kit / video_player）
+/// 中播放时头部透传不一致的问题。所有资源请求统一走本地代理，由代理补全头部。
+class LocalM3u8Proxy {
+  HttpServer? _server;
+  String? _playlistContent;
+  final Map<String, String> _baseHeaders = {};
+
+  bool get isRunning => _server != null;
+
+  String? get baseUrl {
+    final server = _server;
+    if (server == null) return null;
+    return 'http://${server.address.host}:${server.port}';
+  }
+
+  /// 启动本地代理服务器。
+  /// 返回代理根地址，例如 http://127.0.0.1:12345
+  Future<String> start() async {
+    if (_server != null) {
+      return baseUrl!;
+    }
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server!.listen(_handleRequest);
+    debugPrint('LocalM3u8Proxy started at $baseUrl');
+    return baseUrl!;
+  }
+
+  /// 设置当前播放列表内容与原始请求头。
+  void setPlaylist(String content, Map<String, String> headers) {
+    _playlistContent = content;
+    _baseHeaders
+      ..clear()
+      ..addAll(headers);
+  }
+
+  Future<void> stop() async {
+    await _server?.close(force: true);
+    _server = null;
+    _playlistContent = null;
+    _baseHeaders.clear();
+    debugPrint('LocalM3u8Proxy stopped');
+  }
+
+  Future<void> _handleRequest(HttpRequest request) async {
+    try {
+      final method = request.method.toUpperCase();
+      final path = request.uri.path;
+
+      if (method == 'OPTIONS') {
+        await _serveCorsPreflight(request);
+        return;
+      }
+
+      if (path == '/playlist.m3u8') {
+        await _servePlaylist(request, isHead: method == 'HEAD');
+      } else if (path == '/segment') {
+        await _proxySegment(request, isHead: method == 'HEAD');
+      } else {
+        request.response
+          ..statusCode = HttpStatus.notFound
+          ..write('Not found')
+          ..close();
+      }
+    } catch (e, stack) {
+      debugPrint('LocalM3u8Proxy handleRequest error: $e');
+      debugPrint('$stack');
+      try {
+        request.response
+          ..statusCode = HttpStatus.internalServerError
+          ..write('Internal server error')
+          ..close();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _serveCorsPreflight(HttpRequest request) async {
+    final response = request.response
+      ..statusCode = HttpStatus.ok
+      ..headers.add('Access-Control-Allow-Origin', '*')
+      ..headers.add('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+      ..headers.add('Access-Control-Allow-Headers', 'Range, Content-Type')
+      ..headers.add('Access-Control-Max-Age', '86400');
+    await response.close();
+  }
+
+  Future<void> _servePlaylist(HttpRequest request, {bool isHead = false}) async {
+    final content = _playlistContent ?? '#EXTM3U\n#EXT-X-ENDLIST\n';
+    final bytes = utf8.encode(content);
+    final response = request.response
+      ..statusCode = HttpStatus.ok
+      ..headers.contentType = ContentType('application', 'vnd.apple.mpegurl')
+      ..headers.add('Content-Length', bytes.length.toString())
+      ..headers.add('Access-Control-Allow-Origin', '*')
+      ..headers.add('Cache-Control', 'no-cache, no-store, must-revalidate');
+    if (!isHead) {
+      response.add(bytes);
+    }
+    await response.close();
+  }
+
+  Future<void> _proxySegment(HttpRequest request, {bool isHead = false}) async {
+    final urlParam = request.uri.queryParameters['url'];
+    if (urlParam == null || urlParam.isEmpty) {
+      request.response
+        ..statusCode = HttpStatus.badRequest
+        ..write('Missing url')
+        ..close();
+      return;
+    }
+
+    final targetUrl = Uri.decodeComponent(urlParam);
+    final targetUri = Uri.parse(targetUrl);
+
+    final headers = <String, String>{
+      'User-Agent': _baseHeaders['User-Agent'] ??
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Connection': 'keep-alive',
+    };
+
+    // 优先使用传入的 Referer/Origin；否则根据目标 URL 自动推导
+    var referer = _baseHeaders['Referer'] ?? _baseHeaders['referer'];
+    var origin = _baseHeaders['Origin'] ?? _baseHeaders['origin'];
+    if (referer == null || referer.isEmpty) {
+      referer = '${targetUri.scheme}://${targetUri.host}/';
+      origin = '${targetUri.scheme}://${targetUri.host}';
+    }
+    headers['Referer'] = referer;
+    if (origin != null && origin.isNotEmpty) {
+      headers['Origin'] = origin;
+    }
+
+    // 透传 Range
+    final range = request.headers.value('range');
+    if (range != null && range.isNotEmpty) {
+      headers['Range'] = range;
+    }
+
+    try {
+      final requestMethod = isHead ? 'HEAD' : 'GET';
+      final requestUri = Uri.parse(targetUrl);
+      final client = http.Client();
+      final response = await client
+          .send(http.Request(requestMethod, requestUri)..headers.addAll(headers))
+          .timeout(const Duration(seconds: 30))
+          .then(http.Response.fromStream)
+          .whenComplete(client.close);
+
+      final out = request.response;
+      out.statusCode = response.statusCode;
+
+      final contentType = response.headers['content-type'];
+      if (contentType != null && contentType.isNotEmpty) {
+        out.headers.contentType = _parseContentType(contentType);
+      }
+
+      final contentLength = response.headers['content-length'];
+      if (contentLength != null && contentLength.isNotEmpty) {
+        out.headers.add('Content-Length', contentLength);
+      }
+
+      final acceptRanges = response.headers['accept-ranges'];
+      if (acceptRanges != null && acceptRanges.isNotEmpty) {
+        out.headers.add('Accept-Ranges', acceptRanges);
+      }
+
+      final contentRange = response.headers['content-range'];
+      if (contentRange != null && contentRange.isNotEmpty) {
+        out.headers.add('Content-Range', contentRange);
+      }
+
+      out.headers.add('Access-Control-Allow-Origin', '*');
+      out.headers.add('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+      if (!isHead) {
+        var bodyBytes = response.bodyBytes;
+        // 如果响应是子 M3U8/播放列表，把其中的资源 URL 也重写为本地代理地址
+        if (_isM3u8Content(response)) {
+          final decoded = utf8.decode(bodyBytes, allowMalformed: true);
+          final resolved = _resolveRelativeUrls(decoded, targetUrl);
+          final rewritten = rewriteToLocalProxy(resolved, baseUrl!);
+          bodyBytes = utf8.encode(rewritten);
+          out.headers.set('Content-Length', bodyBytes.length.toString());
+        }
+        out.add(bodyBytes);
+      }
+      await out.close();
+    } catch (e, stack) {
+      debugPrint('LocalM3u8Proxy proxySegment error: $e');
+      debugPrint('$stack');
+      request.response
+        ..statusCode = HttpStatus.badGateway
+        ..write('Proxy error')
+        ..close();
+    }
+  }
+
+  static bool _isM3u8Content(http.Response response) {
+    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+    if (contentType.contains('mpegurl') ||
+        contentType.contains('m3u8') ||
+        contentType.contains('application/vnd.apple.mpegurl') ||
+        contentType.contains('audio/x-mpegurl')) {
+      return true;
+    }
+    final body = response.body;
+    return body.length < 10 * 1024 && body.trim().startsWith('#EXTM3U');
+  }
+
+  /// 将 M3U8 内容中的相对 URL 根据 [baseUrl] 解析为绝对 URL。
+  static String _resolveRelativeUrls(String content, String baseUrl) {
+    final baseUri = Uri.parse(baseUrl);
+    final lines = content.split('\n');
+    final result = <String>[];
+
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i];
+      final trimmed = raw.trim();
+
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('#') &&
+          !trimmed.startsWith('data:') &&
+          !trimmed.startsWith('http://') &&
+          !trimmed.startsWith('https://')) {
+        result.add(baseUri.resolve(trimmed).toString());
+        continue;
+      }
+
+      // 处理 URI="..." 标签
+      if (_hasUriAttribute(trimmed)) {
+        result.add(_resolveUriLine(baseUrl, raw));
+        if (trimmed.startsWith('#EXT-X-STREAM-INF') && i + 1 < lines.length) {
+          final nextRaw = lines[i + 1];
+          final nextTrimmed = nextRaw.trim();
+          if (nextTrimmed.isNotEmpty &&
+              !nextTrimmed.startsWith('#') &&
+              !nextTrimmed.startsWith('data:') &&
+              !nextTrimmed.startsWith('http://') &&
+              !nextTrimmed.startsWith('https://')) {
+            result.add(baseUri.resolve(nextTrimmed).toString());
+            i++;
+            continue;
+          }
+        }
+        continue;
+      }
+
+      result.add(raw);
+    }
+
+    return result.join('\n');
+  }
+
+  static bool _hasUriAttribute(String line) {
+    return line.startsWith('#EXT-X-KEY') ||
+        line.startsWith('#EXT-X-MAP') ||
+        line.startsWith('#EXT-X-MEDIA') ||
+        line.startsWith('#EXT-X-PART') ||
+        line.startsWith('#EXT-X-PRELOAD-HINT') ||
+        line.startsWith('#EXT-X-SESSION-DATA') ||
+        line.startsWith('#EXT-X-SESSION-KEY') ||
+        line.startsWith('#EXT-X-RENDITION-REPORT') ||
+        line.startsWith('#EXT-X-CONTENT-STEERING');
+  }
+
+  static String _resolveUriLine(String base, String line) {
+    final uriPattern = RegExp(r'URI="([^"]+)"');
+    return line.replaceAllMapped(uriPattern, (match) {
+      final original = match.group(1)!;
+      try {
+        return 'URI="${Uri.parse(base).resolve(original).toString()}"';
+      } catch (_) {
+        return match.group(0)!;
+      }
+    });
+  }
+
+  ContentType? _parseContentType(String value) {
+    try {
+      final parts = value.split(';');
+      final mime = parts[0].trim();
+      final mimeParts = mime.split('/');
+      if (mimeParts.length == 2) {
+        var charset;
+        for (final part in parts.skip(1)) {
+          final kv = part.trim().split('=');
+          if (kv.length == 2 && kv[0].toLowerCase() == 'charset') {
+            charset = kv[1].trim();
+          }
+        }
+        return ContentType(mimeParts[0], mimeParts[1], charset: charset);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 将 M3U8 内容中的所有资源 URL 重写为本地代理地址。
+  static String rewriteToLocalProxy(
+    String content,
+    String proxyBaseUrl,
+  ) {
+    final lines = content.split('\n');
+    final result = <String>[];
+
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i];
+      final trimmed = raw.trim();
+
+      // 媒体行
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('#') &&
+          !trimmed.startsWith('data:')) {
+        result.add(_proxyUrl(proxyBaseUrl, trimmed));
+        continue;
+      }
+
+      // 需要处理 URI 的标签
+      if (trimmed.startsWith('#EXT-X-MAP') ||
+          trimmed.startsWith('#EXT-X-KEY') ||
+          trimmed.startsWith('#EXT-X-MEDIA') ||
+          trimmed.startsWith('#EXT-X-PART') ||
+          trimmed.startsWith('#EXT-X-PRELOAD-HINT') ||
+          trimmed.startsWith('#EXT-X-STREAM-INF') ||
+          trimmed.startsWith('#EXT-X-SESSION-DATA') ||
+          trimmed.startsWith('#EXT-X-SESSION-KEY') ||
+          trimmed.startsWith('#EXT-X-RENDITION-REPORT') ||
+          trimmed.startsWith('#EXT-X-CONTENT-STEERING')) {
+        result.add(_rewriteUriAttributes(proxyBaseUrl, raw));
+        // 若下一行是子 M3U8 URL，也重写
+        if (trimmed.startsWith('#EXT-X-STREAM-INF') && i + 1 < lines.length) {
+          final nextRaw = lines[i + 1];
+          final nextTrimmed = nextRaw.trim();
+          if (nextTrimmed.isNotEmpty && !nextTrimmed.startsWith('#')) {
+            result.add(_proxyUrl(proxyBaseUrl, nextTrimmed));
+            i++;
+            continue;
+          }
+        }
+        continue;
+      }
+
+      result.add(raw);
+    }
+
+    return result.join('\n');
+  }
+
+  static String _rewriteUriAttributes(String proxyBaseUrl, String line) {
+    final uriPattern = RegExp(r'URI="([^"]+)"');
+    return line.replaceAllMapped(uriPattern, (match) {
+      final original = match.group(1)!;
+      return 'URI="${_proxyUrl(proxyBaseUrl, original)}"';
+    });
+  }
+
+  static String _proxyUrl(String proxyBaseUrl, String originalUrl) {
+    if (originalUrl.startsWith('http://') ||
+        originalUrl.startsWith('https://')) {
+      return '$proxyBaseUrl/segment?url=${Uri.encodeComponent(originalUrl)}';
+    }
+    return originalUrl;
+  }
+}

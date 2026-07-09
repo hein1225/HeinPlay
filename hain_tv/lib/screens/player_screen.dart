@@ -12,7 +12,6 @@ import '../models/video_detail.dart';
 import '../player/player_backend_factory.dart';
 import '../player/video_player_backend.dart';
 import '../services/ad_filter_engine.dart';
-import '../services/ad_filter_service.dart';
 import '../services/lunatv_service.dart';
 import '../services/play_record_service.dart';
 import '../services/user_data_service.dart';
@@ -116,20 +115,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _initBackend();
     _initWakelock();
     _initBrightnessAndVolume();
-    _updateAdFilter();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
       }
     });
-  }
-
-  Future<void> _updateAdFilter() async {
-    try {
-      await AdFilterService.checkAndUpdate();
-    } catch (e) {
-      debugPrint('PlayerScreen: 更新去广告配置失败: $e');
-    }
   }
 
   Future<void> _initWakelock() async {
@@ -302,6 +292,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// 等待播放器报告有效时长，超时返回 false。
+  Future<bool> _waitForPlayerReady(Duration timeout) async {
+    if (_duration.inMilliseconds > 0) return true;
+    final start = DateTime.now();
+    while (DateTime.now().difference(start) < timeout) {
+      if (_duration.inMilliseconds > 0) return true;
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    return _duration.inMilliseconds > 0;
+  }
+
   Future<void> _openEpisode(int index) async {
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
@@ -317,6 +318,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final openTimeout = Duration(seconds: timeoutSeconds);
 
     Future<bool> tryOpen(String url) async {
+      final startTime = DateTime.now();
       try {
         debugPrint('PlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
         await _backend
@@ -325,6 +327,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
               proxyMode: _currentVideoDetail.proxyMode,
             )
             .timeout(openTimeout);
+
+        // 等待播放器真正就绪（获取到有效时长），总耗时不超过 openTimeout
+        final elapsed = DateTime.now().difference(startTime);
+        final remaining = openTimeout - elapsed;
+        final ready = remaining > Duration.zero
+            ? await _waitForPlayerReady(remaining)
+            : _duration.inMilliseconds > 0;
+        if (!ready) {
+          debugPrint('PlayerScreen 等待播放就绪超时 [$_currentPlayerBackend]');
+          return false;
+        }
+
         debugPrint('PlayerScreen 播放初始化成功 [$_currentPlayerBackend]');
         return true;
       } catch (e, stackTrace) {
@@ -345,7 +359,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
-    // 对 M3U8 地址应用 LunaTV 去广告过滤
+    // 对 M3U8 地址应用本地去广告过滤
     final filteredUrl = await AdFilterEngine.filterM3u8(
       sourceType: _currentVideoDetail.source,
       originalUrl: url,
@@ -474,12 +488,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
         debugPrint(
           '自动切换源播放: ${option.title} -> ${newEpisodes[targetEpisodeIndex]}',
         );
+        final startTime = DateTime.now();
         await _backend
             ?.open(
               newEpisodes[targetEpisodeIndex],
               proxyMode: _currentVideoDetail.proxyMode,
             )
             .timeout(Duration(seconds: timeoutSeconds));
+
+        final elapsed = DateTime.now().difference(startTime);
+        final remaining = Duration(seconds: timeoutSeconds) - elapsed;
+        final ready = remaining > Duration.zero
+            ? await _waitForPlayerReady(remaining)
+            : _duration.inMilliseconds > 0;
+        if (!ready) {
+          debugPrint('自动切换源等待播放就绪超时');
+          // 继续尝试下一个源
+          continue;
+        }
+
         if (mounted) {
           setState(() => _initialized = true);
           _showControlsWithoutFocusShift();
@@ -1249,7 +1276,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       debugPrint('PlayerScreen: 禁用屏幕常亮失败: $e');
     });
 
-    // 释放去广告 JS 运行时
+    // 释放本地 M3U8 代理
     AdFilterEngine.dispose();
 
     _playPauseFocusNode.dispose();

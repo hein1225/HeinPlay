@@ -141,6 +141,7 @@ class HomeScreenState extends State<HomeScreen> {
         id: record.title,
         title: record.title,
         posterUrl: record.cover.isNotEmpty ? record.cover : null,
+        subtitle: record.sourceName.isNotEmpty ? record.sourceName : record.source,
         onTap: () => _openHistory(record),
       );
     }).toList();

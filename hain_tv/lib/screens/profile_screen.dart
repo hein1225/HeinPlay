@@ -322,7 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               Text(
-                'https://github.com/hein1225/HeinPlay',
+                'https://gitcode.com/gcw_QbmhmbO8/HeinPlay',
                 style: const TextStyle(
                   fontSize: 13,
                   color: AppColors.primary,
@@ -364,7 +364,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         id: r.id,
         title: r.title,
         posterUrl: r.cover.isNotEmpty ? r.cover : null,
-        year: r.year,
+        subtitle: r.sourceName.isNotEmpty ? r.sourceName : r.source,
         onTap: () => _openHistory(r),
       ),
       onDeleteKeys: (keys) => PlayRecordService.deleteByKeys(keys),
@@ -789,6 +789,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
         title: base.title,
         posterUrl: base.posterUrl,
         year: base.year,
+        subtitle: base.subtitle,
         rating: base.rating,
         onTap: _selectionMode ? () => _toggleItem(key) : base.onTap,
       );

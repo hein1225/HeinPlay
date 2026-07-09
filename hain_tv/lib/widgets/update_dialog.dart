@@ -83,66 +83,108 @@ class _UpdateDialogState extends State<UpdateDialog> {
             ),
           ),
           content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.info.body.isEmpty ? '暂无更新说明' : widget.info.body,
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
-                      height: 1.5,
+            width: 640,
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 更新日志滚动区域
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgApp,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
-                  ),
-                  if (_isDownloading) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.sm),
-                            child: LinearProgressIndicator(
-                              value: _progress,
-                              backgroundColor: AppColors.bgElevated,
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                AppColors.primary,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (widget.info.title.isNotEmpty) ...[
+                            Text(
+                              widget.info.title,
+                              style: const TextStyle(
+                                fontFamily: 'NotoSansSC',
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
                               ),
-                              minHeight: 8,
                             ),
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        SizedBox(
-                          width: 56,
-                          child: Text(
-                            progressText,
-                            textAlign: TextAlign.right,
+                            const SizedBox(height: AppSpacing.sm),
+                          ],
+                          Text(
+                            widget.info.body.isEmpty
+                                ? '暂无更新说明'
+                                : widget.info.body,
                             style: const TextStyle(
                               fontFamily: 'NotoSansSC',
-                              fontSize: 12,
+                              fontSize: 14,
                               color: AppColors.textSecondary,
+                              height: 1.6,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    const Text(
-                      '正在下载安装包，请稍候...',
-                      style: TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                        ],
                       ),
                     ),
-                  ],
-                ],
-              ),
+                  ),
+                ),
+                // 下载进度区域（固定显示在底部）
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  height: _isDownloading ? 64 : 0,
+                  padding: _isDownloading
+                      ? const EdgeInsets.only(top: AppSpacing.md)
+                      : EdgeInsets.zero,
+                  child: _isDownloading
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius:
+                                        BorderRadius.circular(AppRadius.sm),
+                                    child: LinearProgressIndicator(
+                                      value: _progress,
+                                      backgroundColor: AppColors.bgElevated,
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                        AppColors.primary,
+                                      ),
+                                      minHeight: 8,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                SizedBox(
+                                  width: 56,
+                                  child: Text(
+                                    progressText,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      fontFamily: 'NotoSansSC',
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            const Text(
+                              '正在下载安装包，请稍候...',
+                              style: TextStyle(
+                                fontFamily: 'NotoSansSC',
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
             ),
           ),
           actions: [

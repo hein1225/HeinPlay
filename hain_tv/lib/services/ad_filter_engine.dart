@@ -1,14 +1,15 @@
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:flutter_js/flutter_js.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
+
 import 'ad_filter_service.dart';
+import 'local_m3u8_proxy.dart';
+import 'm3u8_ad_filter.dart';
 import 'user_data_service.dart';
 
 class AdFilterEngine {
-  static JavascriptRuntime? _jsRuntime;
+  static LocalM3u8Proxy? _proxy;
 
   static Future<String?> filterM3u8({
     required String sourceType,
@@ -33,8 +34,7 @@ class AdFilterEngine {
       String fetchUrl = originalUrl;
       final proxyUrl = await UserDataService.getM3u8ProxyUrl();
       if (proxyUrl.isNotEmpty) {
-        final encoded = Uri.encodeComponent(originalUrl);
-        fetchUrl = '$proxyUrl$encoded';
+        fetchUrl = '$proxyUrl${Uri.encodeComponent(originalUrl)}';
         debugPrint('AdFilterEngine: 使用 M3U8 代理下载: $fetchUrl');
       }
 
@@ -43,9 +43,14 @@ class AdFilterEngine {
       final origin = '${originUri.scheme}://${originUri.host}';
       final requestHeaders = Map<String, String>.from(headers);
       requestHeaders.putIfAbsent('Origin', () => origin);
-      requestHeaders.putIfAbsent('Referer', () => origin);
+      requestHeaders.putIfAbsent('Referer', () => '$origin/');
       requestHeaders.putIfAbsent('Accept', () => '*/*');
-      requestHeaders.putIfAbsent('User-Agent', () => 'Mozilla/5.0');
+      requestHeaders.putIfAbsent(
+        'User-Agent',
+        () =>
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      );
 
       final response = await http
           .get(uri, headers: requestHeaders)
@@ -59,25 +64,23 @@ class AdFilterEngine {
       final originalContent = utf8.decode(response.bodyBytes, allowMalformed: true);
       if (originalContent.isEmpty) return null;
 
-      String filteredContent;
-      final customCode = await AdFilterService.getCachedCode();
-      if (customCode != null && customCode.isNotEmpty && customCode.contains('filterAdsFromM3U8')) {
-        final customResult = await _applyCustomFilter(sourceType, originalContent, customCode);
-        filteredContent = customResult ?? AdFilterService.applyDefaultFilter(sourceType, originalContent);
-      } else {
-        debugPrint('AdFilterEngine: 使用默认去广告规则');
-        filteredContent = AdFilterService.applyDefaultFilter(sourceType, originalContent);
-      }
-
-      if (filteredContent == originalContent) {
-        debugPrint('AdFilterEngine: 无需过滤');
+      final filter = M3u8AdFilter();
+      final filteredContent = filter.purify(originalUrl, originalContent);
+      if (filteredContent == null || filteredContent == originalContent) {
+        debugPrint('AdFilterEngine: 无需过滤或过滤失败');
         return null;
       }
 
-      final rewritten = _rewriteUrls(filteredContent, originalUrl);
-      final tempUrl = await _saveToTemp(rewritten);
-      debugPrint('AdFilterEngine: 已过滤并保存到 $tempUrl');
-      return tempUrl;
+      _proxy ??= LocalM3u8Proxy();
+      final baseUrl = await _proxy!.start();
+      final rewritten = LocalM3u8Proxy.rewriteToLocalProxy(filteredContent, baseUrl);
+      _proxy!.setPlaylist(rewritten, requestHeaders);
+
+      final playlistUrl = '$baseUrl/playlist.m3u8';
+      debugPrint(
+        'AdFilterEngine: 已过滤 ${filter.currentAdCount} 个片段，代理地址: $playlistUrl',
+      );
+      return playlistUrl;
     } catch (e, stack) {
       debugPrint('AdFilterEngine: 过滤失败 $e');
       debugPrint('$stack');
@@ -85,86 +88,8 @@ class AdFilterEngine {
     }
   }
 
-  static Future<String?> _applyCustomFilter(
-    String type,
-    String content,
-    String code,
-  ) async {
-    try {
-      _jsRuntime ??= getJavascriptRuntime();
-      final runtime = _jsRuntime!;
-
-      runtime.evaluate(code);
-      final escapedContent = content
-          .replaceAll('\\', '\\\\')
-          .replaceAll("'", "\\'")
-          .replaceAll('\n', '\\n');
-      final result = runtime.evaluate("filterAdsFromM3U8('$type', '$escapedContent')");
-      final filtered = result.stringResult;
-      if (filtered.isEmpty || filtered == content) {
-        debugPrint('AdFilterEngine: 自定义代码未返回有效结果，降级默认规则');
-        return null;
-      }
-      debugPrint('AdFilterEngine: 已使用自定义去广告代码');
-      return filtered.replaceAll('\\n', '\n');
-    } catch (e, stack) {
-      debugPrint('AdFilterEngine: 自定义代码执行失败 $e');
-      debugPrint('$stack');
-      return null;
-    }
-  }
-
-  static String _rewriteUrls(String content, String baseUrl) {
-    final baseUri = Uri.parse(baseUrl);
-    final lines = content.split('\n');
-    final result = <String>[];
-
-    for (final line in lines) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty ||
-          trimmed.startsWith('#') ||
-          trimmed.startsWith('data:') ||
-          trimmed.startsWith('http://') ||
-          trimmed.startsWith('https://')) {
-        result.add(line);
-        continue;
-      }
-      final resolved = baseUri.resolve(trimmed).toString();
-      result.add(resolved);
-    }
-
-    return result.join('\n');
-  }
-
-  static Future<String> _saveToTemp(String content) async {
-    final dir = await getTemporaryDirectory();
-    final prefix = '${dir.path}/hain_tv_filtered_';
-    final now = DateTime.now();
-
-    // 清理 1 小时前生成的旧过滤文件
-    try {
-      final tempDir = Directory(dir.path);
-      if (await tempDir.exists()) {
-        await for (final entity in tempDir.list()) {
-          if (entity is File && entity.path.startsWith(prefix)) {
-            final stat = await entity.stat();
-            if (now.difference(stat.modified).inHours >= 1) {
-              await entity.delete();
-            }
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('AdFilterEngine: 清理旧过滤文件失败 $e');
-    }
-
-    final file = File('${prefix}${now.millisecondsSinceEpoch}.m3u8');
-    await file.writeAsString(content, encoding: utf8);
-    return 'file://${file.path}';
-  }
-
-  static void dispose() {
-    _jsRuntime?.dispose();
-    _jsRuntime = null;
+  static Future<void> dispose() async {
+    await _proxy?.stop();
+    _proxy = null;
   }
 }

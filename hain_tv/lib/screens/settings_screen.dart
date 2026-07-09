@@ -214,17 +214,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _autoPlayNextEpisode,
             onChanged: _setAutoNext,
           ),
-          _buildSwitchTile(
-            title: '播放失败自动切换播放源',
-            subtitle: '当前源无法播放时按测速顺序自动尝试其他源',
-            value: _autoSwitchSource,
-            onChanged: _setAutoSwitchSource,
-          ),
-          if (_autoSwitchSource) _buildAutoSwitchTimeoutTile(),
+          _buildAutoSwitchSourceTile(),
           _buildM3u8ProxyTile(),
           _buildSwitchTile(
-            title: 'M3U8 去广告',
-            subtitle: '播放 M3U8 时自动应用 LunaTV 服务端下发的去广告规则',
+            title: 'M3U8 去广告（本地过滤）',
+            subtitle: '播放 M3U8 时使用本地规则过滤片头贴片广告',
             value: _adFilterEnabled,
             onChanged: _setAdFilterEnabled,
           ),
@@ -258,7 +252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('关于'),
           _buildInfoTile(
             title: '版本',
-            value: '1.0.2',
+            value: '1.0.3',
           ),
           _buildInfoTile(
             title: '作者',
@@ -374,56 +368,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildAutoSwitchTimeoutTile() {
+  Widget _buildAutoSwitchSourceTile() {
     return _buildCard(
       child: Column(
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: AppSpacing.sm,
-            ),
-            child: Text(
-              '当前：$_autoSwitchSourceTimeout 秒',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textMuted,
+          Builder(
+            builder: (context) => FocusableWidget(
+              onTap: () => _setAutoSwitchSource(!_autoSwitchSource),
+              onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+              child: SwitchListTile(
+                title: const Text(
+                  '播放失败自动切换播放源',
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                subtitle: const Text(
+                  '当前源无法播放时按测速顺序自动尝试其他源',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                value: _autoSwitchSource,
+                onChanged: _setAutoSwitchSource,
+                activeThumbColor: AppColors.primary,
+                inactiveThumbColor: AppColors.textMuted,
               ),
             ),
           ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<int>(
-            title: '5 秒',
-            subtitle: '快速切换，适合网络较稳定的环境',
-            value: 5,
-            groupValue: _autoSwitchSourceTimeout,
-            onChanged: _setAutoSwitchSourceTimeout,
-          ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<int>(
-            title: '10 秒',
-            subtitle: '默认较短等待时间',
-            value: 10,
-            groupValue: _autoSwitchSourceTimeout,
-            onChanged: _setAutoSwitchSourceTimeout,
-          ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<int>(
-            title: '15 秒',
-            subtitle: '适中等待时间',
-            value: 15,
-            groupValue: _autoSwitchSourceTimeout,
-            onChanged: _setAutoSwitchSourceTimeout,
-          ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<int>(
-            title: '30 秒',
-            subtitle: '较长等待时间，适合弱网或源响应慢的环境',
-            value: 30,
-            groupValue: _autoSwitchSourceTimeout,
-            onChanged: _setAutoSwitchSourceTimeout,
-          ),
+          if (_autoSwitchSource) ...[
+            const Divider(height: 1, color: AppColors.border),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Text(
+                '当前：$_autoSwitchSourceTimeout 秒',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ),
+            _buildRadioTile<int>(
+              title: '5 秒',
+              subtitle: '快速切换，适合网络较稳定的环境',
+              value: 5,
+              groupValue: _autoSwitchSourceTimeout,
+              onChanged: _setAutoSwitchSourceTimeout,
+            ),
+            const Divider(height: 1, color: AppColors.border),
+            _buildRadioTile<int>(
+              title: '10 秒',
+              subtitle: '默认较短等待时间',
+              value: 10,
+              groupValue: _autoSwitchSourceTimeout,
+              onChanged: _setAutoSwitchSourceTimeout,
+            ),
+            const Divider(height: 1, color: AppColors.border),
+            _buildRadioTile<int>(
+              title: '15 秒',
+              subtitle: '适中等待时间',
+              value: 15,
+              groupValue: _autoSwitchSourceTimeout,
+              onChanged: _setAutoSwitchSourceTimeout,
+            ),
+            const Divider(height: 1, color: AppColors.border),
+            _buildRadioTile<int>(
+              title: '30 秒',
+              subtitle: '较长等待时间，适合弱网或源响应慢的环境',
+              value: 30,
+              groupValue: _autoSwitchSourceTimeout,
+              onChanged: _setAutoSwitchSourceTimeout,
+            ),
+          ],
         ],
       ),
     );

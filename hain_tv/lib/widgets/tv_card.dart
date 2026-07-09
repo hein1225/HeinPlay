@@ -8,6 +8,7 @@ class TvPosterCard extends StatelessWidget {
   final String title;
   final String? posterUrl;
   final String year;
+  final String? subtitle;
   final String? rating;
   final VoidCallback? onTap;
   final bool autofocus;
@@ -21,6 +22,7 @@ class TvPosterCard extends StatelessWidget {
     required this.title,
     this.posterUrl,
     required this.year,
+    this.subtitle,
     this.rating,
     this.onTap,
     this.autofocus = false,
@@ -103,12 +105,16 @@ class TvPosterCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             Row(
               children: [
-                Text(
-                  year.isNotEmpty ? year : '未知年份',
-                  style: const TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
+                Expanded(
+                  child: Text(
+                    subtitle ?? (year.isNotEmpty ? year : '未知年份'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
                 if (rating != null && rating!.isNotEmpty) ...[

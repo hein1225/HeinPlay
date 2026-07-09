@@ -9,6 +9,7 @@ class PosterItem {
   final String title;
   final String? posterUrl;
   final String year;
+  final String? subtitle;
   final String? rating;
   final VoidCallback? onTap;
 
@@ -17,6 +18,7 @@ class PosterItem {
     required this.title,
     this.posterUrl,
     this.year = '',
+    this.subtitle,
     this.rating,
     this.onTap,
   });
@@ -216,6 +218,7 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
                     title: item.title,
                     posterUrl: item.posterUrl,
                     year: item.year,
+                    subtitle: item.subtitle,
                     rating: item.rating,
                     onTap: item.onTap,
                   ),
@@ -307,6 +310,7 @@ class TvPosterGrid extends StatelessWidget {
               title: item.title,
               posterUrl: item.posterUrl,
               year: item.year,
+              subtitle: item.subtitle,
               rating: item.rating,
               onTap: item.onTap,
             );

@@ -22,6 +22,7 @@ class _FilterConfig {
   final String kind;
   final String defaultCategory;
   final String defaultFormat;
+  final String defaultSort = 'R';
   final List<String> categories;
   final List<String> regions;
   final List<String> years;
@@ -231,6 +232,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       kind: _config.kind,
       category: _encodeValue(_config.defaultCategory),
       format: _encodeValue(_config.defaultFormat),
+      sort: _config.defaultSort,
       pageLimit: 50,
     );
     _scrollController.addListener(_onScroll);
@@ -621,11 +623,16 @@ class CategoryScreenState extends State<CategoryScreen> {
   void _applyDimensionValue(String dimension, String value) {
     final encoded = dimension == 'sort' ? _sortValues[value]! : _encodeValue(value);
     setState(() {
+      var newSort = dimension == 'sort' ? encoded : _params.sort;
+      // 切换小分类时，非近期热门默认使用首映时间排序
+      if (dimension == 'category' && encoded != 'recent_hot') {
+        newSort = _config.defaultSort;
+      }
       _params = _params.copyWith(
         category: dimension == 'category' ? encoded : _params.category,
         region: dimension == 'region' ? encoded : _params.region,
         year: dimension == 'year' ? encoded : _params.year,
-        sort: dimension == 'sort' ? encoded : _params.sort,
+        sort: newSort,
         label: dimension == 'label' ? encoded : _params.label,
         page: 0,
       );
@@ -642,6 +649,7 @@ class CategoryScreenState extends State<CategoryScreen> {
         kind: _config.kind,
         category: _encodeValue(_config.defaultCategory),
         format: _encodeValue(_config.defaultFormat),
+        sort: _config.defaultSort,
       );
       _selectedDimension = 'category';
     });

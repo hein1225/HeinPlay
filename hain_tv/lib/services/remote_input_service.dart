@@ -295,7 +295,7 @@ class RemoteInputService {
 
   void dispose() {
     stopServer();
-    _messageController.close();
-    _loginController.close();
+    // StreamController 为单例生命周期服务，不在 dispose 中关闭，
+    // 否则退出登录后重新进入登录页时控制器已关闭，导致二维码登录无法触发。
   }
 }
