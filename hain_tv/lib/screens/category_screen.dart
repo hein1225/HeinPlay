@@ -1,15 +1,100 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import '../focus/focusable.dart';
+import '../models/bangumi_calendar_item.dart';
 import '../models/douban_movie.dart';
 import '../models/douban_recommends_params.dart';
+import '../services/bangumi_service.dart';
 import '../services/douban_service.dart';
 import '../models/api_response.dart';
 import '../theme.dart';
 import '../utils/back_interceptor.dart';
 import '../widgets/tv_grid.dart';
 import 'detail_screen.dart';
+
+class _OptionItem {
+  final String label;
+  final String value;
+
+  const _OptionItem(this.label, this.value);
+}
+
+/// 自定义筛选按钮，使用 Focus 直接管理焦点，避免 FocusableWidget 外层 Focus 可能导致的焦点节点无法挂载问题。
+class _DimensionButton extends StatefulWidget {
+  final FocusNode focusNode;
+  final VoidCallback onTap;
+  final FocusOnKeyEventCallback onKeyEvent;
+  final ValueChanged<bool>? onFocusChange;
+  final Widget child;
+
+  const _DimensionButton({
+    required this.focusNode,
+    required this.onTap,
+    required this.onKeyEvent,
+    this.onFocusChange,
+    required this.child,
+  });
+
+  @override
+  State<_DimensionButton> createState() => _DimensionButtonState();
+}
+
+class _DimensionButtonState extends State<_DimensionButton> {
+  bool _focused = false;
+
+  void _onFocusChange(bool focused) {
+    if (_focused == focused) return;
+    setState(() => _focused = focused);
+    widget.onFocusChange?.call(focused);
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    return widget.onKeyEvent(node, event);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: widget.focusNode,
+      onKeyEvent: _handleKeyEvent,
+      onFocusChange: _onFocusChange,
+      child: GestureDetector(
+        onTap: () {
+          widget.focusNode.requestFocus();
+          widget.onTap();
+        },
+        child: MouseRegion(
+          onEnter: (_) {},
+          onExit: (_) {},
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.all(AppSpacing.xs),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: _focused
+                  ? Border.all(color: AppColors.primary, width: 2)
+                  : Border.all(color: Colors.transparent, width: 2),
+              boxShadow: _focused
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.3),
+                        blurRadius: 12,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _FilterDimension {
   final String key;
@@ -18,26 +103,23 @@ class _FilterDimension {
   const _FilterDimension({required this.key, required this.label});
 }
 
-class _FilterConfig {
+class _CategoryConfig {
   final String kind;
-  final String defaultCategory;
+  final List<_OptionItem> primaryOptions;
+  final List<_OptionItem> secondaryOptions;
+  final String defaultPrimary;
+  final String defaultSecondary;
   final String defaultFormat;
-  final String defaultSort = 'R';
-  final List<String> categories;
-  final List<String> regions;
-  final List<String> years;
-  final List<String> sorts;
-  final List<String> labels;
+  final String defaultSort;
 
-  const _FilterConfig({
+  const _CategoryConfig({
     required this.kind,
-    required this.defaultCategory,
+    required this.primaryOptions,
+    required this.secondaryOptions,
+    required this.defaultPrimary,
+    required this.defaultSecondary,
     required this.defaultFormat,
-    required this.categories,
-    required this.regions,
-    required this.years,
-    required this.sorts,
-    required this.labels,
+    required this.defaultSort,
   });
 }
 
@@ -61,192 +143,243 @@ class CategoryScreenState extends State<CategoryScreen> {
   String? _error;
   List<DoubanMovie> _movies = [];
   bool _hasMore = true;
-  bool _filterPanelOpen = false;
   bool _hasEverBeenVisible = false;
 
   late DoubanRecommendsParams _params;
-  String _selectedDimension = 'category';
+  late String _selectedPrimary;
+  late String _selectedSecondary;
+  String? _activeDimension;
+  int _dropdownCrossAxisCount = 1;
   final ScrollController _scrollController = ScrollController();
   final List<FocusNode> _categoryTagFocusNodes = [];
-  final FocusScopeNode _filterPanelFocusNode = FocusScopeNode();
-  final FocusNode _filterButtonFocusNode = FocusNode();
-  final Map<String, FocusNode> _dimensionFocusNodes = {};
-  final Map<String, FocusNode> _optionFocusNodes = {};
+  final List<FocusNode> _secondaryTagFocusNodes = [];
+  final Map<String, FocusNode> _dimensionButtonFocusNodes = {};
+  final List<FocusNode> _dropdownOptionFocusNodes = [];
   final List<FocusNode> _posterFocusNodes = [];
+  final List<FocusNode> _weekdayFocusNodes = [];
   BoxConstraints? _gridConstraints;
 
-  List<_FilterDimension> get _dimensions {
-    final base = [
-      _FilterDimension(key: 'category', label: '类型'),
-      _FilterDimension(key: 'region', label: '地区'),
-      _FilterDimension(key: 'year', label: '年份'),
-      _FilterDimension(key: 'label', label: '特色'),
-    ];
-    // 近期热门模式下排序无效，不显示排序维度
-    if (_params.category != 'recent_hot') {
-      base.add(_FilterDimension(key: 'sort', label: '排序'));
-    }
-    return base;
-  }
+  List<BangumiCalendarItem> _bangumiCalendarItems = [];
+  late String _selectedWeekday;
 
+  // ===================== 分类选项（与 LunaTV DoubanSelector 一致） =====================
+
+  static const _moviePrimaryOptions = [
+    _OptionItem('全部', '全部'),
+    _OptionItem('热门电影', '热门'),
+    _OptionItem('最新电影', '最新'),
+    _OptionItem('豆瓣高分', '豆瓣高分'),
+    _OptionItem('冷门佳片', '冷门佳片'),
+  ];
+
+  static const _movieSecondaryOptions = [
+    _OptionItem('全部', '全部'),
+    _OptionItem('华语', '华语'),
+    _OptionItem('欧美', '欧美'),
+    _OptionItem('韩国', '韩国'),
+    _OptionItem('日本', '日本'),
+  ];
+
+  static const _tvPrimaryOptions = [
+    _OptionItem('全部', '全部'),
+    _OptionItem('最近热门', '最近热门'),
+  ];
+
+  static const _tvSecondaryOptions = [
+    _OptionItem('全部', 'tv'),
+    _OptionItem('国产', 'tv_domestic'),
+    _OptionItem('欧美', 'tv_american'),
+    _OptionItem('日本', 'tv_japanese'),
+    _OptionItem('韩国', 'tv_korean'),
+    _OptionItem('动漫', 'tv_animation'),
+    _OptionItem('纪录片', 'tv_documentary'),
+  ];
+
+  static const _showPrimaryOptions = [
+    _OptionItem('全部', '全部'),
+    _OptionItem('最近热门', '最近热门'),
+  ];
+
+  static const _showSecondaryOptions = [
+    _OptionItem('全部', 'show'),
+    _OptionItem('国内', 'show_domestic'),
+    _OptionItem('国外', 'show_foreign'),
+  ];
+
+  static const _animePrimaryOptions = [
+    _OptionItem('每日放送', '每日放送'),
+    _OptionItem('番剧', '番剧'),
+    _OptionItem('剧场版', '剧场版'),
+  ];
+
+  static const _categoryConfigs = {
+    'movie': _CategoryConfig(
+      kind: 'movie',
+      primaryOptions: _moviePrimaryOptions,
+      secondaryOptions: _movieSecondaryOptions,
+      defaultPrimary: '热门',
+      defaultSecondary: '全部',
+      defaultFormat: 'all',
+      defaultSort: 'U',
+    ),
+    'tv': _CategoryConfig(
+      kind: 'tv',
+      primaryOptions: _tvPrimaryOptions,
+      secondaryOptions: _tvSecondaryOptions,
+      defaultPrimary: '最近热门',
+      defaultSecondary: 'tv',
+      defaultFormat: '电视剧',
+      defaultSort: 'U',
+    ),
+    'show': _CategoryConfig(
+      kind: 'tv',
+      primaryOptions: _showPrimaryOptions,
+      secondaryOptions: _showSecondaryOptions,
+      defaultPrimary: '最近热门',
+      defaultSecondary: 'show',
+      defaultFormat: '综艺',
+      defaultSort: 'U',
+    ),
+    'anime': _CategoryConfig(
+      kind: 'tv',
+      primaryOptions: _animePrimaryOptions,
+      secondaryOptions: [],
+      defaultPrimary: '每日放送',
+      defaultSecondary: '全部',
+      defaultFormat: 'all',
+      defaultSort: 'U',
+    ),
+  };
+
+  // ===================== 筛选维度选项（与 LunaTV MultiLevelSelector 一致） =====================
+
+  static const _typeOptionsMovie = [
+    '全部', '喜剧', '爱情', '动作', '科幻', '悬疑', '犯罪', '惊悚', '冒险', '音乐',
+    '历史', '奇幻', '恐怖', '战争', '传记', '歌舞', '武侠', '情色', '灾难', '西部',
+    '纪录片', '短片',
+  ];
+
+  static const _typeOptionsTv = [
+    '全部', '喜剧', '爱情', '悬疑', '武侠', '古装', '家庭', '犯罪', '科幻', '恐怖',
+    '历史', '战争', '动作', '冒险', '传记', '剧情', '奇幻', '惊悚', '灾难', '歌舞',
+    '音乐',
+  ];
+
+  static const _typeOptionsShow = [
+    '全部', '真人秀', '脱口秀', '音乐', '歌舞',
+  ];
+
+  static const _labelOptionsAnimeTv = [
+    '全部', '黑色幽默', '历史', '歌舞', '励志', '恶搞', '治愈', '运动', '后宫', '情色',
+    '国漫', '人性', '悬疑', '恋爱', '魔幻', '科幻',
+  ];
+
+  static const _labelOptionsAnimeMovie = [
+    '全部', '定格动画', '传记', '美国动画', '爱情', '黑色幽默', '歌舞', '儿童', '二次元',
+    '动物', '青春', '历史', '励志', '恶搞', '治愈', '运动', '后宫', '情色', '人性', '悬疑',
+    '恋爱', '魔幻', '科幻',
+  ];
+
+  static const _regionOptionsMovie = [
+    '全部', '华语', '欧美', '韩国', '日本', '中国大陆', '美国', '中国香港', '中国台湾',
+    '英国', '法国', '德国', '意大利', '西班牙', '印度', '泰国', '俄罗斯', '加拿大',
+    '澳大利亚', '爱尔兰', '瑞典', '巴西', '丹麦',
+  ];
+
+  static const _regionOptionsTvShowAnime = [
+    '全部', '华语', '欧美', '国外', '韩国', '日本', '中国大陆', '中国香港', '美国', '英国',
+    '泰国', '中国台湾', '意大利', '法国', '德国', '西班牙', '俄罗斯', '瑞典', '巴西', '丹麦',
+    '印度', '加拿大', '爱尔兰', '澳大利亚',
+  ];
+
+  static const _platformOptions = [
+    '全部', '腾讯视频', '爱奇艺', '优酷', '湖南卫视', 'Netflix', 'HBO', 'BBC', 'NHK', 'CBS',
+    'NBC', 'tvN',
+  ];
+
+  static const _yearOptions = [
+    '全部', '2020年代', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019',
+    '2010年代', '2000年代', '90年代', '80年代', '70年代', '60年代', '更早',
+  ];
+
+  static const _sortLabelsMovie = ['近期热度', '首映时间', '高分优先'];
+  static const _sortLabelsAnime = ['综合排序', '近期热度', '首播时间', '高分优先'];
   static const _sortValues = {
+    '综合排序': 'T',
     '近期热度': 'U',
     '首映时间': 'R',
+    '首播时间': 'R',
     '高分优先': 'S',
   };
 
-  static List<String> _buildYearOptions({int earliestSingleYear = 2020}) {
-    final currentYear = DateTime.now().year;
-    final years = <String>['全部'];
-    for (var year = currentYear; year >= earliestSingleYear; year--) {
-      years.add(year.toString());
-    }
-    return years;
+  _CategoryConfig get _config {
+    return _categoryConfigs[widget.kind] ?? _categoryConfigs['movie']!;
   }
 
-  // 豆瓣API支持的标签映射（UI显示 -> API标签）
-  static final _doubanTagMapping = {
-    // 电影分类标签
-    '剧情': '剧情',
-    '喜剧': '喜剧',
-    '动作': '动作',
-    '爱情': '爱情',
-    '科幻': '科幻',
-    '动画': '动画',
-    '悬疑': '悬疑',
-    '惊悚': '惊悚',
-    '恐怖': '恐怖',
-    '纪录片': '纪录片',
-    '短片': '短片',
-    '家庭': '家庭',
-    '古装': '古装',
-    '武侠': '武侠',
-    '历史': '历史',
-    '战争': '战争',
-    '犯罪': '犯罪',
-    '西部': '西部',
-    '奇幻': '奇幻',
-    '冒险': '冒险',
-    '音乐': '音乐',
-    '歌舞': '歌舞',
-    '传记': '传记',
-    // 电视剧分类标签
-    '真人秀': '真人秀',
-    '脱口秀': '脱口秀',
-    // 动漫分类特殊处理（使用地区作为筛选）
-    '日本动画': '日本',
-    '国产动画': '中国大陆',
-    '欧美动画': '美国',
-    '韩国动画': '韩国',
-  };
+  List<_FilterDimension> get _dimensions {
+    final isAnime = widget.kind == 'anime';
+    final isAnimeMovie = isAnime && _selectedPrimary == '剧场版';
+    final isAnimeTv = isAnime && _selectedPrimary == '番剧';
 
-  static final _filterConfigs = {
-    'movie': _FilterConfig(
-      kind: 'movie',
-      defaultCategory: '全部',
-      defaultFormat: '电影',
-      categories: const [
-        '全部', '近期热门', '剧情', '喜剧', '动作', '爱情', '科幻', '动画', '悬疑', '惊悚', '恐怖', '纪录片', '短片', '家庭', '古装', '武侠', '历史', '战争', '犯罪', '西部', '奇幻', '冒险', '音乐', '歌舞', '传记',
-      ],
-      regions: const [
-        '全部', '中国大陆', '美国', '中国香港', '中国台湾', '日本', '韩国',
-        '英国', '法国', '德国', '泰国', '印度', '意大利', '西班牙', '加拿大',
-        '澳大利亚', '俄罗斯', '其他',
-      ],
-      years: _buildYearOptions()
-        ..addAll(const ['2010-2019', '2000-2009', '1990-1999', '1980-1989', '更早']),
-      sorts: const ['近期热度', '首映时间', '高分优先'],
-      labels: const [
-        '全部', '经典', '冷门佳片', '豆瓣高分', '院线', 'Netflix', 'Disney+',
-        '华语', '欧美', '韩国', '日本',
-      ],
-    ),
-    'tv': _FilterConfig(
-      kind: 'tv',
-      defaultCategory: '全部',
-      defaultFormat: '电视剧',
-      categories: const [
-        '全部', '近期热门', '剧情', '喜剧', '爱情', '科幻', '动画', '悬疑', '惊悚',
-        '恐怖', '纪录片', '家庭', '古装', '武侠', '历史', '战争', '犯罪',
-        '真人秀', '脱口秀', '音乐', '歌舞',
-      ],
-      regions: const [
-        '全部', '中国大陆', '美国', '中国香港', '中国台湾', '日本', '韩国',
-        '英国', '法国', '德国', '泰国', '印度', '加拿大', '澳大利亚', '其他',
-      ],
-      years: _buildYearOptions()
-        ..addAll(const ['2010-2019', '2000-2009', '1990-1999', '更早']),
-      sorts: const ['近期热度', '首映时间', '高分优先'],
-      labels: const [
-        '全部', '经典', '冷门佳片', '豆瓣高分', 'Netflix', 'Disney+',
-        '华语', '欧美', '韩国', '日本',
-      ],
-    ),
-    'show': _FilterConfig(
-      kind: 'tv',
-      defaultCategory: '全部',
-      defaultFormat: '综艺',
-      categories: const [
-        '全部', '近期热门', '真人秀', '脱口秀', '音乐', '歌舞', '访谈', '选秀',
-        '剧情', '喜剧', '纪录片',
-      ],
-      regions: const [
-        '全部', '中国大陆', '美国', '中国香港', '中国台湾', '日本', '韩国',
-        '英国', '法国', '其他',
-      ],
-      years: _buildYearOptions()
-        ..addAll(const ['2010-2019', '更早']),
-      sorts: const ['近期热度', '首映时间', '高分优先'],
-      labels: const [
-        '全部', '经典', '冷门佳片', '豆瓣高分', '华语', '韩国', '日本',
-      ],
-    ),
-    'anime': _FilterConfig(
-      kind: 'tv',
-      defaultCategory: '全部',
-      defaultFormat: '动画',
-      categories: const [
-        '全部', '近期热门', '日本动画', '国产动画', '欧美动画', '韩国动画',
-      ],
-      regions: const [
-        '全部', '日本', '中国大陆', '美国', '中国台湾', '韩国', '其他',
-      ],
-      years: _buildYearOptions()
-        ..addAll(const ['2010-2019', '更早']),
-      sorts: const ['近期热度', '首映时间', '高分优先'],
-      labels: const [
-        '全部', '经典', '冷门佳片', '豆瓣高分', 'Netflix', 'Disney+',
-        '华语', '日本', '欧美',
-      ],
-    ),
-  };
+    final base = <_FilterDimension>[];
+    if (isAnimeTv || isAnimeMovie) {
+      base.add(const _FilterDimension(key: 'label', label: '标签'));
+    } else {
+      base.add(const _FilterDimension(key: 'type', label: '类型'));
+    }
+    base.add(const _FilterDimension(key: 'region', label: '地区'));
+    base.add(const _FilterDimension(key: 'year', label: '年代'));
+    if (!isAnimeMovie) {
+      base.add(const _FilterDimension(key: 'platform', label: '平台'));
+    }
+    base.add(const _FilterDimension(key: 'sort', label: '排序'));
+    return base;
+  }
 
-  _FilterConfig get _config {
-    return _filterConfigs[widget.kind] ?? _filterConfigs['movie']!;
+  List<String> get _currentSortLabels {
+    if (widget.kind == 'movie') {
+      return _sortLabelsMovie.toList();
+    }
+    return _sortLabelsAnime.toList();
   }
 
   @override
   void initState() {
     super.initState();
+    _selectedPrimary = _config.defaultPrimary;
+    _selectedSecondary = _config.defaultSecondary;
     _params = DoubanRecommendsParams(
       kind: _config.kind,
-      category: _encodeValue(_config.defaultCategory),
-      format: _encodeValue(_config.defaultFormat),
+      category: 'all',
+      format: _config.defaultFormat,
       sort: _config.defaultSort,
-      pageLimit: 50,
+      pageLimit: 25,
     );
     _scrollController.addListener(_onScroll);
     _categoryTagFocusNodes.addAll(
-      List.generate(_config.categories.length, (_) => FocusNode()),
+      List.generate(_config.primaryOptions.length, (_) => FocusNode()),
     );
-    _createFilterFocusNodes();
-    FocusManager.instance.addListener(_ensureFilterPanelFocus);
+    _secondaryTagFocusNodes.addAll(
+      List.generate(_config.secondaryOptions.length, (_) => FocusNode()),
+    );
+    _selectedWeekday = _currentWeekdayEn();
+    _weekdayFocusNodes.addAll(List.generate(7, (_) => FocusNode()));
+    for (final key in ['type', 'region', 'year', 'platform', 'sort', 'label']) {
+      _dimensionButtonFocusNodes[key] = FocusNode();
+    }
     BackInterceptor.register(_onBackIntercepted);
-    // 延迟加载数据，等待页面可见
+  }
+
+  static String _currentWeekdayEn() {
+    final weekday = DateTime.now().weekday;
+    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return names[weekday - 1];
   }
 
   void focusFilterButton() {
-    _filterButtonFocusNode.requestFocus();
+    if (_categoryTagFocusNodes.isNotEmpty) {
+      _categoryTagFocusNodes.first.requestFocus();
+    }
   }
 
   void _focusFirstPoster() {
@@ -255,118 +388,128 @@ class CategoryScreenState extends State<CategoryScreen> {
     }
   }
 
-  void _createFilterFocusNodes() {
-    for (final dimension in _dimensions) {
-      _dimensionFocusNodes.putIfAbsent(dimension.key, () => FocusNode());
-      for (final option in _optionsForDimension(dimension.key)) {
-        _optionFocusNodes.putIfAbsent(
-          '${dimension.key}:$option',
-          () => FocusNode(),
-        );
-      }
+  int get _selectedPrimaryIndex {
+    final options = _config.primaryOptions;
+    for (int i = 0; i < options.length; i++) {
+      if (options[i].value == _selectedPrimary) return i;
+    }
+    return 0;
+  }
+
+  void _focusSelectedCategoryTag() {
+    final index = _selectedPrimaryIndex;
+    if (index >= 0 && index < _categoryTagFocusNodes.length) {
+      _categoryTagFocusNodes[index].requestFocus();
     }
   }
 
-  void _onVisibilityChanged(VisibilityInfo info) {
-    if (info.visibleFraction > 0.5) {
-      // 首次可见或数据为空时加载
-      if (!_hasEverBeenVisible || (_movies.isEmpty && !_loading && _error == null)) {
-        _hasEverBeenVisible = true;
-        _loadData(refresh: true);
+  void _focusSecondRowFirst() {
+    if (_selectedPrimary == '每日放送') {
+      if (_weekdayFocusNodes.isNotEmpty) {
+        _weekdayFocusNodes.first.requestFocus();
       }
+    } else if (_showSecondaryRow) {
+      if (_secondaryTagFocusNodes.isNotEmpty) {
+        _secondaryTagFocusNodes.first.requestFocus();
+      }
+    } else if (_showDimensionButtons) {
+      final firstKey = _dimensions.first.key;
+      _dimensionButtonFocusNodes[firstKey]?.requestFocus();
+    } else {
+      _focusFirstPoster();
     }
+  }
+
+  bool get _showSecondaryRow {
+    if (widget.kind == 'movie') return _selectedPrimary != '全部';
+    if (widget.kind == 'tv') return _selectedPrimary == '最近热门';
+    if (widget.kind == 'show') return _selectedPrimary == '最近热门';
+    return false;
+  }
+
+  bool get _showDimensionButtons {
+    if (widget.kind == 'anime') {
+      return _selectedPrimary == '番剧' || _selectedPrimary == '剧场版';
+    }
+    return _selectedPrimary == '全部';
+  }
+
+  bool _showSecondaryRowForPrimary(String primary) {
+    if (widget.kind == 'movie') return primary != '全部';
+    if (widget.kind == 'tv') return primary == '最近热门';
+    if (widget.kind == 'show') return primary == '最近热门';
+    return false;
+  }
+
+  bool _showDimensionButtonsForPrimary(String primary) {
+    if (widget.kind == 'anime') {
+      return primary == '番剧' || primary == '剧场版';
+    }
+    return primary == '全部';
+  }
+
+  List<_FilterDimension> _dimensionsForPrimary(String primary) {
+    final isAnime = widget.kind == 'anime';
+    final isAnimeMovie = isAnime && primary == '剧场版';
+    final isAnimeTv = isAnime && primary == '番剧';
+
+    final base = <_FilterDimension>[];
+    if (isAnimeTv || isAnimeMovie) {
+      base.add(const _FilterDimension(key: 'label', label: '标签'));
+    } else {
+      base.add(const _FilterDimension(key: 'type', label: '类型'));
+    }
+    base.add(const _FilterDimension(key: 'region', label: '地区'));
+    base.add(const _FilterDimension(key: 'year', label: '年代'));
+    if (!isAnimeMovie) {
+      base.add(const _FilterDimension(key: 'platform', label: '平台'));
+    }
+    base.add(const _FilterDimension(key: 'sort', label: '排序'));
+    return base;
   }
 
   @override
   void dispose() {
-    FocusManager.instance.removeListener(_ensureFilterPanelFocus);
     _scrollController.dispose();
     for (final node in _categoryTagFocusNodes) {
       node.dispose();
     }
     _categoryTagFocusNodes.clear();
-    _filterPanelFocusNode.dispose();
-    _filterButtonFocusNode.dispose();
-    for (final node in _dimensionFocusNodes.values) {
+    for (final node in _secondaryTagFocusNodes) {
       node.dispose();
     }
-    _dimensionFocusNodes.clear();
-    for (final node in _optionFocusNodes.values) {
+    _secondaryTagFocusNodes.clear();
+    for (final node in _dimensionButtonFocusNodes.values) {
       node.dispose();
     }
-    _optionFocusNodes.clear();
+    _dimensionButtonFocusNodes.clear();
+    for (final node in _dropdownOptionFocusNodes) {
+      node.dispose();
+    }
+    _dropdownOptionFocusNodes.clear();
     for (final node in _posterFocusNodes) {
       node.dispose();
     }
     _posterFocusNodes.clear();
+    for (final node in _weekdayFocusNodes) {
+      node.dispose();
+    }
+    _weekdayFocusNodes.clear();
     BackInterceptor.unregister(_onBackIntercepted);
     super.dispose();
   }
 
   bool _onBackIntercepted() {
-    if (_filterPanelOpen) {
-      _closeFilterPanel();
+    if (_activeDimension != null) {
+      _closeDimensionDropdown();
       return true;
     }
     return false;
   }
 
-  void _ensureFilterPanelFocus() {
-    if (!_filterPanelOpen) return;
-    final primary = FocusManager.instance.primaryFocus;
-    if (primary == null) return;
-    final inPanel = _filterPanelFocusNode.traversalDescendants.contains(primary) ||
-        primary == _filterPanelFocusNode;
-    if (!inPanel) {
-      _filterPanelFocusNode.requestFocus();
-    }
-  }
-
-  KeyEventResult _handleDimensionKeyEvent(
-    String dimensionKey,
-    KeyEvent event,
-  ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    final dimensions = _dimensions;
-    final index = dimensions.indexWhere((d) => d.key == dimensionKey);
-    if (index == -1) return KeyEventResult.ignored;
-
-    // 手动处理上下键焦点移动，避免 ListView 默认遍历在 TV 遥控器短按上键时失效
-    if (event.logicalKey == LogicalKeyboardKey.arrowUp && index > 0) {
-      final prevKey = dimensions[index - 1].key;
-      _dimensionFocusNodes[prevKey]?.requestFocus();
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
-        index < dimensions.length - 1) {
-      final nextKey = dimensions[index + 1].key;
-      _dimensionFocusNodes[nextKey]?.requestFocus();
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      // 先切换右侧为当前维度对应的选项，确保选项 Widget 已加入树后再请求焦点
-      setState(() => _selectedDimension = dimensionKey);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focusOptionForDimension(dimensionKey);
-      });
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  KeyEventResult _handleOptionKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      _dimensionFocusNodes[_selectedDimension]?.requestFocus();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
   void _focusPosterIndex(int target, int crossAxisCount) {
     if (target < 0 || target >= _posterFocusNodes.length) return;
 
-    // 先滚动到目标行，再请求焦点，确保焦点能移动到不在当前视口的海报
     final constraints = _gridConstraints;
     if (constraints != null && _scrollController.hasClients) {
       const horizontalPadding = AppSpacing.lg * 2;
@@ -418,14 +561,16 @@ class CategoryScreenState extends State<CategoryScreen> {
   ) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
 
+    void focusPreviousRow() {
+      _focusSecondRowFirst();
+    }
+
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowLeft:
         if (index % crossAxisCount == 0) {
           if (index == 0) {
-            // 海报墙第一个海报按左键返回到顶部筛选按钮
-            _filterButtonFocusNode.requestFocus();
+            focusPreviousRow();
           } else {
-            // 其他行第一列按左键跳到上一行最后一列
             _focusPosterIndex(index - 1, crossAxisCount);
           }
         } else {
@@ -436,12 +581,10 @@ class CategoryScreenState extends State<CategoryScreen> {
         if (index < _posterFocusNodes.length - 1) {
           _focusPosterIndex(index + 1, crossAxisCount);
         }
-        // 在最后一个海报消费右键，防止默认遍历跳到海报墙外部
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        // 第一行按上键返回到顶部筛选按钮
         if (index < crossAxisCount) {
-          _filterButtonFocusNode.requestFocus();
+          focusPreviousRow();
         } else {
           _focusPosterIndex(index - crossAxisCount, crossAxisCount);
         }
@@ -450,25 +593,14 @@ class CategoryScreenState extends State<CategoryScreen> {
         if (index + crossAxisCount < _posterFocusNodes.length) {
           _focusPosterIndex(index + crossAxisCount, crossAxisCount);
         }
-        // 在最后一行消费下键，防止默认遍历跳到海报墙外部
         return KeyEventResult.handled;
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.escape:
-        // 返回键从海报墙返回到顶部筛选按钮
-        _filterButtonFocusNode.requestFocus();
+        focusPreviousRow();
         return KeyEventResult.handled;
       default:
         return KeyEventResult.ignored;
     }
-  }
-
-  void _focusOptionForDimension(String dimensionKey) {
-    final currentValue = _currentValueForDimension(dimensionKey);
-    final options = _optionsForDimension(dimensionKey);
-    final target = options.contains(currentValue) ? currentValue : (options.isNotEmpty ? options.first : null);
-    if (target == null) return;
-    final node = _optionFocusNodes['$dimensionKey:$target'];
-    node?.requestFocus();
   }
 
   void _onScroll() {
@@ -480,6 +612,26 @@ class CategoryScreenState extends State<CategoryScreen> {
     }
   }
 
+  Future<ApiResponse<List<DoubanMovie>>> _loadBangumiDailyBroadcast() async {
+    if (_bangumiCalendarItems.isEmpty) {
+      final res = await BangumiService.getCalendar();
+      if (!res.success) return ApiResponse.error(res.message ?? '获取 Bangumi 数据失败');
+      _bangumiCalendarItems = res.data ?? [];
+    }
+    final items = BangumiService.filterByWeekday(_bangumiCalendarItems, _selectedWeekday);
+    return ApiResponse.success(items.map(_bangumiToDoubanMovie).toList());
+  }
+
+  DoubanMovie _bangumiToDoubanMovie(BangumiCalendarItem item) {
+    return DoubanMovie(
+      id: 'bgm_${item.id}',
+      title: item.title,
+      poster: item.poster ?? '',
+      year: item.year ?? '',
+      rate: item.rate,
+    );
+  }
+
   Future<void> _loadData({bool refresh = false}) async {
     if (refresh) {
       setState(() {
@@ -489,22 +641,47 @@ class CategoryScreenState extends State<CategoryScreen> {
     }
 
     try {
-      final params = refresh
-          ? _params.copyWith(page: 0)
-          : _params;
-      
-      debugPrint('CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, category=${params.category}');
-      
+      final params = refresh ? _params.copyWith(page: 0) : _params;
+
+      debugPrint('CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, primary=$_selectedPrimary, secondary=$_selectedSecondary');
+
       late ApiResponse<List<DoubanMovie>> response;
-      
-      if (params.category == 'recent_hot') {
-        // 近期热门改为走 LunaTV 后端 /api/douban 代理，数据与豆瓣网站“热门”标签一致
-        final (:type, :tag) = _recentHotTypeTag();
-        response = await DoubanService.getHotDataFromServer(
-          type: type,
-          tag: tag,
-          pageSize: params.pageLimit,
-          pageStart: params.page * params.pageLimit,
+
+      if (widget.kind == 'anime' && _selectedPrimary == '每日放送') {
+        response = await _loadBangumiDailyBroadcast();
+      } else if (widget.kind == 'anime') {
+        response = await DoubanService.fetchRecommends(
+          params: params.copyWith(
+            kind: _selectedPrimary == '番剧' ? 'tv' : 'movie',
+            category: '动画',
+            format: _selectedPrimary == '番剧' ? '电视剧' : 'all',
+          ),
+        );
+      } else if (_selectedPrimary == '全部') {
+        response = await DoubanService.fetchRecommends(params: params);
+      } else if (widget.kind == 'movie') {
+        response = await DoubanService.getCategoryData(
+          kind: 'movie',
+          category: _selectedPrimary,
+          type: _selectedSecondary,
+          pageLimit: params.pageLimit,
+          page: params.page,
+        );
+      } else if (widget.kind == 'tv' && _selectedPrimary == '最近热门') {
+        response = await DoubanService.getCategoryData(
+          kind: 'tv',
+          category: 'tv',
+          type: _selectedSecondary,
+          pageLimit: params.pageLimit,
+          page: params.page,
+        );
+      } else if (widget.kind == 'show' && _selectedPrimary == '最近热门') {
+        response = await DoubanService.getCategoryData(
+          kind: 'tv',
+          category: 'show',
+          type: _selectedSecondary,
+          pageLimit: params.pageLimit,
+          page: params.page,
         );
       } else {
         response = await DoubanService.fetchRecommends(params: params);
@@ -526,8 +703,11 @@ class CategoryScreenState extends State<CategoryScreen> {
           _hasMore = response.success &&
               response.data != null &&
               response.data!.length >= params.pageLimit;
+          if (widget.kind == 'anime' && _selectedPrimary == '每日放送') {
+            _hasMore = false;
+          }
           _loadingMore = false;
-          
+
           debugPrint('CategoryScreen[${widget.kind}] 状态更新: movies=${_movies.length}, hasMore=$_hasMore');
         });
       }
@@ -555,49 +735,28 @@ class CategoryScreenState extends State<CategoryScreen> {
     await _loadData(refresh: false);
   }
 
-  String _encodeValue(String value) {
-    if (value == '全部') return 'all';
-    if (value == '近期热门') return 'recent_hot';
-    // 使用豆瓣标签映射，如果没有映射则使用原值
-    return _doubanTagMapping[value] ?? value;
-  }
-
-  String _decodeValue(String value) {
-    if (value == 'all') return '全部';
-    if (value == 'recent_hot') return '近期热门';
-    return value;
-  }
-
-  /// 近期热门对应 LunaTV /api/douban 的 type/tag 参数
-  ({String type, String tag}) _recentHotTypeTag() {
-    switch (widget.kind) {
-      case 'movie':
-        return (type: 'movie', tag: '热门');
-      case 'show':
-        return (type: 'tv', tag: '综艺');
-      case 'anime':
-        return (type: 'tv', tag: '日本动画');
-      case 'tv':
-      default:
-        return (type: 'tv', tag: '热门');
-    }
+  String _encodeDimensionValue(String value) {
+    return value == '全部' ? 'all' : value;
   }
 
   String _currentValueForDimension(String dimension) {
     switch (dimension) {
-      case 'category':
-        return _decodeValue(_params.category);
-      case 'region':
-        return _decodeValue(_params.region);
-      case 'year':
-        return _decodeValue(_params.year);
-      case 'sort':
-        for (final entry in _sortValues.entries) {
-          if (entry.value == _params.sort) return entry.key;
-        }
-        return '近期热度';
+      case 'type':
+        return _params.category == 'all' ? '全部' : _params.category;
       case 'label':
-        return _decodeValue(_params.label);
+        return _params.label == 'all' ? '全部' : _params.label;
+      case 'region':
+        return _params.region == 'all' ? '全部' : _params.region;
+      case 'year':
+        return _params.year == 'all' ? '全部' : _params.year;
+      case 'platform':
+        return _params.platform == 'all' ? '全部' : _params.platform;
+      case 'sort':
+        final value = _params.sort;
+        for (final entry in _sortValues.entries) {
+          if (entry.value == value) return entry.key;
+        }
+        return '综合排序';
       default:
         return '全部';
     }
@@ -605,90 +764,388 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   List<String> _optionsForDimension(String dimension) {
     switch (dimension) {
-      case 'category':
-        return _config.categories;
-      case 'region':
-        return _config.regions;
-      case 'year':
-        return _config.years;
-      case 'sort':
-        return _config.sorts;
+      case 'type':
+        if (widget.kind == 'movie') return _typeOptionsMovie;
+        if (widget.kind == 'tv') return _typeOptionsTv;
+        if (widget.kind == 'show') return _typeOptionsShow;
+        return const ['全部'];
       case 'label':
-        return _config.labels;
+        if (_selectedPrimary == '番剧') return _labelOptionsAnimeTv;
+        if (_selectedPrimary == '剧场版') return _labelOptionsAnimeMovie;
+        return const ['全部'];
+      case 'region':
+        if (widget.kind == 'movie') return _regionOptionsMovie;
+        return _regionOptionsTvShowAnime;
+      case 'year':
+        return _yearOptions;
+      case 'platform':
+        return _platformOptions;
+      case 'sort':
+        return _currentSortLabels;
       default:
         return [];
     }
   }
 
   void _applyDimensionValue(String dimension, String value) {
-    final encoded = dimension == 'sort' ? _sortValues[value]! : _encodeValue(value);
+    _closeDimensionDropdown();
+    final encoded = dimension == 'sort'
+        ? _sortValues[value]!
+        : _encodeDimensionValue(value);
     setState(() {
-      var newSort = dimension == 'sort' ? encoded : _params.sort;
-      // 切换小分类时，非近期热门默认使用首映时间排序
-      if (dimension == 'category' && encoded != 'recent_hot') {
-        newSort = _config.defaultSort;
-      }
       _params = _params.copyWith(
-        category: dimension == 'category' ? encoded : _params.category,
+        category: dimension == 'type' ? encoded : _params.category,
+        label: dimension == 'label' ? encoded : _params.label,
         region: dimension == 'region' ? encoded : _params.region,
         year: dimension == 'year' ? encoded : _params.year,
-        sort: newSort,
-        label: dimension == 'label' ? encoded : _params.label,
+        platform: dimension == 'platform' ? encoded : _params.platform,
+        sort: dimension == 'sort' ? encoded : _params.sort,
         page: 0,
       );
-      // 切换到近期热门时排序维度会被隐藏，避免停留在已消失的排序项
-      if (dimension == 'category' && encoded == 'recent_hot' && _selectedDimension == 'sort') {
-        _selectedDimension = 'category';
+    });
+    _loadData(refresh: true);
+  }
+
+  void _onPrimaryChanged(String value) {
+    if (value == _selectedPrimary) return;
+    setState(() {
+      _activeDimension = null;
+      _selectedPrimary = value;
+      _selectedSecondary = _defaultSecondaryForPrimary(value);
+      _params = _resetParamsForPrimary(value);
+    });
+    _loadData(refresh: true);
+  }
+
+  String _defaultSecondaryForPrimary(String primary) {
+    if (widget.kind == 'movie') return '全部';
+    if (widget.kind == 'tv') {
+      return primary == '最近热门' ? 'tv' : 'tv';
+    }
+    if (widget.kind == 'show') {
+      return primary == '最近热门' ? 'show' : 'show';
+    }
+    return '全部';
+  }
+
+  DoubanRecommendsParams _resetParamsForPrimary(String primary) {
+    const defaultSort = 'U';
+    final base = DoubanRecommendsParams(
+      kind: _config.kind,
+      category: 'all',
+      format: _config.defaultFormat,
+      sort: defaultSort,
+      pageLimit: _params.pageLimit,
+      page: 0,
+    );
+
+    if (widget.kind == 'anime') {
+      if (primary == '番剧') {
+        return base.copyWith(kind: 'tv', category: '动画', format: '电视剧');
       }
-    });
+      if (primary == '剧场版') {
+        return base.copyWith(kind: 'movie', category: '动画', format: 'all');
+      }
+      return base;
+    }
+
+    if (primary == '全部') {
+      if (widget.kind == 'movie') {
+        return base.copyWith(kind: 'movie', format: 'all');
+      }
+      if (widget.kind == 'tv') {
+        return base.copyWith(kind: 'tv', format: '电视剧');
+      }
+      if (widget.kind == 'show') {
+        return base.copyWith(kind: 'tv', format: '综艺');
+      }
+    }
+
+    return base;
   }
 
-  void _resetFilters() {
+  void _onSecondaryChanged(String value) {
+    if (value == _selectedSecondary) return;
     setState(() {
-      _params = DoubanRecommendsParams(
-        kind: _config.kind,
-        category: _encodeValue(_config.defaultCategory),
-        format: _encodeValue(_config.defaultFormat),
-        sort: _config.defaultSort,
-      );
-      _selectedDimension = 'category';
+      _activeDimension = null;
+      _selectedSecondary = value;
+      _params = _params.copyWith(page: 0);
     });
+    _loadData(refresh: true);
   }
 
-  void _openFilterPanel() {
-    setState(() {
-      _filterPanelOpen = true;
-      _selectedDimension = 'category';
-    });
+  void _openDimensionDropdown(String dimension) {
+    _disposeDropdownOptionFocusNodes();
+    final options = _optionsForDimension(dimension);
+    _dropdownOptionFocusNodes.addAll(
+      List.generate(options.length, (_) => FocusNode()),
+    );
+    setState(() => _activeDimension = dimension);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _filterPanelFocusNode.requestFocus();
+      if (mounted) _focusDropdownOption(0);
     });
   }
 
-  void _closeFilterPanel() {
-    setState(() => _filterPanelOpen = false);
+  void _closeDimensionDropdown() {
+    _disposeDropdownOptionFocusNodes();
+    setState(() => _activeDimension = null);
   }
 
-  Future<void> _confirmFilters() async {
-    _closeFilterPanel();
-    await _loadData(refresh: true);
+  void _disposeDropdownOptionFocusNodes() {
+    for (final node in _dropdownOptionFocusNodes) {
+      node.dispose();
+    }
+    _dropdownOptionFocusNodes.clear();
+  }
+
+  void _focusDropdownOption(int index) {
+    if (index >= 0 && index < _dropdownOptionFocusNodes.length) {
+      _dropdownOptionFocusNodes[index].requestFocus();
+    }
+  }
+
+  Widget _buildDimensionDropdown() {
+    if (_activeDimension == null) return const SizedBox.shrink();
+    final dimension = _dimensions.firstWhere((d) => d.key == _activeDimension);
+    final options = _optionsForDimension(_activeDimension!);
+    final currentValue = _currentValueForDimension(_activeDimension!);
+
+    return Positioned(
+      top: 116,
+      left: AppSpacing.lg,
+      right: AppSpacing.lg,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 减去 Container 水平内边距和 FocusableWidget 默认 padding 后计算真实列数
+          final width = constraints.maxWidth - 2 * AppSpacing.md;
+          const itemWidth = 110.0 + 2 * AppSpacing.xs;
+          const spacing = AppSpacing.md;
+          _dropdownCrossAxisCount = math.max(
+            1,
+            ((width + spacing) / (itemWidth + spacing)).floor(),
+          );
+          return Container(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.bgSurface,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(color: AppColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 24,
+                  spreadRadius: 4,
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  dimension.label,
+                  style: const TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Wrap(
+                  spacing: AppSpacing.md,
+                  runSpacing: AppSpacing.md,
+                  children: [
+                    for (int i = 0; i < options.length; i++)
+                      Builder(
+                        builder: (context) {
+                          final option = options[i];
+                          final selected = currentValue == option;
+                          return FocusableWidget(
+                            focusNode: _dropdownOptionFocusNodes[i],
+                            onTap: () => _applyDimensionValue(_activeDimension!, option),
+                            onKeyEvent: (node, event) => _handleDropdownOptionKeyEvent(
+                              i,
+                              options.length,
+                              option,
+                              node,
+                              event,
+                            ),
+                            onFocusChange: (focused) {
+                              if (focused) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (context.mounted) {
+                                    Scrollable.ensureVisible(
+                                      context,
+                                      duration: const Duration(milliseconds: 200),
+                                      curve: Curves.easeOut,
+                                      alignment: 0.5,
+                                    );
+                                  }
+                                });
+                              }
+                            },
+                            child: Container(
+                              width: 110,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.md,
+                                vertical: AppSpacing.sm,
+                              ),
+                              decoration: BoxDecoration(
+                                color: selected ? AppColors.primary : AppColors.bgElevated,
+                                borderRadius: BorderRadius.circular(AppRadius.sm),
+                                border: Border.all(
+                                  color: selected ? AppColors.primary : AppColors.border,
+                                ),
+                              ),
+                              child: Text(
+                                option,
+                                textAlign: TextAlign.center,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'NotoSansSC',
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: selected ? Colors.white : AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  KeyEventResult _handleDropdownOptionKeyEvent(
+    int index,
+    int itemCount,
+    String option,
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+
+    final crossAxisCount = _dropdownCrossAxisCount;
+    final row = index ~/ crossAxisCount;
+    final col = index % crossAxisCount;
+    final rowCount = (itemCount + crossAxisCount - 1) ~/ crossAxisCount;
+
+    int columnsInRow(int r) {
+      if (r < rowCount - 1) return crossAxisCount;
+      return itemCount - (rowCount - 1) * crossAxisCount;
+    }
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        if (col > 0) {
+          _focusDropdownOption(index - 1);
+        } else if (row > 0) {
+          final prevRowColumns = columnsInRow(row - 1);
+          _focusDropdownOption((row - 1) * crossAxisCount + (prevRowColumns - 1));
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        final currentRowColumns = columnsInRow(row);
+        if (col < currentRowColumns - 1) {
+          _focusDropdownOption(index + 1);
+        } else if (row < rowCount - 1) {
+          _focusDropdownOption((row + 1) * crossAxisCount);
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        if (row > 0) {
+          final prevRowColumns = columnsInRow(row - 1);
+          final targetCol = col < prevRowColumns ? col : prevRowColumns - 1;
+          _focusDropdownOption((row - 1) * crossAxisCount + targetCol);
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        if (row < rowCount - 1) {
+          final nextRowColumns = columnsInRow(row + 1);
+          final targetCol = col < nextRowColumns ? col : nextRowColumns - 1;
+          _focusDropdownOption((row + 1) * crossAxisCount + targetCol);
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.select:
+        _applyDimensionValue(_activeDimension!, option);
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  KeyEventResult _handleDimensionButtonKeyEvent(
+    int index,
+    int itemCount,
+    String dimensionKey,
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        if (index > 0) {
+          final prevKey = _dimensions[index - 1].key;
+          _dimensionButtonFocusNodes[prevKey]?.requestFocus();
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        if (index < itemCount - 1) {
+          final nextKey = _dimensions[index + 1].key;
+          _dimensionButtonFocusNodes[nextKey]?.requestFocus();
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _focusFirstPoster();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.select:
+        _openDimensionDropdown(dimensionKey);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _focusSelectedCategoryTag();
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
   }
 
   Future<void> _openDetail(BuildContext context, DoubanMovie movie) async {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailScreen.fromDoubanMovie(movie),
-      ),
-    );
+    final id = movie.id;
+    final Widget screen;
+    if (id.startsWith('bgm_')) {
+      final bgmId = int.tryParse(id.substring(4));
+      final item = _bangumiCalendarItems.firstWhere(
+        (item) => item.id == bgmId,
+        orElse: () => BangumiCalendarItem(
+          id: bgmId ?? 0,
+          title: movie.title,
+          poster: movie.poster.isNotEmpty ? movie.poster : null,
+          year: movie.year.isNotEmpty ? movie.year : null,
+          rate: movie.rate,
+        ),
+      );
+      screen = DetailScreen.fromBangumiCalendarItem(item);
+    } else {
+      screen = DetailScreen.fromDoubanMovie(movie);
+    }
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
 
-    // TV 遥控器返回键统一交给 PopScope/BackInterceptor 处理，
-    // 这里仅保留键盘 Escape 的兜底关闭，避免与系统返回事件重复响应。
-    if (event.logicalKey == LogicalKeyboardKey.escape && _filterPanelOpen) {
-      _closeFilterPanel();
+    if (event.logicalKey == LogicalKeyboardKey.escape && _activeDimension != null) {
+      _closeDimensionDropdown();
       return KeyEventResult.handled;
     }
 
@@ -706,45 +1163,60 @@ class CategoryScreenState extends State<CategoryScreen> {
         onKeyEvent: (_, event) => _handleKeyEvent(event),
         child: Stack(
           children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildTopFilterBar(),
-              Expanded(
-                child: _buildBody(context),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildTopFilterBar(),
+                Expanded(
+                  child: _buildBody(context),
+                ),
+              ],
+            ),
+            if (_activeDimension != null) _buildDimensionDropdown(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String get _secondRowLabel {
+    if (_selectedPrimary == '每日放送') return '星期';
+    if (_showSecondaryRow) return '类型';
+    if (_showDimensionButtons) return '筛选';
+    return '';
+  }
+
+  Widget _buildLabeledRow({
+    required String label,
+    required Widget child,
+    required double height,
+  }) {
+    return SizedBox(
+      height: height,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
               ),
-            ],
+            ),
           ),
-          if (_filterPanelOpen) _buildFilterPanelOverlay(),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: child),
         ],
       ),
-    ),
-  );
-}
-
-KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      if (_categoryTagFocusNodes.isNotEmpty) {
-        _categoryTagFocusNodes.first.requestFocus();
-      }
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _focusFirstPoster();
-      return KeyEventResult.handled;
-    }
-    // 左键在筛选按钮上无内部移动，消费掉避免默认遍历跳到其他区域；
-    // 上键继续冒泡，由 TvShell 回到顶部导航栏。
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
+    );
   }
 
   Widget _buildTopFilterBar() {
     return Container(
-      height: 64,
+      height: 116,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       decoration: const BoxDecoration(
         color: AppColors.bgSurface,
@@ -752,43 +1224,18 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
           bottom: BorderSide(color: AppColors.border),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FocusableWidget(
-            autofocus: true,
-            focusNode: _filterButtonFocusNode,
-            onTap: _openFilterPanel,
-            onKeyEvent: _handleFilterButtonKeyEvent,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.bgElevated,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.filter_list, color: AppColors.textSecondary, size: 18),
-                  SizedBox(width: AppSpacing.xs),
-                  Text(
-                    '筛选与排序',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
+          _buildLabeledRow(
+            label: '分类',
+            height: 56,
             child: _buildCategoryTags(),
+          ),
+          _buildLabeledRow(
+            label: _secondRowLabel,
+            height: 52,
+            child: _buildSecondRow(),
           ),
         ],
       ),
@@ -801,11 +1248,10 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
     KeyEvent event,
   ) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    debugPrint('[CategoryTag] key=${event.logicalKey} index=$index');
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       if (index > 0) {
         _categoryTagFocusNodes[index - 1].requestFocus();
-      } else {
-        _filterButtonFocusNode.requestFocus();
       }
       return KeyEventResult.handled;
     }
@@ -816,10 +1262,64 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _focusFirstPoster();
+      _onCategoryTagDown(index, node);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void _onCategoryTagDown(int index, FocusNode node) {
+    final option = _config.primaryOptions[index];
+    final primary = option.value;
+
+    if (widget.kind != 'anime') {
+      _focusSecondRowFirst();
+      return;
+    }
+
+    debugPrint('[CategoryTag] down index=$index primary=$primary selected=$_selectedPrimary');
+    if (_selectedPrimary != primary) {
+      setState(() {
+        _activeDimension = null;
+        _selectedPrimary = primary;
+        _selectedSecondary = _defaultSecondaryForPrimary(primary);
+        _params = _resetParamsForPrimary(primary);
+      });
+      _loadData(refresh: true);
+    }
+
+    _focusSecondRowForPrimary(primary);
+  }
+
+  void _focusSecondRowForPrimary(String primary) {
+    FocusNode? target;
+    if (primary == '每日放送') {
+      if (_weekdayFocusNodes.isNotEmpty) target = _weekdayFocusNodes.first;
+    } else if (_showSecondaryRowForPrimary(primary)) {
+      if (_secondaryTagFocusNodes.isNotEmpty) target = _secondaryTagFocusNodes.first;
+    } else if (_showDimensionButtonsForPrimary(primary)) {
+      final firstKey = _dimensionsForPrimary(primary).first.key;
+      debugPrint('[Focus] firstKey=$firstKey availableNodes=${_dimensionButtonFocusNodes.keys}');
+      target = _dimensionButtonFocusNodes[firstKey];
+    }
+
+    if (target == null) {
+      _focusFirstPoster();
+      return;
+    }
+
+    final effectiveTarget = target;
+    debugPrint('[Focus] target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus} context=${effectiveTarget.context}');
+    effectiveTarget.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      debugPrint('[Focus] post-frame target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus} context=${effectiveTarget.context}');
+      effectiveTarget.requestFocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        debugPrint('[Focus] post-frame2 target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus}');
+      });
+    });
   }
 
   Widget _buildCategoryTags() {
@@ -827,21 +1327,100 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          for (int index = 0; index < _config.categories.length; index++) ...[
+          for (int index = 0; index < _config.primaryOptions.length; index++) ...[
             Builder(
               builder: (context) {
-                final category = _config.categories[index];
-                final selected =
-                    _currentValueForDimension('category') == category;
+                final option = _config.primaryOptions[index];
+                final selected = _selectedPrimary == option.value;
                 return Center(
                   child: FocusableWidget(
                     focusNode: _categoryTagFocusNodes[index],
-                    onTap: () {
-                      _applyDimensionValue('category', category);
-                      _loadData(refresh: true);
+                    onTap: () => _onPrimaryChanged(option.value),
+                    onFocusChange: (focused) {
+                      if (focused) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (context.mounted) {
+                            Scrollable.ensureVisible(
+                              context,
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeOut,
+                              alignment: 0.5,
+                            );
+                          }
+                        });
+                      }
                     },
                     onKeyEvent: (node, event) =>
                         _handleCategoryTagKeyEvent(index, node, event),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        border: Border.all(
+                          color: selected ? AppColors.primary : AppColors.border,
+                        ),
+                      ),
+                      child: Text(
+                        option.label,
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: selected
+                              ? Colors.white
+                              : AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (index < _config.primaryOptions.length - 1)
+              const SizedBox(width: AppSpacing.sm),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSecondRow() {
+    debugPrint('[SecondRow] selectedPrimary=$_selectedPrimary showSecondary=$_showSecondaryRow showDim=$_showDimensionButtons');
+    if (_selectedPrimary == '每日放送') {
+      return _buildWeekdayRow();
+    }
+    if (_showSecondaryRow) {
+      return _buildSecondaryTags();
+    }
+    if (_showDimensionButtons) {
+      return _buildDimensionButtons();
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildSecondaryTags() {
+    final options = _config.secondaryOptions;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (int index = 0; index < options.length; index++) ...[
+            Builder(
+              builder: (context) {
+                final option = options[index];
+                final selected = _selectedSecondary == option.value;
+                return Center(
+                  child: FocusableWidget(
+                    focusNode: _secondaryTagFocusNodes[index],
+                    onTap: () => _onSecondaryChanged(option.value),
+                    onKeyEvent: (node, event) =>
+                        _handleSecondaryTagKeyEvent(index, node, event),
                     onFocusChange: (focused) {
                       if (focused) {
                         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -871,7 +1450,7 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
                         ),
                       ),
                       child: Text(
-                        category,
+                        option.label,
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 13,
@@ -886,12 +1465,216 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
                 );
               },
             ),
-            if (index < _config.categories.length - 1)
+            if (index < options.length - 1)
               const SizedBox(width: AppSpacing.sm),
           ],
         ],
       ),
     );
+  }
+
+  KeyEventResult _handleSecondaryTagKeyEvent(
+    int index,
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        if (index > 0) _secondaryTagFocusNodes[index - 1].requestFocus();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        if (index < _secondaryTagFocusNodes.length - 1) {
+          _secondaryTagFocusNodes[index + 1].requestFocus();
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _focusFirstPoster();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        if (_categoryTagFocusNodes.isNotEmpty) {
+          _categoryTagFocusNodes.first.requestFocus();
+        }
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  Widget _buildWeekdayRow() {
+    return SizedBox(
+      height: 52,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (int i = 0; i < BangumiService.weekdays.length; i++) ...[
+              Builder(
+                builder: (context) {
+                  final day = BangumiService.weekdays[i];
+                  final selected = _selectedWeekday == day['en'];
+                  return FocusableWidget(
+                    focusNode: _weekdayFocusNodes[i],
+                    onTap: () {
+                      setState(() => _selectedWeekday = day['en']!);
+                      _loadData(refresh: true);
+                    },
+                    onFocusChange: (focused) {
+                      if (focused) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (context.mounted) {
+                            Scrollable.ensureVisible(
+                              context,
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeOut,
+                              alignment: 0.5,
+                            );
+                          }
+                        });
+                      }
+                    },
+                    onKeyEvent: (node, event) => _handleWeekdayKeyEvent(i, node, event),
+                    child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected ? AppColors.primary : AppColors.bgElevated,
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                      border: Border.all(
+                        color: selected ? AppColors.primary : AppColors.border,
+                      ),
+                    ),
+                    child: Text(
+                      day['cn']!,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: selected ? Colors.white : AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (i < BangumiService.weekdays.length - 1)
+              const SizedBox(width: AppSpacing.sm),
+          ],
+        ],
+      ),
+    ),
+  );
+  }
+
+  KeyEventResult _handleWeekdayKeyEvent(int index, FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    debugPrint('[Weekday] key=${event.logicalKey} index=$index node=$node');
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        if (index > 0) _weekdayFocusNodes[index - 1].requestFocus();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        if (index < BangumiService.weekdays.length - 1) {
+          _weekdayFocusNodes[index + 1].requestFocus();
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _focusFirstPoster();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _focusSelectedCategoryTag();
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  Widget _buildDimensionButtons() {
+    return SizedBox(
+      height: 52,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < _dimensions.length; i++) ...[
+              Builder(
+                builder: (context) {
+                  final dimension = _dimensions[i];
+                  final node = _dimensionButtonFocusNodes[dimension.key]!;
+                  if (i == 0) {
+                    debugPrint('[DimButton] build i=$i key=${dimension.key} node=$node context=${node.context}');
+                  }
+                  final label = '${dimension.label}：${_currentValueForDimension(dimension.key)}';
+                  final active = _activeDimension == dimension.key;
+                  return _DimensionButton(
+                    focusNode: node,
+                    onTap: () => _openDimensionDropdown(dimension.key),
+                    onFocusChange: (focused) {
+                      if (focused) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (context.mounted) {
+                            Scrollable.ensureVisible(
+                              context,
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeOut,
+                              alignment: 0.5,
+                            );
+                          }
+                        });
+                      }
+                    },
+                    onKeyEvent: (n, event) => _handleDimensionButtonKeyEvent(
+                      i,
+                      _dimensions.length,
+                      dimension.key,
+                      n,
+                      event,
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: active ? AppColors.primary : AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        border: Border.all(
+                          color: active ? AppColors.primary : AppColors.border,
+                        ),
+                      ),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: active ? Colors.white : AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  );
+              },
+            ),
+            if (i < _dimensions.length - 1) const SizedBox(width: AppSpacing.md),
+          ],
+        ],
+      ),
+    ),
+  );
+  }
+
+  void _onVisibilityChanged(VisibilityInfo info) {
+    if (info.visibleFraction > 0.5) {
+      if (!_hasEverBeenVisible || (_movies.isEmpty && !_loading && _error == null)) {
+        _hasEverBeenVisible = true;
+        _loadData(refresh: true);
+      }
+    }
   }
 
   Widget _buildBody(BuildContext context) {
@@ -930,7 +1713,6 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
       );
     }).toList();
 
-    // 同步海报焦点节点，确保每个海报都有稳定的 FocusNode 用于自定义导航
     while (_posterFocusNodes.length < items.length) {
       _posterFocusNodes.add(FocusNode());
     }
@@ -970,283 +1752,6 @@ KeyEventResult _handleFilterButtonKeyEvent(FocusNode node, KeyEvent event) {
           ],
         );
       },
-    );
-  }
-
-  KeyEventResult _handleFilterPanelKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    // TV 遥控器返回键统一交给 TvShell 的 PopScope + BackInterceptor 处理，
-    // 防止 Focus 先关闭面板后 PopScope 再次触发，导致 BackInterceptor 看到 _filterPanelOpen=false 而弹出退出框。
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
-      _closeFilterPanel();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  Widget _buildFilterPanelOverlay() {
-    return FocusScope(
-      node: _filterPanelFocusNode,
-      onKeyEvent: _handleFilterPanelKeyEvent,
-      child: Container(
-        color: AppColors.bgOverlay,
-        child: Center(
-        child: Container(
-          width: 640,
-          height: 480,
-          decoration: BoxDecoration(
-            color: AppColors.bgSurface,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 24,
-                spreadRadius: 4,
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              _buildFilterPanelHeader(),
-              Expanded(
-                child: Row(
-                  children: [
-                    _buildFilterPanelDimensions(),
-                    Expanded(child: _buildFilterPanelOptions()),
-                  ],
-                ),
-              ),
-              _buildFilterPanelFooter(),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-  }
-
-  Widget _buildFilterPanelHeader() {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: AppColors.border),
-        ),
-      ),
-      child: const Row(
-        children: [
-          Text(
-            '筛选',
-            style: TextStyle(
-              fontFamily: 'NotoSansSC',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterPanelDimensions() {
-    return Container(
-      width: 160,
-      decoration: const BoxDecoration(
-        border: Border(
-          right: BorderSide(color: AppColors.border),
-        ),
-      ),
-      child: ListView.builder(
-        itemCount: _dimensions.length,
-        itemBuilder: (context, index) {
-          final dimension = _dimensions[index];
-          final selected = _selectedDimension == dimension.key;
-          return FocusableWidget(
-            autofocus: index == 0,
-            focusNode: _dimensionFocusNodes[dimension.key],
-            onTap: () => setState(() => _selectedDimension = dimension.key),
-            onKeyEvent: (node, event) => _handleDimensionKeyEvent(dimension.key, event),
-            onFocusChange: (focused) {
-              if (focused) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) {
-                    Scrollable.ensureVisible(
-                      context,
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOut,
-                      alignment: 0.5,
-                    );
-                  }
-                });
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.md,
-              ),
-              decoration: BoxDecoration(
-                color: selected ? AppColors.primaryTint : Colors.transparent,
-                border: Border(
-                  left: BorderSide(
-                    color: selected ? AppColors.primary : Colors.transparent,
-                    width: 3,
-                  ),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    dimension.label,
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: selected ? AppColors.primary : AppColors.textPrimary,
-                    ),
-                  ),
-                  Text(
-                    _currentValueForDimension(dimension.key),
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildFilterPanelOptions() {
-    final options = _optionsForDimension(_selectedDimension);
-    final currentValue = _currentValueForDimension(_selectedDimension);
-    final targetValue =
-        options.contains(currentValue) ? currentValue : (options.isNotEmpty ? options.first : null);
-
-    return Container(
-      key: ValueKey('filter_options_$_selectedDimension'),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: SingleChildScrollView(
-        child: Wrap(
-          spacing: AppSpacing.md,
-          runSpacing: AppSpacing.md,
-          children: options.map((option) {
-            final selected = currentValue == option;
-            return FocusableWidget(
-              autofocus: option == targetValue,
-              focusNode: _optionFocusNodes['${_selectedDimension}:$option'],
-              onTap: () => _applyDimensionValue(_selectedDimension, option),
-              onKeyEvent: _handleOptionKeyEvent,
-              onFocusChange: (focused) {
-                if (focused) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (context.mounted) {
-                      Scrollable.ensureVisible(
-                        context,
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOut,
-                        alignment: 0.5,
-                      );
-                    }
-                  });
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md,
-                  vertical: AppSpacing.sm,
-                ),
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.primary : AppColors.bgElevated,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  border: Border.all(
-                    color: selected ? AppColors.primary : AppColors.border,
-                  ),
-                ),
-                child: Text(
-                  option,
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: selected ? Colors.white : AppColors.textPrimary,
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterPanelFooter() {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: AppColors.border),
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FocusableWidget(
-            onTap: _resetFilters,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: const Text(
-                '清除',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          FocusableWidget(
-            onTap: _confirmFilters,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              child: const Text(
-                '完成',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

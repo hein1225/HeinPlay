@@ -106,13 +106,18 @@ class _TvShellState extends State<TvShell> {
         }
       },
       onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+          return KeyEventResult.ignored;
+        }
         switch (event.logicalKey) {
           case LogicalKeyboardKey.arrowLeft:
             _moveNavFocus(-1);
             return KeyEventResult.handled;
           case LogicalKeyboardKey.arrowRight:
             _moveNavFocus(1);
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowUp:
+            // 顶部导航栏已经是最顶层，按上键时阻止焦点继续向上或跳到其他导航项
             return KeyEventResult.handled;
           case LogicalKeyboardKey.arrowDown:
             // 从顶部导航栏按下键时，将焦点直接移动到当前页面的首个输入区域，
@@ -314,7 +319,9 @@ class _TvShellState extends State<TvShell> {
       },
       child: Focus(
         onKeyEvent: (node, event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+            return KeyEventResult.ignored;
+          }
 
           // 上键兜底：当页面内找不到上方焦点时，回到顶部导航栏
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {

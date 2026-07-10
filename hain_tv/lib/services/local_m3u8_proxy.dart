@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'm3u8_ad_filter.dart';
+
 /// 本地 M3U8/TS 代理服务。
 ///
 /// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / media_kit / video_player）
@@ -184,10 +186,11 @@ class LocalM3u8Proxy {
 
       if (!isHead) {
         var bodyBytes = response.bodyBytes;
-        // 如果响应是子 M3U8/播放列表，把其中的资源 URL 也重写为本地代理地址
+        // 如果响应是子 M3U8/播放列表，先进行广告过滤，再把资源 URL 重写为本地代理地址
         if (_isM3u8Content(response)) {
           final decoded = utf8.decode(bodyBytes, allowMalformed: true);
-          final resolved = _resolveRelativeUrls(decoded, targetUrl);
+          final filtered = _filterM3u8(targetUrl, decoded);
+          final resolved = _resolveRelativeUrls(filtered, targetUrl);
           final rewritten = rewriteToLocalProxy(resolved, baseUrl!);
           bodyBytes = utf8.encode(rewritten);
           out.headers.set('Content-Length', bodyBytes.length.toString());
@@ -214,7 +217,8 @@ class LocalM3u8Proxy {
       return true;
     }
     final body = response.body;
-    return body.length < 10 * 1024 && body.trim().startsWith('#EXTM3U');
+    // M3U8 播放列表大小通常远小于媒体片段，超过 512KB 的响应更可能是媒体数据
+    return body.length < 512 * 1024 && body.trim().startsWith('#EXTM3U');
   }
 
   /// 将 M3U8 内容中的相对 URL 根据 [baseUrl] 解析为绝对 URL。
@@ -369,5 +373,23 @@ class LocalM3u8Proxy {
       return '$proxyBaseUrl/segment?url=${Uri.encodeComponent(originalUrl)}';
     }
     return originalUrl;
+  }
+
+  /// 对 M3U8 内容进行本地广告过滤。
+  static String _filterM3u8(String baseUrl, String content) {
+    try {
+      final filter = M3u8AdFilter();
+      final filtered = filter.purify(baseUrl, content);
+      if (filtered != null && filtered != content) {
+        debugPrint(
+          'LocalM3u8Proxy 子 M3U8 过滤: ${filter.currentAdCount} 个片段',
+        );
+        return filtered;
+      }
+    } catch (e, stack) {
+      debugPrint('LocalM3u8Proxy 子 M3U8 过滤失败: $e');
+      debugPrint('$stack');
+    }
+    return content;
   }
 }

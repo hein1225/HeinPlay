@@ -12,6 +12,14 @@ import 'lunatv_service.dart';
 class SearchService {
   static const double _similarityThreshold = 0.6;
 
+  static const Map<String, String> _chineseToArabic = {
+    '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
+    '六': '6', '七': '7', '八': '8', '九': '9', '十': '10',
+  };
+  static const List<String> _arabicToChinese = [
+    '', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十',
+  ];
+
   static String _normalize(String text) {
     return text
         .toLowerCase()
@@ -52,6 +60,95 @@ class SearchService {
     }
 
     return previous[n];
+  }
+
+  /// 智能生成数字变体（参考 LunaTV 实现）。
+  /// - "极速车魂第3季" -> "极速车魂第三季"
+  /// - "中国奇谭第二季" -> "中国奇谭2"
+  static String? _generateNumberVariant(String query) {
+    // 模式1: "第X季/部/集/期" 格式（中文数字 -> 阿拉伯数字）
+    final chinesePattern = RegExp(r'第([一二三四五六七八九十])(季|部|集|期)');
+    final chineseMatch = chinesePattern.firstMatch(query);
+    if (chineseMatch != null) {
+      final chineseNum = chineseMatch.group(1)!;
+      final arabicNum = _chineseToArabic[chineseNum];
+      if (arabicNum != null) {
+        final base = query.replaceFirst(chineseMatch.group(0)!, '').trim();
+        if (base.isNotEmpty) return '$base$arabicNum';
+      }
+    }
+
+    // 模式2: "第X季/部/集/期" 格式（阿拉伯数字 -> 中文数字）
+    final arabicPattern = RegExp(r'第(\d+)(季|部|集|期)');
+    final arabicMatch = arabicPattern.firstMatch(query);
+    if (arabicMatch != null) {
+      final num = int.tryParse(arabicMatch.group(1)!);
+      final suffix = arabicMatch.group(2)!;
+      if (num != null && num >= 1 && num <= 10) {
+        final chineseNum = _arabicToChinese[num];
+        return query.replaceFirst(arabicMatch.group(0)!, '第${chineseNum}$suffix');
+      }
+    }
+
+    // 模式3: 末尾纯数字（如 "中国奇谭2" -> "中国奇谭第二季"）
+    final endNumberMatch = RegExp(r'^(.+?)(\d+)$').firstMatch(query);
+    if (endNumberMatch != null) {
+      final base = endNumberMatch.group(1)!.trim();
+      final num = int.tryParse(endNumberMatch.group(2)!);
+      if (num != null && num >= 1 && num <= 10 && base.isNotEmpty) {
+        final chineseNum = _arabicToChinese[num];
+        return '${base}第${chineseNum}季';
+      }
+    }
+
+    return null;
+  }
+
+  /// 智能生成中文标点变体。
+  static String? _generatePunctuationVariant(String query) {
+    if (query.contains('：')) {
+      return query.replaceAll('：', ' ').trim();
+    }
+    if (query.contains(':')) {
+      return query.replaceAll(':', ' ').trim();
+    }
+    return null;
+  }
+
+  /// 智能生成搜索变体，参考 LunaTV 的 generateSearchVariants。
+  /// 优先返回原始查询；仅在可能提升命中率时生成额外变体。
+  static List<String> generateSearchVariants(String originalQuery) {
+    final trimmed = originalQuery.trim();
+    if (trimmed.isEmpty) return [trimmed];
+
+    // 1. 数字变体（最高优先级）
+    final numberVariant = _generateNumberVariant(trimmed);
+    if (numberVariant != null && numberVariant != trimmed) {
+      return [trimmed, numberVariant];
+    }
+
+    // 2. 中文标点变体
+    final punctuationVariant = _generatePunctuationVariant(trimmed);
+    if (punctuationVariant != null && punctuationVariant != trimmed) {
+      return [trimmed, punctuationVariant];
+    }
+
+    // 3. 空格变体（多词搜索）
+    if (trimmed.contains(' ')) {
+      final keywords = trimmed.split(RegExp(r'\s+'));
+      if (keywords.length >= 2) {
+        final lastKeyword = keywords.last;
+        if (RegExp(r'第|季|集|部|篇|章').hasMatch(lastKeyword)) {
+          final combined = keywords.first + lastKeyword;
+          if (combined != trimmed) return [trimmed, combined];
+        }
+        final noSpaces = trimmed.replaceAll(RegExp(r'\s+'), '');
+        if (noSpaces != trimmed) return [trimmed, noSpaces];
+      }
+    }
+
+    // 4. 普通查询：只返回原始查询
+    return [trimmed];
   }
 
   static Future<SearchResult> _enrichWithDouban(SearchResult result) async {
@@ -231,6 +328,63 @@ class SearchService {
     return ApiResponse.success(grouped, statusCode: lunaResponse.statusCode);
   }
 
+  /// 使用搜索变体并行搜索可用源，参考 LunaTV 提升 Bangumi/动漫条目命中率。
+  static Future<ApiResponse<List<SourceOption>>> searchSourcesFastWithVariants({
+    required String keyword,
+    String? source,
+    bool forceRefresh = false,
+  }) async {
+    final variants = generateSearchVariants(keyword);
+
+    // 并行搜索所有变体
+    final variantResponses = await Future.wait(
+      variants.map((variant) async {
+        try {
+          return await LunaTVService.search(
+            keyword: variant,
+            source: source,
+            forceRefresh: forceRefresh,
+          );
+        } catch (e) {
+          debugPrint('搜索变体 "$variant" 失败: $e');
+          return ApiResponse<List<SearchResult>>.error('变体搜索失败: $e');
+        }
+      }),
+    );
+
+    // 合并结果并去重
+    final seen = <String>{};
+    final merged = <SearchResult>[];
+    for (final response in variantResponses) {
+      if (response.success && response.data != null) {
+        for (final result in response.data!) {
+          final key = '${result.source}_${result.id}';
+          if (!seen.contains(key)) {
+            seen.add(key);
+            merged.add(result);
+          }
+        }
+      }
+    }
+
+    // 如果全部失败，返回第一个失败的错误信息
+    if (merged.isEmpty) {
+      final firstError = variantResponses.firstWhere(
+        (r) => !r.success,
+        orElse: () => ApiResponse<List<SearchResult>>.success([]),
+      );
+      if (!firstError.success) {
+        return ApiResponse.error(
+          firstError.message ?? '搜索失败',
+          statusCode: firstError.statusCode,
+        );
+      }
+    }
+
+    final grouped = groupBySource(merged);
+    return ApiResponse.success(grouped);
+  }
+
   /// 搜索某部影片的可用源，并把 [current] 放在第一位，其余去重排在后面。
   /// 使用 LunaTV 搜索（不走豆瓣 enrich）以提升速度，失败或超时时只返回 [current]，
   /// 避免让用户长时间等待在搜索页。
@@ -239,8 +393,11 @@ class SearchService {
     required SourceOption current,
   }) async {
     try {
-      // 使用 LunaTV 服务内部配置的超时（8 秒）与重试机制，不再额外限制 5 秒
-      final response = await LunaTVService.search(keyword: keyword);
+      // 从播放记录进入时强制重新搜索其他源，避免旧缓存导致只能使用当前源
+      final response = await LunaTVService.search(
+        keyword: keyword,
+        forceRefresh: true,
+      );
       if (!response.success || response.data == null) {
         return [current];
       }

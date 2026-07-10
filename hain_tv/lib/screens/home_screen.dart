@@ -9,7 +9,6 @@ import '../services/play_record_service.dart';
 import '../theme.dart';
 import '../widgets/tv_grid.dart';
 import 'detail_screen.dart';
-import 'source_loading_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -109,7 +108,7 @@ class HomeScreenState extends State<HomeScreen> {
   Future<void> _openHistory(PlayRecord record) async {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SourceLoadingScreen(record: record),
+        builder: (_) => DetailScreen.fromPlayRecord(record),
       ),
     );
   }

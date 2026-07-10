@@ -51,7 +51,7 @@ class LunaTVService {
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.0.3 Flutter',
+      'User-Agent': 'HainTV/1.1.0 Flutter',
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -175,7 +175,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.0.3 Flutter',
+              'User-Agent': 'HainTV/1.1.0 Flutter',
             },
             body: json.encode(body),
           )
@@ -202,6 +202,7 @@ class LunaTVService {
   static Future<ApiResponse<List<SearchResult>>> search({
     required String keyword,
     String? source,
+    bool forceRefresh = false,
   }) async {
     await _initCache();
     final trimmed = keyword.trim();
@@ -213,13 +214,15 @@ class LunaTVService {
       keyword: trimmed,
       source: source,
     );
-    final cached = await _cacheService.get<List<SearchResult>>(
-      cacheKey,
-      (raw) => (raw as List<dynamic>)
-          .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
-          .toList(),
-    );
-    if (cached != null) return ApiResponse.success(cached);
+    if (!forceRefresh) {
+      final cached = await _cacheService.get<List<SearchResult>>(
+        cacheKey,
+        (raw) => (raw as List<dynamic>)
+            .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+      if (cached != null) return ApiResponse.success(cached);
+    }
 
     try {
       final query = <String, String>{'q': trimmed};
@@ -237,11 +240,17 @@ class LunaTVService {
         final results = resultsData
             .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
             .toList();
-        await _cacheService.set(
-          cacheKey,
-          results.map((e) => e.toJson()).toList(),
-          LunaTVConfig.searchCacheTtl,
-        );
+        // 仅缓存非空结果，避免服务器异常/无数据时被当作“无源”长期缓存，
+        // 服务器恢复后可立即重新搜索到源；空结果同时清理旧缓存。
+        if (results.isNotEmpty) {
+          await _cacheService.set(
+            cacheKey,
+            results.map((e) => e.toJson()).toList(),
+            LunaTVConfig.searchCacheTtl,
+          );
+        } else {
+          await _cacheService.delete(cacheKey);
+        }
         return ApiResponse.success(results, statusCode: response.statusCode);
       }
       return ApiResponse.error(

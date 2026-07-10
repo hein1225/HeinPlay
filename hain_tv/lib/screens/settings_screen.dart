@@ -3,7 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../focus/focusable.dart';
 import '../services/ad_filter_service.dart';
 import '../services/cache_service.dart';
-import '../services/local_storage_service.dart';
+import '../services/hain_tv_cache_manager.dart';
 import '../services/user_data_service.dart';
 import '../theme.dart';
 
@@ -23,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _autoSwitchSourceTimeout = 15;
   String _m3u8ProxyUrl = '';
   bool _adFilterEnabled = true;
+  bool _hardwareDecoding = true;
 
   @override
   void initState() {
@@ -39,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final autoSwitchSourceTimeout = await UserDataService.getAutoSwitchSourceTimeout();
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
+    final hardwareDecoding = await UserDataService.getHardwareDecoding();
     setState(() {
       _playerBackend = backend;
       _doubanSource = douban;
@@ -48,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _autoSwitchSourceTimeout = autoSwitchSourceTimeout;
       _m3u8ProxyUrl = m3u8ProxyUrl;
       _adFilterEnabled = adFilterEnabled;
+      _hardwareDecoding = hardwareDecoding;
     });
   }
 
@@ -78,7 +81,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('已切换为 ${_doubanSourceLabel(value)}，豆瓣缓存已清除'),
+            content: Text(
+              '已切换为 ${_doubanSourceLabel(value)}，豆瓣缓存已清除',
+              style: const TextStyle(color: Colors.white),
+            ),
             backgroundColor: AppColors.bgElevated,
           ),
         );
@@ -138,6 +144,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _adFilterEnabled = value);
   }
 
+  Future<void> _setHardwareDecoding(bool value) async {
+    await UserDataService.saveHardwareDecoding(value);
+    setState(() => _hardwareDecoding = value);
+  }
 
   Future<void> _setAutoSwitchSourceTimeout(int seconds) async {
     await UserDataService.saveAutoSwitchSourceTimeout(seconds);
@@ -169,12 +179,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _clearCache() async {
     final cacheService = CacheService();
     await cacheService.init();
-    await cacheService.clear();
-    await LocalStorageService.clearAllCache();
+    await cacheService.clearPrefix('douban_');
+    await HainTvCacheManager().emptyCache();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('缓存已清除，登录信息与设置已保留'),
+          content: Text(
+            '图片与豆瓣数据缓存已清除',
+            style: TextStyle(color: Colors.white),
+          ),
           backgroundColor: AppColors.bgElevated,
         ),
       );
@@ -222,6 +235,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _adFilterEnabled,
             onChanged: _setAdFilterEnabled,
           ),
+          _buildSwitchTile(
+            title: '硬件解码',
+            subtitle: 'media_kit 播放器生效；关闭后使用软件解码',
+            value: _hardwareDecoding,
+            onChanged: _setHardwareDecoding,
+          ),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('豆瓣数据源'),
           _buildDoubanSourceTile(),
@@ -235,7 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _buildActionTile(
             title: '清除缓存',
-            subtitle: '清除图片缓存、豆瓣数据缓存、播放与搜索历史（保留登录与设置）',
+            subtitle: '清除海报、图片与豆瓣数据缓存，保留播放记录、搜索记录、跳过设置等数据',
             icon: Icons.cleaning_services_outlined,
             onTap: _clearCache,
           ),
@@ -252,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('关于'),
           _buildInfoTile(
             title: '版本',
-            value: '1.0.3',
+            value: '1.1.0',
           ),
           _buildInfoTile(
             title: '作者',
@@ -299,15 +318,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             groupValue: _playerBackend,
             onChanged: _setPlayerBackend,
           ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<PlayerBackendType>(
-            title: 'video_player',
-            subtitle: '系统播放器，体积小',
-            value: PlayerBackendType.videoPlayer,
-            groupValue: _playerBackend,
-            onChanged: _setPlayerBackend,
-          ),
-
         ],
       ),
     );
@@ -411,14 +421,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
-            _buildRadioTile<int>(
-              title: '5 秒',
-              subtitle: '快速切换，适合网络较稳定的环境',
-              value: 5,
-              groupValue: _autoSwitchSourceTimeout,
-              onChanged: _setAutoSwitchSourceTimeout,
-            ),
-            const Divider(height: 1, color: AppColors.border),
             _buildRadioTile<int>(
               title: '10 秒',
               subtitle: '默认较短等待时间',

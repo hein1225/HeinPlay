@@ -70,6 +70,39 @@ class TvPosterCard extends StatelessWidget {
     );
   }
 
+  Widget _buildRatingBadge(String rate) {
+    final score = double.tryParse(rate);
+    final Color bgColor;
+    if (score == null) {
+      bgColor = AppColors.textMuted;
+    } else if (score >= 9.0) {
+      bgColor = const Color(0xFF3B82F6); // 蓝色
+    } else if (score >= 8.0) {
+      bgColor = const Color(0xFF22C55E); // 绿色
+    } else if (score >= 6.0) {
+      bgColor = const Color(0xFFEAB308); // 黄色
+    } else {
+      bgColor = const Color(0xFFEF4444); // 红色
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: Text(
+        rate,
+        style: const TextStyle(
+          fontFamily: 'NotoSansSC',
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget card = FocusableWidget(
@@ -81,57 +114,71 @@ class TvPosterCard extends StatelessWidget {
       focusedScale: 1.04,
       child: AspectRatio(
         aspectRatio: 2 / 3,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                child: _buildImage(context),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'NotoSansSC',
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: selected ? AppColors.primary : AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    subtitle ?? (year.isNotEmpty ? year : '未知年份'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildImage(context),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.9),
+                        Colors.black.withValues(alpha: 0.5),
+                        Colors.transparent,
+                      ],
                     ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              subtitle ?? (year.isNotEmpty ? year : '未知年份'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'NotoSansSC',
+                                fontSize: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ),
+                          if (rating != null && rating!.isNotEmpty) ...[
+                            const SizedBox(width: AppSpacing.sm),
+                            _buildRatingBadge(rating!),
+                          ],
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                if (rating != null && rating!.isNotEmpty) ...[
-                  const SizedBox(width: AppSpacing.sm),
-                  Text(
-                    rating!,
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

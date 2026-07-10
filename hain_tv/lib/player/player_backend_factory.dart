@@ -2,15 +2,12 @@ import '../services/user_data_service.dart';
 import 'exo_player_backend.dart';
 import 'media_kit_backend.dart';
 import 'video_player_backend.dart';
-import 'video_player_backend_impl.dart';
 
 class PlayerBackendFactory {
   static VideoPlayerBackend create(PlayerBackendType type) {
     switch (type) {
       case PlayerBackendType.mediaKit:
         return MediaKitBackend();
-      case PlayerBackendType.videoPlayer:
-        return VideoPlayerBackendImpl();
       case PlayerBackendType.exo:
         return ExoPlayerBackend();
     }

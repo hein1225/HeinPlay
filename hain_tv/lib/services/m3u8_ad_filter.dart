@@ -21,11 +21,11 @@ class M3u8AdFilter {
 
   // 广告片段 URL 特征识别
   static final RegExp _regexAdSegmentUri = RegExp(
-    r'(^|[/?&=_.-])(ads?|adv|advert(ise(ment)?)?|commercial|preroll|pre-roll|midroll|mid-roll|postroll|post-roll|sponsor|scte|vast|vmap|interstitial|bumper)([/?&=_.-]|$)',
+    r'(^|[/?&=_.-])(ads?|adv|advert(ise(ment)?)?|commercial|preroll|pre-roll|midroll|mid-roll|postroll|post-roll|sponsor|scte|vast|vmap|interstitial|bumper|pangolin|cmaz|pcdn|baidustatic|admarvel|admob|adsense|inmobi|mopub|unityads|vungle|applovin|chartboost|ironsource|startapp|adcolony|gdt|toutiao|bdstatic|sigmob|mobvista)([/?&=_.-]|$)',
     caseSensitive: false,
   );
 
-  // 常见广告 CDN 域名特征
+  // 常见广告 CDN 域名/路径特征
   static const List<String> _adDomainKeywords = [
     'adservice',
     'adserver',
@@ -37,6 +37,46 @@ class M3u8AdFilter {
     'moatads',
     'scorecardresearch',
     'quantserve',
+    'pangolin',
+    'cmaz',
+    'pcdn',
+    'baidustatic',
+    'admarvel',
+    'admob',
+    'adsense',
+    'inmobi',
+    'mopub',
+    'unityads',
+    'vungle',
+    'applovin',
+    'chartboost',
+    'ironsource',
+    'startapp',
+    'adcolony',
+    'gdt',
+    'toutiao',
+    'bdstatic',
+    'sigmob',
+    'mobvista',
+  ];
+
+  // 广告片段常见路径特征
+  static const List<String> _adPathPatterns = [
+    '/ad/',
+    '/ads/',
+    '/adv/',
+    '/advert/',
+    '/advertise/',
+    '/commercial/',
+    '/preroll/',
+    '/midroll/',
+    '/postroll/',
+    '/sponsor/',
+    '/vast/',
+    '/vmap/',
+    '/cmaf/',
+    '/cmaz/',
+    '/pcdn/',
   ];
 
   int currentAdCount = 0;
@@ -306,8 +346,7 @@ class M3u8AdFilter {
 
       if (inAdBreak ||
           _hasAdSignal(pending) ||
-          _isAdSegmentUri(item) ||
-          _hasAdDomain(item)) {
+          _hasAdFeature(item)) {
         pending.clear();
         currentAdCount += 1;
         changed = true;
@@ -408,11 +447,24 @@ class M3u8AdFilter {
     return false;
   }
 
+  static bool _isAdPathPattern(String url) {
+    final lower = url.toLowerCase();
+    for (final pattern in _adPathPatterns) {
+      if (lower.contains(pattern)) return true;
+    }
+    return false;
+  }
+
+  /// 综合判断 URL 是否具有广告特征（域名、URI 关键字、路径）。
+  static bool _hasAdFeature(String url) {
+    return _isAdSegmentUri(url) || _hasAdDomain(url) || _isAdPathPattern(url);
+  }
+
   String _cleanDiscontinuityGroups(String tsUrlPre, String m3u8Content) {
     final line = _resolveContent(tsUrlPre, m3u8Content);
     final lines = line.split('\n');
     final groups = _buildDiscontinuityGroups(lines);
-    if (groups.length < 3) return line;
+    if (groups.length < 2) return line;
     final main = _findMainGroup(groups);
     if (main == null || main.segmentCount < 3) return line;
 
@@ -458,10 +510,19 @@ class M3u8AdFilter {
   static bool _shouldDropGroup(_Group group, _Group main) {
     if (group == main || group.segmentCount == 0) return false;
 
+    final mainAvgDuration =
+        main.segmentCount > 0 ? main.totalDuration / main.segmentCount : 0;
+    final groupAvgDuration =
+        group.segmentCount > 0 ? group.totalDuration / group.segmentCount : 0;
+
+    // 广告组通常很短：片段数少 或 总时长占比小 或 平均时长远小于主内容
     final shortGroup = group.segmentCount <= 2 ||
         (main.totalDuration > 0 &&
             group.totalDuration > 0 &&
-            group.totalDuration < main.totalDuration * 0.18);
+            group.totalDuration < main.totalDuration * 0.18) ||
+        (mainAvgDuration > 0 &&
+            groupAvgDuration > 0 &&
+            groupAvgDuration < mainAvgDuration * 0.35);
 
     final differentHost = main.host.isNotEmpty &&
         group.host.isNotEmpty &&
@@ -472,11 +533,18 @@ class M3u8AdFilter {
         main.pathPrefix != group.pathPrefix;
 
     final hasAdFeature = group.adLikeCount > 0 ||
-        _hasAdDomain(group.host) ||
-        _isAdSegmentUri(group.pathPrefix);
+        _hasAdFeature(group.host) ||
+        _hasAdFeature(group.pathPrefix);
 
-    final adLike = hasAdFeature || differentHost ||
-        (group.segmentCount <= 2 && differentPath);
+    // 有明确广告特征时，即使只有 2 个组也允许删除
+    final adLike = hasAdFeature ||
+        differentHost ||
+        (group.segmentCount <= 2 && differentPath) ||
+        (groupAvgDuration > 0 && groupAvgDuration < 4.0 && differentPath) ||
+        (groupAvgDuration > 0 &&
+            mainAvgDuration > 0 &&
+            groupAvgDuration < mainAvgDuration * 0.25 &&
+            differentPath);
 
     return shortGroup && adLike;
   }
@@ -516,6 +584,9 @@ class M3u8AdFilter {
     String maxTimesPreUrl,
     Map<String, int> preUrlMap,
   ) {
+    // 明确广告特征的 URL 直接丢弃
+    if (_hasAdFeature(absoluteUrl)) return false;
+
     if (!domainFiltering) return absoluteUrl.startsWith(maxTimesPreUrl);
     final ifirst = absoluteUrl.indexOf('/', 9);
     final domain = (ifirst > 0) ? absoluteUrl.substring(0, ifirst) : absoluteUrl;
@@ -652,8 +723,7 @@ class _Group {
       return;
     }
     segmentCount += 1;
-    if (M3u8AdFilter._isAdSegmentUri(line) ||
-        M3u8AdFilter._hasAdDomain(line)) {
+    if (M3u8AdFilter._hasAdFeature(line)) {
       adLikeCount += 1;
     }
     if (host.isEmpty) host = M3u8AdFilter._hostOf(line);

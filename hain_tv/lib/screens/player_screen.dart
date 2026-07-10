@@ -64,6 +64,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _controlsTimer;
   Timer? _longPressSeekTimer;
   Timer? _continuousSeekTimer;
+  Timer? _clockTimer;
+  DateTime _currentTime = DateTime.now();
 
   // 固定快进快退步长
   static const int _seekStep = 20;
@@ -115,6 +117,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _initBackend();
     _initWakelock();
     _initBrightnessAndVolume();
+    _startClock();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
@@ -129,6 +132,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       debugPrint('PlayerScreen: 启用屏幕常亮失败: $e');
     }
+  }
+
+  void _startClock() {
+    _currentTime = DateTime.now();
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) {
+        setState(() => _currentTime = DateTime.now());
+      }
+    });
+  }
+
+  String _formatClock(DateTime time) {
+    final h = time.hour.toString().padLeft(2, '0');
+    final m = time.minute.toString().padLeft(2, '0');
+    return '$h:$m';
   }
 
   Future<void> _initBrightnessAndVolume() async {
@@ -195,6 +213,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  void _onDurationUpdate(Duration duration) {
+    if (!mounted) return;
+    setState(() => _duration = duration);
+    // 如果因超时导致界面显示了“播放失败”，但实际视频已初始化成功，则清除错误
+    if (duration.inMilliseconds > 0 &&
+        _error == '播放失败，请尝试切换播放源' &&
+        !_initialized) {
+      setState(() {
+        _error = null;
+        _initialized = true;
+      });
+    }
+  }
+
   Future<void> _initBackend() async {
     final backend = PlayerBackendFactory.create(_currentPlayerBackend);
     _backend = backend;
@@ -210,9 +242,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }),
       )
       ..add(
-        backend.durationStream.listen((duration) {
-          if (mounted) setState(() => _duration = duration);
-        }),
+        backend.durationStream.listen(_onDurationUpdate),
       )
       ..add(
         backend.playingStream.listen((playing) {
@@ -380,14 +410,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     if (!mounted) return;
 
+    // 如果超时判定失败，但当前源实际已就绪（ duration 有效），修正为成功，
+    // 避免初始化较慢的源已经开始播放却仍显示“播放失败”。
+    if (!success &&
+        _backend != null &&
+        _duration.inMilliseconds > 0 &&
+        _error == null) {
+      debugPrint('PlayerScreen 当前源已就绪，修正超时判定为成功');
+      success = true;
+    }
+
     if (success) {
       setState(() {
         _currentEpisodeIndex = index;
         _initialized = true;
       });
-      // 恢复上次播放位置
+      // 恢复上次播放位置，并限制在新视频总时长范围内
       if (_pendingInitialPositionMs > 0) {
-        _backend?.seek(Duration(milliseconds: _pendingInitialPositionMs));
+        final maxMs = _duration.inMilliseconds > 500
+            ? _duration.inMilliseconds - 500
+            : _duration.inMilliseconds;
+        final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
+        _backend?.seek(Duration(milliseconds: clampedMs));
         _pendingInitialPositionMs = 0;
       }
       _showControlsWithoutFocusShift();
@@ -404,6 +448,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     required int timeoutSeconds,
   }) async {
     if (_sources.length <= 1) return false;
+
+    // 记录切换前播放位置，切换成功后恢复
+    final previousPositionMs = _position.inMilliseconds;
 
     // 按 speed 降序排序（最快的排前面），排除当前源
     final candidates = _sources.asMap().entries.toList()
@@ -473,9 +520,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }),
         )
         ..add(
-          backend.durationStream.listen((duration) {
-            if (mounted) setState(() => _duration = duration);
-          }),
+          backend.durationStream.listen(_onDurationUpdate),
         )
         ..add(
           backend.playingStream.listen((playing) {
@@ -483,15 +528,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }),
         );
 
-      // 尝试播放目标集数
+      // 尝试播放目标集数，并对 M3U8 地址应用去广告过滤
+      var url = newEpisodes[targetEpisodeIndex].trim();
+      final filteredUrl = await AdFilterEngine.filterM3u8(
+        sourceType: _currentVideoDetail.source,
+        originalUrl: url,
+      );
+      if (filteredUrl != null && filteredUrl.isNotEmpty) {
+        url = filteredUrl;
+      }
+
       try {
         debugPrint(
-          '自动切换源播放: ${option.title} -> ${newEpisodes[targetEpisodeIndex]}',
+          '自动切换源播放: ${option.title} -> $url',
         );
         final startTime = DateTime.now();
         await _backend
             ?.open(
-              newEpisodes[targetEpisodeIndex],
+              url,
               proxyMode: _currentVideoDetail.proxyMode,
             )
             .timeout(Duration(seconds: timeoutSeconds));
@@ -509,6 +563,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
         if (mounted) {
           setState(() => _initialized = true);
+          // 恢复切换前播放位置，并限制在新视频总时长范围内
+          if (previousPositionMs > 0) {
+            final maxMs = _duration.inMilliseconds > 500
+                ? _duration.inMilliseconds - 500
+                : _duration.inMilliseconds;
+            final clampedMs = previousPositionMs.clamp(0, maxMs);
+            _backend?.seek(Duration(milliseconds: clampedMs));
+          }
           _showControlsWithoutFocusShift();
           return true;
         }
@@ -545,6 +607,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final previousEpisodeIndex = _currentEpisodeIndex;
+    final previousPositionMs = _position.inMilliseconds;
 
     _backend?.dispose();
     for (final sub in _subscriptions) {
@@ -566,6 +629,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
 
     _loadSkipConfig();
+    // 切换源后恢复上次播放位置
+    _pendingInitialPositionMs = previousPositionMs;
     _initBackend();
   }
 
@@ -733,9 +798,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     case PlayerBackendType.mediaKit:
                       label = 'MediaKit';
                       break;
-                    case PlayerBackendType.videoPlayer:
-                      label = 'VideoPlayer';
-                      break;
                     case PlayerBackendType.exo:
                       label = 'ExoPlayer';
                       break;
@@ -793,6 +855,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       type,
     );
 
+    // 切换播放器前保存当前进度，初始化完成后恢复
+    _pendingInitialPositionMs = _position.inMilliseconds;
+
     _backend?.dispose();
     _subscriptions.clear();
 
@@ -834,16 +899,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // 长按连续快进/快退
+  // 长按连续快进/快退，支持加速
   void _startLongPressSeek(String direction) {
     _longPressSeekTimer?.cancel();
     _longPressSeekTimer = Timer(const Duration(milliseconds: 400), () {
       _continuousSeekTimer?.cancel();
+      final startTime = DateTime.now();
       _continuousSeekTimer = Timer.periodic(
         const Duration(milliseconds: 200),
-        (_) => _seekBy(
-          Duration(seconds: direction == 'left' ? -_seekStep : _seekStep),
-        ),
+        (_) {
+          final elapsedMs =
+              DateTime.now().difference(startTime).inMilliseconds;
+          int step;
+          if (elapsedMs < 1000) {
+            step = _seekStep;
+          } else if (elapsedMs < 3000) {
+            step = _seekStep * 2;
+          } else if (elapsedMs < 6000) {
+            step = _seekStep * 4;
+          } else {
+            step = _seekStep * 8;
+          }
+          _seekBy(Duration(seconds: direction == 'left' ? -step : step));
+        },
       );
     });
   }
@@ -924,6 +1002,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           // 焦点不在控制栏内时，左键作为快退
           if (!isFocusInControls) {
             _seekBy(Duration(seconds: -_seekStep));
+            _startLongPressSeek('left');
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -931,6 +1010,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           // 焦点不在控制栏内时，右键作为快进
           if (!isFocusInControls) {
             _seekBy(Duration(seconds: _seekStep));
+            _startLongPressSeek('right');
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -1247,8 +1327,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     switch (type) {
       case PlayerBackendType.mediaKit:
         return 'MediaKit';
-      case PlayerBackendType.videoPlayer:
-        return 'VideoPlayer';
       case PlayerBackendType.exo:
         return 'ExoPlayer';
     }
@@ -1261,6 +1339,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
     _gestureIndicatorTimer?.cancel();
+    _clockTimer?.cancel();
     _bottomControlsFocusNode.dispose();
     for (final sub in _subscriptions) {
       sub.cancel();
@@ -1302,6 +1381,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         totalTime: _duration.inSeconds,
         saveTime: DateTime.now().millisecondsSinceEpoch,
         searchTitle: _currentVideoDetail.title,
+        doubanId: _currentVideoDetail.doubanId?.toString(),
       );
 
       await PlayRecordService.save(record);
@@ -1413,38 +1493,62 @@ class _PlayerScreenState extends State<PlayerScreen> {
           colors: [AppColors.bgOverlay, Colors.transparent],
         ),
       ),
-      child: Row(
+      child: Stack(
         children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _currentVideoDetail.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      _episodeTitle,
+                      style: const TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 14,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _currentVideoDetail.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
+          Positioned.fill(
+            child: Center(
+              child: Text(
+                _formatClock(_currentTime),
+                style: const TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                  shadows: [
+                    Shadow(
+                      color: Colors.black54,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
                 ),
-                Text(
-                  _episodeTitle,
-                  style: const TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 14,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -1497,15 +1601,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 const SizedBox(height: AppSpacing.md),
                 Row(
                   children: [
-                    IconButton(
+                    _buildControlIconButton(
                       focusNode: _playPauseFocusNode,
-                      onPressed: _togglePlay,
-                      icon: Icon(
-                        _playing ? Icons.pause : Icons.play_arrow,
-                        color: AppColors.textPrimary,
-                      ),
+                      onTap: _togglePlay,
+                      icon: _playing ? Icons.pause : Icons.play_arrow,
                     ),
                     const SizedBox(width: AppSpacing.sm),
+                    _buildControlIconButton(
+                      onTap: _previousEpisode,
+                      icon: Icons.skip_previous,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    _buildControlIconButton(
+                      onTap: _nextEpisode,
+                      icon: Icons.skip_next,
+                    ),
+                    const SizedBox(width: AppSpacing.md),
                     Text(
                       '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
                       style: const TextStyle(
@@ -1713,21 +1824,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     if (_currentVideoDetail.episodes.length > 1)
                       const SizedBox(width: AppSpacing.md),
-                    IconButton(
-                      onPressed: _previousEpisode,
-                      icon: const Icon(
-                        Icons.skip_previous,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    IconButton(
-                      onPressed: _nextEpisode,
-                      icon: const Icon(
-                        Icons.skip_next,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
                   ],
                 ),
               ],
@@ -1735,6 +1831,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
       );
     }
+
+  /// 构建控制栏图标按钮，使用 FocusableWidget 以获得明显的焦点边框。
+  Widget _buildControlIconButton({
+    required VoidCallback onTap,
+    required IconData icon,
+    FocusNode? focusNode,
+    bool autofocus = false,
+  }) {
+    return FocusableWidget(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      child: Icon(
+        icon,
+        color: AppColors.textPrimary,
+        size: 28,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1762,7 +1877,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               // 错误提示
               Center(child: _buildError()),
               // 切换源遮罩
-              _buildSwitchingOverlay(),
+              Positioned.fill(child: _buildSwitchingOverlay()),
               // 触摸手势层：响应点击、双击、长按、滑动等手势。
               _buildGestureOverlay(),
               // 控制栏覆盖层：完全不可见时从渲染树/焦点树中彻底移除。

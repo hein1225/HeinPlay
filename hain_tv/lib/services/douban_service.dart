@@ -308,8 +308,8 @@ class DoubanService {
     String year = params.year == 'all' ? '' : params.year;
     String platform = params.platform == 'all' ? '' : params.platform;
     String label = params.label == 'all' ? '' : params.label;
-    // 排序参数：U=近期热度(默认)，T=首映时间，S=高分优先
-    String sort = params.sort == 'all' || params.sort == 'U' ? '' : params.sort;
+    // 排序参数：T=综合排序，U=近期热度，R=首映/首播时间，S=高分优先
+    String sort = params.sort == 'all' ? '' : params.sort;
 
     // 动漫分类特殊处理：当分类是地区名称时，将其作为地区筛选
     final regions = ['中国大陆', '美国', '日本', '韩国', '中国香港', '中国台湾', '英国', '法国', '德国'];

@@ -13,8 +13,8 @@ import '../theme.dart';
 import '../widgets/tv_grid.dart';
 import '../widgets/update_channel_dialog.dart';
 import 'player_screen.dart';
+import 'detail_screen.dart';
 import 'settings_screen.dart';
-import 'source_loading_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -105,7 +105,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _openHistory(models.PlayRecord record) async {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SourceLoadingScreen(record: record),
+        builder: (_) => DetailScreen.fromPlayRecord(record),
       ),
     );
   }
@@ -359,7 +359,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       title: '播放记录',
       items: records,
       emptyMessage: '暂无播放记录',
-      toKey: (r) => '${r.source}+${r.id}',
+      toKey: (r) => r.title,
       toPosterItem: (r) => PosterItem(
         id: r.id,
         title: r.title,

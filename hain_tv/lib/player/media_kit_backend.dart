@@ -86,6 +86,12 @@ class MediaKitBackend implements VideoPlayerBackend {
     }
     debugPrint('MediaKitBackend open: $finalUrl');
 
+    final hardwareDecoding = await UserDataService.getHardwareDecoding();
+    if (_player.platform is NativePlayer) {
+      await (_player.platform as NativePlayer)
+          .setProperty('hwdec', hardwareDecoding ? 'auto' : 'no');
+    }
+
     final effectiveHeaders = <String, String>{
       'User-Agent': _defaultUserAgent,
       'Accept': '*/*',

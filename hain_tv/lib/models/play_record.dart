@@ -95,6 +95,44 @@ class PlayRecord {
       'episodeIndex': index,
       'progress': playTime,
       'saveTime': saveTime,
+      if (doubanId != null) 'douban_id': doubanId,
+      if (year.isNotEmpty) 'year': year,
     };
+  }
+
+  PlayRecord copyWith({
+    String? id,
+    String? source,
+    String? title,
+    String? sourceName,
+    String? cover,
+    String? year,
+    int? index,
+    int? totalEpisodes,
+    int? playTime,
+    int? totalTime,
+    int? saveTime,
+    String? searchTitle,
+    String? remarks,
+    String? doubanId,
+    String? type,
+  }) {
+    return PlayRecord(
+      id: id ?? this.id,
+      source: source ?? this.source,
+      title: title ?? this.title,
+      sourceName: sourceName ?? this.sourceName,
+      cover: cover ?? this.cover,
+      year: year ?? this.year,
+      index: index ?? this.index,
+      totalEpisodes: totalEpisodes ?? this.totalEpisodes,
+      playTime: playTime ?? this.playTime,
+      totalTime: totalTime ?? this.totalTime,
+      saveTime: saveTime ?? this.saveTime,
+      searchTitle: searchTitle ?? this.searchTitle,
+      remarks: remarks ?? this.remarks,
+      doubanId: doubanId ?? this.doubanId,
+      type: type ?? this.type,
+    );
   }
 }

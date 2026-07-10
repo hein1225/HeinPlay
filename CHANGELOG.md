@@ -1,5 +1,42 @@
 # 更新日志
 
+<details open>
+<summary><h2 style="display: inline;">1.1.0</h2></summary>
+
+## 1.1.0
+
+### 新增
+
+- **动漫分类焦点重构**
+  - 「番剧」「剧场版」按下键时焦点正确移动到筛选行第一个按钮（标签/地区/年代/排序等），不再误切换分类。
+  - 新增自定义 `_DimensionButton` 控件，直接使用 `Focus` 管理焦点，绕过 `FocusableWidget`/`FocusableActionDetector` 在动态重建时 FocusNode 无法挂载的问题。
+  - 「每日放送」星期行保持原有逻辑不变，支持完整左右循环。
+
+### 变更
+
+- **电影分类排序精简**
+  - 电影分类「全部」移除「综合排序」选项，仅保留「近期热度」「首映时间」「高分优先」。
+
+- **默认排序调整**
+  - 电影、电视剧、综艺「全部」以及动漫「番剧」「剧场版」默认排序改为「近期热度」（`U`）。
+  - 同步调整 `DoubanService` 排序参数处理逻辑，确保「近期热度」正确透传。
+
+### 修复
+
+- **海报墙上键焦点层级**
+  - 修复分类页（电影、电视剧、综艺、动漫）与首页在海报墙/内容区按住上键不放时，焦点直接跳到「我的」的问题。
+  - `TvShell` 根 Focus 的上键兜底逻辑现在同时处理 `KeyDownEvent` 与 `KeyRepeatEvent`，确保长按遥控器时每一帧都回到当前页面对应的顶部导航项。
+  - 顶部导航项的 Focus 按键处理也支持 `KeyRepeatEvent`，上键到达导航栏后被消费，焦点不再乱跑。
+
+- **启动时权限请求崩溃**
+  - 修复 `main()` 中未初始化 Flutter Binding 就调用 `StorageService.requestStoragePermission()` 导致的 `Null check operator used on a null value` 异常。
+  - 在 `main()` 开头调用 `WidgetsFlutterBinding.ensureInitialized()`，并为权限请求添加 `.catchError()` 兜底。
+
+</details>
+
+<details>
+<summary><h2 style="display: inline;">1.0.0</h2></summary>
+
 ## 1.0.3
 
 ### 新增
@@ -172,3 +209,5 @@
 
 - 适配 Android TV LEANBACK_LAUNCHER。
 - Release 构建使用 `hain_tv_keystore.jks` 签名。
+
+</details>

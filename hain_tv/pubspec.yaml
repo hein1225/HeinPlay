@@ -1,7 +1,7 @@
 name: hain_tv
 description: "海因影视 TV 版"
 publish_to: 'none'
-version: 1.0.3+4
+version: 1.1.0+5
 
 environment:
   sdk: ^3.12.0
@@ -17,7 +17,7 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
   video_player: ^2.11.1
-  video_player_android: ^2.9.7
+  video_player_android: ^2.11.0
   path_provider: ^2.1.5
   permission_handler: ^12.0.3
   dio: ^5.4.0

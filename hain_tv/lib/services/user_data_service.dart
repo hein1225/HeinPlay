@@ -7,7 +7,7 @@ enum DoubanDataSource {
   corsProxy,
 }
 
-enum PlayerBackendType { mediaKit, videoPlayer, exo }
+enum PlayerBackendType { mediaKit, exo }
 
 class UserDataService {
   static const String _serverUrlKey = 'server_url';
@@ -26,6 +26,7 @@ class UserDataService {
   static const String _perVideoPlayerBackendPrefix = 'per_video_player_backend_';
   // 与 Selene 保持一致，方便共用已配置的代理
   static const String _m3u8ProxyUrlKey = 'm3u8_proxy_url';
+  static const String _hardwareDecodingKey = 'hardware_decoding';
 
   static Future<void> saveUserData({
     required String serverUrl,
@@ -173,7 +174,13 @@ class UserDataService {
 
   static Future<int> getAutoSwitchSourceTimeout() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_autoSwitchSourceTimeoutKey) ?? 15;
+    var value = prefs.getInt(_autoSwitchSourceTimeoutKey) ?? 15;
+    // 旧版本允许选择 5 秒，现最短为 10 秒，自动迁移旧配置
+    if (value < 10) {
+      value = 10;
+      await prefs.setInt(_autoSwitchSourceTimeoutKey, value);
+    }
+    return value;
   }
 
   static Future<void> saveM3u8ProxyUrl(String url) async {
@@ -184,6 +191,16 @@ class UserDataService {
   static Future<String> getM3u8ProxyUrl() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_m3u8ProxyUrlKey) ?? '';
+  }
+
+  static Future<void> saveHardwareDecoding(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_hardwareDecodingKey, enabled);
+  }
+
+  static Future<bool> getHardwareDecoding() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_hardwareDecodingKey) ?? true;
   }
 
   static String _perVideoBackendKey(String source, String id) {

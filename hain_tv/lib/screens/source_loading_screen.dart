@@ -111,7 +111,7 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
         CircularProgressIndicator(strokeWidth: 3, color: AppColors.primary),
         SizedBox(height: AppSpacing.lg),
         Text(
-          '正在搜索播放源...',
+          '加载中...',
           style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 18,

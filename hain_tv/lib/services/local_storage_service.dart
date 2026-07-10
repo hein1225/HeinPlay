@@ -11,6 +11,8 @@ class PlayRecord {
   final Duration position;
   final Duration duration;
   final DateTime updatedAt;
+  final String? doubanId;
+  final String? year;
 
   const PlayRecord({
     required this.source,
@@ -22,6 +24,8 @@ class PlayRecord {
     this.position = Duration.zero,
     this.duration = Duration.zero,
     required this.updatedAt,
+    this.doubanId,
+    this.year,
   });
 
   factory PlayRecord.fromJson(Map<String, dynamic> json) {
@@ -35,6 +39,8 @@ class PlayRecord {
       position: Duration(milliseconds: json['position'] ?? 0),
       duration: Duration(milliseconds: json['duration'] ?? 0),
       updatedAt: DateTime.tryParse(json['updatedAt'] ?? '') ?? DateTime.now(),
+      doubanId: json['doubanId']?.toString(),
+      year: json['year']?.toString(),
     );
   }
 
@@ -49,6 +55,8 @@ class PlayRecord {
       'position': position.inMilliseconds,
       'duration': duration.inMilliseconds,
       'updatedAt': updatedAt.toIso8601String(),
+      if (doubanId != null) 'doubanId': doubanId,
+      if (year != null) 'year': year,
     };
   }
 }
