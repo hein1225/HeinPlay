@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../focus/focusable.dart';
 import '../services/ad_filter_service.dart';
+import '../services/bangumi_service.dart';
 import '../services/cache_service.dart';
 import '../services/hain_tv_cache_manager.dart';
 import '../services/user_data_service.dart';
@@ -24,6 +25,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _m3u8ProxyUrl = '';
   bool _adFilterEnabled = false;
   bool _hardwareDecoding = true;
+  BangumiApiProxyType _bangumiApiProxyType = BangumiApiProxyType.cmliussss;
+  String _bangumiApiProxyUrl = '';
+  BangumiImageProxyType _bangumiImageProxyType = BangumiImageProxyType.cmliussss;
+  String _bangumiImageProxyUrl = '';
 
   @override
   void initState() {
@@ -41,6 +46,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
+    final bangumiApiProxyType = await UserDataService.getBangumiApiProxyType();
+    final bangumiApiProxyUrl = await UserDataService.getBangumiApiProxyUrl();
+    final bangumiImageProxyType = await UserDataService.getBangumiImageProxyType();
+    final bangumiImageProxyUrl = await UserDataService.getBangumiImageProxyUrl();
+    await BangumiService.loadProxySettings();
     setState(() {
       _playerBackend = backend;
       _doubanSource = douban;
@@ -51,6 +61,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _m3u8ProxyUrl = m3u8ProxyUrl;
       _adFilterEnabled = adFilterEnabled;
       _hardwareDecoding = hardwareDecoding;
+      _bangumiApiProxyType = bangumiApiProxyType;
+      _bangumiApiProxyUrl = bangumiApiProxyUrl;
+      _bangumiImageProxyType = bangumiImageProxyType;
+      _bangumiImageProxyUrl = bangumiImageProxyUrl;
     });
   }
 
@@ -149,6 +163,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _hardwareDecoding = value);
   }
 
+  Future<void> _setBangumiApiProxyType(BangumiApiProxyType value) async {
+    await UserDataService.saveBangumiApiProxyType(value);
+    await BangumiService.loadProxySettings();
+    setState(() => _bangumiApiProxyType = value);
+  }
+
+  Future<void> _setBangumiApiProxyUrl(String url) async {
+    await UserDataService.saveBangumiApiProxyUrl(url);
+    await BangumiService.loadProxySettings();
+    setState(() => _bangumiApiProxyUrl = url.trim());
+  }
+
+  Future<void> _setBangumiImageProxyType(BangumiImageProxyType value) async {
+    await UserDataService.saveBangumiImageProxyType(value);
+    await BangumiService.loadProxySettings();
+    setState(() => _bangumiImageProxyType = value);
+  }
+
+  Future<void> _setBangumiImageProxyUrl(String url) async {
+    await UserDataService.saveBangumiImageProxyUrl(url);
+    await BangumiService.loadProxySettings();
+    setState(() => _bangumiImageProxyUrl = url.trim());
+  }
+
   Future<void> _setAutoSwitchSourceTimeout(int seconds) async {
     await UserDataService.saveAutoSwitchSourceTimeout(seconds);
     setState(() => _autoSwitchSourceTimeout = seconds);
@@ -242,6 +280,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: _setHardwareDecoding,
           ),
           const SizedBox(height: AppSpacing.lg),
+          _buildSectionTitle('Bangumi 数据源'),
+          _buildBangumiApiProxyTile(),
+          const SizedBox(height: AppSpacing.md),
+          _buildBangumiImageProxyTile(),
+          const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('豆瓣数据源'),
           _buildDoubanSourceTile(),
           const SizedBox(height: AppSpacing.lg),
@@ -271,7 +314,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('关于'),
           _buildInfoTile(
             title: '版本',
-            value: '1.1.1',
+            value: '1.1.2',
           ),
           _buildInfoTile(
             title: '作者',
@@ -530,6 +573,274 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildBangumiApiProxyTile() {
+    return _buildCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              top: AppSpacing.md,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bangumi 数据代理',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                const Text(
+                  '选择获取 Bangumi 番剧数据的方式，服务器无法访问 api.bgm.tv 时可切换反代',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildRadioTile<BangumiApiProxyType>(
+            title: '直连（直接访问 api.bgm.tv）',
+            value: BangumiApiProxyType.direct,
+            groupValue: _bangumiApiProxyType,
+            onChanged: _setBangumiApiProxyType,
+          ),
+          _buildRadioTile<BangumiApiProxyType>(
+            title: 'Bangumi 反代 By CMLiussss（解决服务器被墙）',
+            value: BangumiApiProxyType.cmliussss,
+            groupValue: _bangumiApiProxyType,
+            onChanged: _setBangumiApiProxyType,
+          ),
+          _buildRadioTile<BangumiApiProxyType>(
+            title: '自定义反代地址',
+            value: BangumiApiProxyType.custom,
+            groupValue: _bangumiApiProxyType,
+            onChanged: _setBangumiApiProxyType,
+          ),
+          if (_bangumiApiProxyType == BangumiApiProxyType.custom)
+            Builder(
+              builder: (context) => FocusableWidget(
+                onTap: () => _showBangumiProxyUrlInput(
+                  title: 'Bangumi 反代地址',
+                  hint: '例如 https://api.example.com',
+                  current: _bangumiApiProxyUrl,
+                  onSave: _setBangumiApiProxyUrl,
+                ),
+                onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _bangumiApiProxyUrl.isEmpty ? '点击输入反代地址' : _bangumiApiProxyUrl,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _bangumiApiProxyUrl.isEmpty
+                              ? AppColors.textMuted
+                              : AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      const Text(
+                        '与官方 api.bgm.tv 路径兼容的反代地址，不含末尾斜杠',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (_bangumiApiProxyType == BangumiApiProxyType.cmliussss)
+            const Padding(
+              padding: EdgeInsets.only(
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                bottom: AppSpacing.md,
+              ),
+              child: Text(
+                'Thanks to @CMLiussss',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBangumiImageProxyTile() {
+    return _buildCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              top: AppSpacing.md,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bangumi 图片代理',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                const Text(
+                  '选择获取 Bangumi 封面图片的方式，服务器无法访问 lain.bgm.tv 时可切换',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildRadioTile<BangumiImageProxyType>(
+            title: '直连（直接请求 lain.bgm.tv）',
+            value: BangumiImageProxyType.direct,
+            groupValue: _bangumiImageProxyType,
+            onChanged: _setBangumiImageProxyType,
+          ),
+          _buildRadioTile<BangumiImageProxyType>(
+            title: 'Bangumi 图片 CDN By CMLiussss',
+            value: BangumiImageProxyType.cmliussss,
+            groupValue: _bangumiImageProxyType,
+            onChanged: _setBangumiImageProxyType,
+          ),
+          _buildRadioTile<BangumiImageProxyType>(
+            title: '自定义代理',
+            value: BangumiImageProxyType.custom,
+            groupValue: _bangumiImageProxyType,
+            onChanged: _setBangumiImageProxyType,
+          ),
+          if (_bangumiImageProxyType == BangumiImageProxyType.custom)
+            Builder(
+              builder: (context) => FocusableWidget(
+                onTap: () => _showBangumiProxyUrlInput(
+                  title: 'Bangumi 图片代理地址',
+                  hint: '例如 https://img.example.com/proxy?url=',
+                  current: _bangumiImageProxyUrl,
+                  onSave: _setBangumiImageProxyUrl,
+                ),
+                onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _bangumiImageProxyUrl.isEmpty ? '点击输入图片代理地址' : _bangumiImageProxyUrl,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _bangumiImageProxyUrl.isEmpty
+                              ? AppColors.textMuted
+                              : AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      const Text(
+                        '接收原始图片 URL 并返回图片的代理地址',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (_bangumiImageProxyType == BangumiImageProxyType.cmliussss)
+            const Padding(
+              padding: EdgeInsets.only(
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                bottom: AppSpacing.md,
+              ),
+              child: Text(
+                'Thanks to @CMLiussss',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showBangumiProxyUrlInput({
+    required String title,
+    required String hint,
+    required String current,
+    required ValueChanged<String> onSave,
+  }) async {
+    final controller = TextEditingController(text: current);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.bgSurface,
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: AppColors.textPrimary),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: AppColors.textMuted),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      onSave(controller.text);
+    }
+    controller.dispose();
   }
 
   void _ensureVisibleOnFocus(BuildContext context, bool focused) {

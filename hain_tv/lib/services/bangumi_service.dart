@@ -4,10 +4,15 @@ import '../models/api_response.dart';
 import '../models/bangumi_calendar_item.dart';
 import '../models/douban_movie.dart';
 import 'cache_service.dart';
+import 'user_data_service.dart';
 
 class BangumiService {
   static final CacheService _cacheService = CacheService();
   static bool _cacheInitialized = false;
+
+  static const String _cmliussssBase = 'https://img.doubanio.cmliussss.net';
+  static const String _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
   static Future<void> _initCache() async {
     if (!_cacheInitialized) {
@@ -16,9 +21,22 @@ class BangumiService {
     }
   }
 
-  static const String _calendarUrl = 'https://api.bgm.tv/calendar';
-  static const String _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+  static Future<void> loadProxySettings() async {
+    await UserDataService.reloadBangumiProxyCache();
+  }
+
+  static Future<String> _apiBaseUrl() async {
+    final type = await UserDataService.getBangumiApiProxyType();
+    switch (type) {
+      case BangumiApiProxyType.cmliussss:
+        return _cmliussssBase;
+      case BangumiApiProxyType.custom:
+        final url = await UserDataService.getBangumiApiProxyUrl();
+        return url.trim().replaceAll(RegExp(r'/+$'), '');
+      case BangumiApiProxyType.direct:
+        return 'https://api.bgm.tv';
+    }
+  }
 
   /// 获取 Bangumi 每日放送数据，按星期分组返回。
   static Future<ApiResponse<List<BangumiCalendarItem>>> getCalendar() async {
@@ -34,9 +52,10 @@ class BangumiService {
     if (cached != null) return ApiResponse.success(cached);
 
     try {
+      final baseUrl = await _apiBaseUrl();
       final response = await http
           .get(
-            Uri.parse(_calendarUrl),
+            Uri.parse('$baseUrl/calendar'),
             headers: {
               'User-Agent': _userAgent,
               'Accept': 'application/json',
@@ -120,9 +139,10 @@ class BangumiService {
     if (cached != null) return ApiResponse.success(cached);
 
     try {
+      final baseUrl = await _apiBaseUrl();
       final response = await http
           .get(
-            Uri.parse('https://api.bgm.tv/v0/subjects/$id'),
+            Uri.parse('$baseUrl/v0/subjects/$id'),
             headers: {
               'User-Agent': _userAgent,
               'Accept': 'application/json',
@@ -192,6 +212,39 @@ class BangumiService {
       );
     } catch (e) {
       return ApiResponse.error('Bangumi 详情请求异常: $e');
+    }
+  }
+
+  /// 判断 URL 是否为 Bangumi 图片地址。
+  static bool isBangumiImageUrl(String url) {
+    return url.contains('lain.bgm.tv') || url.contains('bgm.tv/pic');
+  }
+
+  /// 根据当前 Bangumi 图片代理设置处理图片 URL。
+  /// 由于图片在 build 阶段同步使用，调用前请确保已执行 [loadProxySettings]
+  /// 或在设置页切换后刷新缓存。
+  static String proxyImageUrl(String originalUrl) {
+    if (originalUrl.isEmpty) return originalUrl;
+    if (!isBangumiImageUrl(originalUrl)) return originalUrl;
+
+    final type = UserDataService.cachedBangumiImageProxyType ??
+        BangumiImageProxyType.cmliussss;
+    final customUrl = UserDataService.cachedBangumiImageProxyUrl ?? '';
+
+    switch (type) {
+      case BangumiImageProxyType.cmliussss:
+        return originalUrl.replaceAll(
+          RegExp(r'https?://lain\.bgm\.tv'),
+          'https://img.doubanio.cmliussss.net',
+        );
+      case BangumiImageProxyType.custom:
+        if (customUrl.isNotEmpty) {
+          final base = customUrl.replaceAll(RegExp(r'/+$'), '');
+          return '$base${Uri.encodeComponent(originalUrl)}';
+        }
+        return originalUrl;
+      case BangumiImageProxyType.direct:
+        return originalUrl;
     }
   }
 }

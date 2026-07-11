@@ -1,6 +1,32 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.1.2</h2></summary>
+
+## 1.1.2
+
+> **紧急更新**：解决 Bangumi 被墙导致的动漫「每日放送」数据与图片无法加载的问题。
+
+### 新增
+
+- **Bangumi 代理设置**
+  - 新增「Bangumi 数据代理」与「Bangumi 图片代理」选项，默认使用 CMLiussss 反代，解决 Bangumi 官方 API 与图片域名在国内无法访问的问题。
+  - 支持自定义反代地址，满足不同网络环境需求。
+  - 在「我的」页面新增 GitHub 仓库地址，方便用户下载手机版与 Windows 版本。
+
+### 优化
+
+- **动漫分类默认页**
+  - 动漫分类默认进入「番剧」，避免启动时因 Bangumi 访问失败而直接展示错误。
+  - 切换「每日放送」到「番剧」/「剧场版」时，立即中断 Bangumi 请求，防止旧请求结果覆盖当前页面。
+
+### 变更
+
+- **应用版本号**统一更新至 `1.1.2`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.1.1</h2></summary>
 
 ## 1.1.1

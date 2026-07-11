@@ -162,6 +162,9 @@ class CategoryScreenState extends State<CategoryScreen> {
   List<BangumiCalendarItem> _bangumiCalendarItems = [];
   late String _selectedWeekday;
 
+  // 用于取消过时的分类数据加载，切换分类时递增，异步回调中对比不匹配则放弃结果。
+  int _loadToken = 0;
+
   // ===================== 分类选项（与 LunaTV DoubanSelector 一致） =====================
 
   static const _moviePrimaryOptions = [
@@ -207,8 +210,8 @@ class CategoryScreenState extends State<CategoryScreen> {
   ];
 
   static const _animePrimaryOptions = [
-    _OptionItem('每日放送', '每日放送'),
     _OptionItem('番剧', '番剧'),
+    _OptionItem('每日放送', '每日放送'),
     _OptionItem('剧场版', '剧场版'),
   ];
 
@@ -244,7 +247,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       kind: 'tv',
       primaryOptions: _animePrimaryOptions,
       secondaryOptions: [],
-      defaultPrimary: '每日放送',
+      defaultPrimary: '番剧',
       defaultSecondary: '全部',
       defaultFormat: 'all',
       defaultSort: 'U',
@@ -599,6 +602,8 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   Future<void> _loadData({bool refresh = false}) async {
+    final token = ++_loadToken;
+
     if (refresh) {
       setState(() {
         _loading = true;
@@ -609,7 +614,7 @@ class CategoryScreenState extends State<CategoryScreen> {
     try {
       final params = refresh ? _params.copyWith(page: 0) : _params;
 
-      debugPrint('CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, primary=$_selectedPrimary, secondary=$_selectedSecondary');
+      debugPrint('CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, primary=$_selectedPrimary, secondary=$_selectedSecondary, token=$token');
 
       late ApiResponse<List<DoubanMovie>> response;
 
@@ -653,7 +658,13 @@ class CategoryScreenState extends State<CategoryScreen> {
         response = await DoubanService.fetchRecommends(params: params);
       }
 
-      debugPrint('CategoryScreen[${widget.kind}] 响应: success=${response.success}, dataCount=${response.data?.length ?? 0}');
+      debugPrint('CategoryScreen[${widget.kind}] 响应: success=${response.success}, dataCount=${response.data?.length ?? 0}, token=$token');
+
+      // 若切换分类导致 token 变化，或页面已卸载，则丢弃此次结果。
+      if (token != _loadToken || !mounted) {
+        debugPrint('CategoryScreen[${widget.kind}] 加载结果已过期，放弃更新 (token=$token)');
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -680,6 +691,11 @@ class CategoryScreenState extends State<CategoryScreen> {
     } catch (e, stackTrace) {
       debugPrint('CategoryScreen[${widget.kind}] 加载失败: $e');
       debugPrint('$stackTrace');
+      // 切换分类后旧请求报错，不应覆盖当前状态。
+      if (token != _loadToken || !mounted) {
+        debugPrint('CategoryScreen[${widget.kind}] 加载失败结果已过期，放弃更新 (token=$token)');
+        return;
+      }
       if (mounted) {
         setState(() {
           _loading = false;
@@ -774,6 +790,7 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   void _onPrimaryChanged(String value) {
     if (value == _selectedPrimary) return;
+    _loadToken++;
     setState(() {
       _activeDimension = null;
       _selectedPrimary = value;

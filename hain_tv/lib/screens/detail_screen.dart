@@ -20,7 +20,6 @@ import '../services/profile_refresh_notifier.dart';
 import '../services/search_service.dart';
 import '../services/user_data_service.dart';
 import '../theme.dart';
-import '../widgets/tv_grid.dart';
 import 'player_screen.dart';
 
 class DetailScreen extends StatefulWidget {
@@ -171,6 +170,7 @@ class _DetailScreenState extends State<DetailScreen> {
   VideoDetail? _videoDetail;
   DoubanMovieDetails? _doubanDetails;
   int _selectedEpisodeIndex = 0;
+  bool _episodeSortAscending = true;
   int _selectedSourceIndex = 0;
   bool _isFavorite = false;
   bool _fuzzySearchEnabled = false;
@@ -813,11 +813,14 @@ class _DetailScreenState extends State<DetailScreen> {
     if (url.startsWith('//')) {
       url = 'https:$url';
     }
+    url = BangumiService.proxyImageUrl(url);
 
     return CachedNetworkImage(
       imageUrl: url,
       fit: BoxFit.cover,
       cacheManager: HainTvCacheManager(),
+      memCacheWidth: 300,
+      memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -1011,6 +1014,8 @@ class _DetailScreenState extends State<DetailScreen> {
                       : '',
                   fit: BoxFit.cover,
                   cacheManager: HainTvCacheManager(),
+                  memCacheWidth: 300,
+                  memCacheHeight: 450,
                   placeholder: (_, __) => Container(
                     color: AppColors.bgSurface,
                   ),
@@ -1551,30 +1556,105 @@ class _DetailScreenState extends State<DetailScreen> {
         ? detail.episodesTitles
         : List.generate(detail.episodes.length, (i) => '第${i + 1}集');
 
-    final items = List.generate(detail.episodes.length, (index) {
-      return PosterItem(
-        id: '$index',
-        title: titles[index],
-        onTap: () => _playEpisode(index),
-      );
-    });
+    final displayIndices = _episodeSortAscending
+        ? List<int>.generate(detail.episodes.length, (i) => i)
+        : List<int>.generate(detail.episodes.length, (i) => i)
+            .reversed
+            .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(
+        Padding(
+          padding: const EdgeInsets.only(
             left: AppSpacing.lg,
+            right: AppSpacing.lg,
             bottom: AppSpacing.md,
           ),
-          child: Text(
-            '选集',
-            style: TextStyle(
-              fontFamily: 'NotoSansSC',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
+          child: Row(
+            children: [
+              const Text(
+                '选集',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              FocusableWidget(
+                onTap: () {
+                  if (!_episodeSortAscending) {
+                    setState(() => _episodeSortAscending = true);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _episodeSortAscending
+                        ? AppColors.primaryTint
+                        : AppColors.bgSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: Border.all(
+                      color: _episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    '正序',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: _episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              FocusableWidget(
+                onTap: () {
+                  if (_episodeSortAscending) {
+                    setState(() => _episodeSortAscending = false);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: !_episodeSortAscending
+                        ? AppColors.primaryTint
+                        : AppColors.bgSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: Border.all(
+                      color: !_episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    '倒序',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: !_episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         SizedBox(
@@ -1583,17 +1663,20 @@ class _DetailScreenState extends State<DetailScreen> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             child: Row(
-              children: List.generate(items.length, (index) {
-                final item = items[index];
+              children: List.generate(displayIndices.length, (displayIndex) {
+                final originalIndex = displayIndices[displayIndex];
+                final title = titles[originalIndex];
+                final selected = _selectedEpisodeIndex == originalIndex;
                 return Padding(
                   padding: EdgeInsets.only(
-                    right: index < items.length - 1 ? AppSpacing.sm : 0,
+                    right:
+                        displayIndex < displayIndices.length - 1 ? AppSpacing.sm : 0,
                   ),
                   child: SizedBox(
                     width: 100,
                     child: FocusableWidget(
-                      autofocus: index == 0,
-                      onTap: item.onTap,
+                      autofocus: displayIndex == 0,
+                      onTap: () => _playEpisode(originalIndex),
                       onFocusChange: (focused) {
                         if (focused) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1615,13 +1698,13 @@ class _DetailScreenState extends State<DetailScreen> {
                           vertical: AppSpacing.xs,
                         ),
                         decoration: BoxDecoration(
-                          color: _selectedEpisodeIndex == index
+                          color: selected
                               ? AppColors.primaryTint
                               : AppColors.bgSurface,
                           borderRadius: BorderRadius.circular(AppRadius.sm),
                         ),
                         child: Text(
-                          item.title,
+                          title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
@@ -1629,7 +1712,7 @@ class _DetailScreenState extends State<DetailScreen> {
                             fontFamily: 'NotoSansSC',
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
-                            color: _selectedEpisodeIndex == index
+                            color: selected
                                 ? AppColors.primary
                                 : AppColors.textPrimary,
                           ),

@@ -9,6 +9,18 @@ enum DoubanDataSource {
 
 enum PlayerBackendType { mediaKit, exo }
 
+enum BangumiApiProxyType {
+  direct,
+  cmliussss,
+  custom,
+}
+
+enum BangumiImageProxyType {
+  direct,
+  cmliussss,
+  custom,
+}
+
 class UserDataService {
   static const String _serverUrlKey = 'server_url';
   static const String _usernameKey = 'username';
@@ -23,10 +35,23 @@ class UserDataService {
   static const String _autoSwitchSourceKey = 'auto_switch_source';
   static const String _autoSwitchSourceTimeoutKey = 'auto_switch_source_timeout_seconds';
   static const String _skippedVersionKey = 'skipped_update_version';
+  static const String _lastUpdateCheckTimeKey = 'last_update_check_time';
   static const String _perVideoPlayerBackendPrefix = 'per_video_player_backend_';
   // 与 Selene 保持一致，方便共用已配置的代理
   static const String _m3u8ProxyUrlKey = 'm3u8_proxy_url';
   static const String _hardwareDecodingKey = 'hardware_decoding';
+
+  // Bangumi 代理设置
+  static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
+  static const String _bangumiApiProxyUrlKey = 'bangumi_api_proxy_url';
+  static const String _bangumiImageProxyTypeKey = 'bangumi_image_proxy_type';
+  static const String _bangumiImageProxyUrlKey = 'bangumi_image_proxy_url';
+
+  // 内存缓存，便于图片代理在 build 阶段同步读取
+  static BangumiApiProxyType? _cachedBangumiApiProxyType;
+  static String? _cachedBangumiApiProxyUrl;
+  static BangumiImageProxyType? _cachedBangumiImageProxyType;
+  static String? _cachedBangumiImageProxyUrl;
 
   static Future<void> saveUserData({
     required String serverUrl,
@@ -239,5 +264,91 @@ class UserDataService {
   static Future<String?> getSkippedVersion() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_skippedVersionKey);
+  }
+
+  static Future<void> saveLastUpdateCheckTime(DateTime time) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastUpdateCheckTimeKey, time.millisecondsSinceEpoch);
+  }
+
+  static Future<DateTime?> getLastUpdateCheckTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ms = prefs.getInt(_lastUpdateCheckTimeKey);
+    if (ms == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  // ===================== Bangumi 代理设置 =====================
+
+  static BangumiApiProxyType? get cachedBangumiApiProxyType =>
+      _cachedBangumiApiProxyType;
+  static String? get cachedBangumiApiProxyUrl => _cachedBangumiApiProxyUrl;
+  static BangumiImageProxyType? get cachedBangumiImageProxyType =>
+      _cachedBangumiImageProxyType;
+  static String? get cachedBangumiImageProxyUrl => _cachedBangumiImageProxyUrl;
+
+  static Future<void> reloadBangumiProxyCache() async {
+    _cachedBangumiApiProxyType = await getBangumiApiProxyType();
+    _cachedBangumiApiProxyUrl = await getBangumiApiProxyUrl();
+    _cachedBangumiImageProxyType = await getBangumiImageProxyType();
+    _cachedBangumiImageProxyUrl = await getBangumiImageProxyUrl();
+  }
+
+  static Future<BangumiApiProxyType> getBangumiApiProxyType() async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = prefs.getInt(_bangumiApiProxyTypeKey);
+    if (index != null &&
+        index >= 0 &&
+        index < BangumiApiProxyType.values.length) {
+      return BangumiApiProxyType.values[index];
+    }
+    return BangumiApiProxyType.cmliussss;
+  }
+
+  static Future<void> saveBangumiApiProxyType(BangumiApiProxyType value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_bangumiApiProxyTypeKey, value.index);
+    _cachedBangumiApiProxyType = value;
+  }
+
+  static Future<String> getBangumiApiProxyUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_bangumiApiProxyUrlKey) ?? '';
+  }
+
+  static Future<void> saveBangumiApiProxyUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_bangumiApiProxyUrlKey, url.trim());
+    _cachedBangumiApiProxyUrl = url.trim();
+  }
+
+  static Future<BangumiImageProxyType> getBangumiImageProxyType() async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = prefs.getInt(_bangumiImageProxyTypeKey);
+    if (index != null &&
+        index >= 0 &&
+        index < BangumiImageProxyType.values.length) {
+      return BangumiImageProxyType.values[index];
+    }
+    return BangumiImageProxyType.cmliussss;
+  }
+
+  static Future<void> saveBangumiImageProxyType(
+    BangumiImageProxyType value,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_bangumiImageProxyTypeKey, value.index);
+    _cachedBangumiImageProxyType = value;
+  }
+
+  static Future<String> getBangumiImageProxyUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_bangumiImageProxyUrlKey) ?? '';
+  }
+
+  static Future<void> saveBangumiImageProxyUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_bangumiImageProxyUrlKey, url.trim());
+    _cachedBangumiImageProxyUrl = url.trim();
   }
 }

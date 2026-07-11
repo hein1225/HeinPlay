@@ -201,6 +201,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       if (channel != null && context.mounted) {
                         await UpdateService.checkAndPrompt(
                           context,
+                          force: true,
                           channel: channel,
                         );
                       }
@@ -298,7 +299,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.sm),
           const Text(
-            '海因影视是一款基于 Flutter 开发的 TV 端影视应用，支持多源播放、豆瓣数据展示等功能。',
+            '海因影视是一款基于 Flutter 开发的跨平台影视应用，TV 版支持多源播放、豆瓣数据展示等功能。手机版与 Windows 版本可前往下方开源仓库下载。',
             style: TextStyle(
               fontSize: 13,
               color: AppColors.textSecondary,
@@ -315,7 +316,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(width: AppSpacing.xs),
               const Text(
-                '开源仓库：',
+                '国内仓库：',
                 style: TextStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
@@ -323,6 +324,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               Text(
                 'https://gitcode.com/gcw_QbmhmbO8/HeinPlay',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              const Icon(
+                Icons.code,
+                color: AppColors.primary,
+                size: 16,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              const Text(
+                'GitHub 仓库：',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                'https://github.com/hein1225/HeinPlay',
                 style: const TextStyle(
                   fontSize: 13,
                   color: AppColors.primary,

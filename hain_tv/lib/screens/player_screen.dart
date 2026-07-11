@@ -2093,6 +2093,8 @@ class _SourceSelectorCard extends StatelessWidget {
                       : '',
                   fit: BoxFit.cover,
                   cacheManager: HainTvCacheManager(),
+                  memCacheWidth: 300,
+                  memCacheHeight: 450,
                   placeholder: (_, __) => Container(
                     color: AppColors.bgSurface,
                   ),

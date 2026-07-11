@@ -51,7 +51,7 @@ class LunaTVService {
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.1.1 Flutter',
+      'User-Agent': 'HainTV/1.1.2 Flutter',
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -175,7 +175,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.1.1 Flutter',
+              'User-Agent': 'HainTV/1.1.2 Flutter',
             },
             body: json.encode(body),
           )

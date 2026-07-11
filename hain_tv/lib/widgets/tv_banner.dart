@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../focus/focusable.dart';
+import '../services/bangumi_service.dart';
 import '../services/hain_tv_cache_manager.dart';
 import '../theme.dart';
 
@@ -36,10 +37,13 @@ class TvBanner extends StatelessWidget {
     if (url.startsWith('//')) {
       url = 'https:$url';
     }
+    url = BangumiService.proxyImageUrl(url);
     return CachedNetworkImage(
       imageUrl: url,
       fit: BoxFit.cover,
       cacheManager: HainTvCacheManager(),
+      memCacheWidth: 800,
+      memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '

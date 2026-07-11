@@ -21,7 +21,7 @@ class UpdateService {
       'https://gitcode.com/api/v5/repos/gcw_QbmhmbO8/HeinPlay/releases/latest';
   static const String _githubReleasesUrl =
       'https://api.github.com/repos/hein1225/HeinPlay/releases/latest';
-  static const String currentVersion = '1.1.1';
+  static const String currentVersion = '1.1.2';
 
   static String _channelName(UpdateChannel channel) {
     switch (channel) {
@@ -83,7 +83,8 @@ class UpdateService {
       final name = (asset['name'] as String? ?? '').toLowerCase();
       final url = asset['browser_download_url'] as String?;
       debugPrint('UpdateService: asset=$name, url=$url');
-      if (name.endsWith('.apk') && url != null && url.isNotEmpty) {
+      // TV 版只下载以 tv.apk 结尾的包，避免与手机版、Windows 版混淆
+      if (name.endsWith('tv.apk') && url != null && url.isNotEmpty) {
         apkUrl = url;
         break;
       }
@@ -216,8 +217,21 @@ class UpdateService {
   static Future<void> checkAndPrompt(
     BuildContext context, {
     bool silent = false,
+    bool force = false,
     UpdateChannel channel = UpdateChannel.domestic,
   }) async {
+    // 非手动检查且 24 小时内已检查过，则跳过，避免每次启动都请求网络
+    if (!force) {
+      final lastCheck = await UserDataService.getLastUpdateCheckTime();
+      if (lastCheck != null &&
+          DateTime.now().difference(lastCheck) < const Duration(hours: 24)) {
+        debugPrint(
+          'UpdateService: 距离上次检查更新不足 24 小时，跳过自动检查',
+        );
+        return;
+      }
+    }
+
     UpdateInfo? info;
     try {
       info = await checkUpdate(channel: channel);
@@ -228,9 +242,14 @@ class UpdateService {
           SnackBar(content: Text('检查更新失败: $e')),
         );
       }
+      // 失败时也记录时间，避免网络异常时频繁重试
+      await UserDataService.saveLastUpdateCheckTime(DateTime.now());
       return;
     }
     if (!context.mounted) return;
+
+    // 检查已成功完成，记录本次检查时间
+    await UserDataService.saveLastUpdateCheckTime(DateTime.now());
 
     if (info == null) {
       if (!silent) {
