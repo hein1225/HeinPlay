@@ -11,6 +11,8 @@ class PosterItem {
   final String year;
   final String? subtitle;
   final String? rating;
+  final String? ratingLabel;
+  final String? bangumiRating;
   final VoidCallback? onTap;
 
   PosterItem({
@@ -20,6 +22,8 @@ class PosterItem {
     this.year = '',
     this.subtitle,
     this.rating,
+    this.ratingLabel,
+    this.bangumiRating,
     this.onTap,
   });
 }
@@ -206,23 +210,25 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
               itemBuilder: (context, index) {
                 final item = widget.items[index];
                 return SizedBox(
-                  width: widget.cardWidth,
-                  child: TvPosterCard(
-                    autofocus: index == 0,
-                    focusNode: _focusNodes[index],
-                    onKeyEvent: (node, event) =>
-                        _handleKeyEvent(index, node, event),
-                    onFocusChange: (focused) {
-                      if (focused) _scrollToIndex(index);
-                    },
-                    title: item.title,
-                    posterUrl: item.posterUrl,
-                    year: item.year,
-                    subtitle: item.subtitle,
-                    rating: item.rating,
-                    onTap: item.onTap,
-                  ),
-                );
+                    width: widget.cardWidth,
+                    child: TvPosterCard(
+                      autofocus: index == 0,
+                      focusNode: _focusNodes[index],
+                      onKeyEvent: (node, event) =>
+                          _handleKeyEvent(index, node, event),
+                      onFocusChange: (focused) {
+                        if (focused) _scrollToIndex(index);
+                      },
+                      title: item.title,
+                      posterUrl: item.posterUrl,
+                      year: item.year,
+                      subtitle: item.subtitle,
+                      rating: item.rating,
+                      ratingLabel: item.ratingLabel,
+                      bangumiRating: item.bangumiRating,
+                      onTap: item.onTap,
+                    ),
+                  );
               },
             ),
           ),
@@ -264,10 +270,10 @@ class TvPosterGrid extends StatelessWidget {
   });
 
   static int computeCrossAxisCount(double width) {
-    if (width > 1600) return 8;
-    if (width > 1400) return 7;
-    if (width > 1100) return 6;
-    if (width > 800) return 5;
+    if (width > 1500) return 8;
+    if (width > 1300) return 7;
+    if (width > 1050) return 6;
+    if (width > 750) return 5;
     if (width > 500) return 4;
     return 3;
   }
@@ -285,8 +291,8 @@ class TvPosterGrid extends StatelessWidget {
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: count,
               crossAxisSpacing: AppSpacing.md,
-              mainAxisSpacing: AppSpacing.lg,
-              childAspectRatio: 0.55,
+              mainAxisSpacing: AppSpacing.md,
+              childAspectRatio: 0.7,
             ),
             scrollCacheExtent: ScrollCacheExtent.pixels(2000),
             itemCount: items.length,
@@ -300,6 +306,7 @@ class TvPosterGrid extends StatelessWidget {
                   ? itemFocusNodes![index]
                   : (isFirst ? firstItemFocusNode : null),
               selected: selectedPredicate?.call(index) ?? false,
+              aspectRatio: 0.7,
               onKeyEvent: (node, event) {
                 if (onItemKeyEvent != null) {
                   final result = onItemKeyEvent!(index, count, node, event);
@@ -312,6 +319,8 @@ class TvPosterGrid extends StatelessWidget {
               year: item.year,
               subtitle: item.subtitle,
               rating: item.rating,
+              ratingLabel: item.ratingLabel,
+              bangumiRating: item.bangumiRating,
               onTap: item.onTap,
             );
           },

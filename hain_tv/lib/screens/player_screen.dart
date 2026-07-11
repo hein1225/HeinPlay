@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -12,6 +13,7 @@ import '../models/video_detail.dart';
 import '../player/player_backend_factory.dart';
 import '../player/video_player_backend.dart';
 import '../services/ad_filter_engine.dart';
+import '../services/hain_tv_cache_manager.dart';
 import '../services/lunatv_service.dart';
 import '../services/play_record_service.dart';
 import '../services/user_data_service.dart';
@@ -77,6 +79,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final FocusNode _playPauseFocusNode;
   late final FocusNode _skipFocusNode;
   late final FocusNode _rootFocusNode;
+
+  // 标记是否有弹窗打开，打开时禁止控制栏自动隐藏，避免焦点丢失。
+  bool _dialogOpen = false;
 
   // 触摸手势状态
   bool _gestureIndicatorVisible = false;
@@ -676,6 +681,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _startControlsTimer() {
+    // 弹窗打开时保持控制栏可见，不启动隐藏定时器
+    if (_dialogOpen) return;
     _controlsTimer?.cancel();
     _controlsTimer = Timer(
       const Duration(seconds: _controlsAutoHideSeconds),
@@ -711,6 +718,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _hideControls() {
+    // 弹窗打开时不隐藏控制栏，避免弹窗焦点被强制移走
+    if (_dialogOpen) return;
     debugPrint('隐藏控制栏: _controlsVisible=$_controlsVisible');
     _controlsTimer?.cancel();
     _controlsTimer = null;
@@ -739,6 +748,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _showSkipConfigDialog() {
     _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
     showDialog(
       context: context,
       builder: (context) => SkipConfigDialog(
@@ -747,11 +758,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
         duration: _duration,
         onSave: _saveSkipConfig,
       ),
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
   }
 
   void _showSourceSelectorDialog() {
     _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
     showDialog(
       context: context,
       builder: (context) {
@@ -766,11 +784,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
           },
         );
       },
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
   }
 
   void _showPlayerBackendSelectorDialog() {
     _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
     showDialog(
       context: context,
       builder: (context) {
@@ -841,7 +866,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
         );
       },
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
   }
 
   Future<void> _switchPlayerBackend(PlayerBackendType type) async {
@@ -877,6 +907,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _showEpisodeSelectorDialog() {
     _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
     final titles = _currentVideoDetail.episodesTitles.isNotEmpty
         ? _currentVideoDetail.episodesTitles
         : List.generate(
@@ -896,7 +928,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           },
         );
       },
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
   }
 
   // 长按连续快进/快退，支持加速
@@ -1978,64 +2015,221 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
       content: FocusScope(
         autofocus: true,
         child: SizedBox(
-          width: 400,
-          child: SingleChildScrollView(
+          width: 640,
+          height: 240,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
             controller: _scrollController,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: List.generate(widget.sources.length, (index) {
-                final source = widget.sources[index];
-                final selected = index == widget.currentIndex;
-                final speedText = widget.formatSpeed(source.speed);
-                return FocusableWidget(
+            itemCount: widget.sources.length,
+            itemBuilder: (context, index) {
+              final source = widget.sources[index];
+              final selected = index == widget.currentIndex;
+              return Padding(
+                padding: EdgeInsets.only(
+                  right: index < widget.sources.length - 1
+                      ? AppSpacing.md
+                      : 0,
+                ),
+                child: _SourceSelectorCard(
                   key: selected ? _selectedKey : null,
                   focusNode: selected ? _selectedFocusNode : null,
                   autofocus: selected,
+                  source: source,
+                  selected: selected,
+                  formatSpeed: widget.formatSpeed,
+                  speedColor: widget.speedColor,
                   onTap: () => widget.onSelect(index),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? AppColors.primaryTint
-                          : AppColors.bgElevated,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                      border: Border.all(
-                        color: selected ? AppColors.primary : AppColors.border,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceSelectorCard extends StatelessWidget {
+  final SourceOption source;
+  final bool selected;
+  final String Function(double?) formatSpeed;
+  final Color Function(double?) speedColor;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+  final bool autofocus;
+
+  const _SourceSelectorCard({
+    super.key,
+    required this.source,
+    required this.selected,
+    required this.formatSpeed,
+    required this.speedColor,
+    required this.onTap,
+    this.focusNode,
+    this.autofocus = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final speedText = formatSpeed(source.speed);
+    final resolutionText = source.resolution?.trim() ?? '';
+
+    return FocusableWidget(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      child: SizedBox(
+        width: 140,
+        child: AspectRatio(
+          aspectRatio: 2 / 3,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: CachedNetworkImage(
+                  imageUrl: source.poster?.isNotEmpty == true
+                      ? source.poster!
+                      : '',
+                  fit: BoxFit.cover,
+                  cacheManager: HainTvCacheManager(),
+                  placeholder: (_, __) => Container(
+                    color: AppColors.bgSurface,
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    color: AppColors.bgSurface,
+                    child: Center(
+                      child: Text(
+                        source.title.isNotEmpty
+                            ? source.title.substring(0, 1)
+                            : '',
+                        style: const TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 24,
+                          color: AppColors.textMuted,
+                        ),
                       ),
                     ),
-                    child: Row(
+                  ),
+                ),
+              ),
+              // 底部彩色背景 + 标题/源名
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(AppRadius.sm),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.sm,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated.withValues(alpha: 0.95),
+                      border: Border(
+                        top: BorderSide(
+                          color: AppColors.primary.withValues(alpha: 0.6),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: Text(
-                            source.sourceName.isNotEmpty
-                                ? source.sourceName
-                                : source.source,
-                            style: TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: selected
-                                  ? AppColors.primary
-                                  : AppColors.textPrimary,
-                            ),
+                        Text(
+                          source.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                            height: 1.2,
                           ),
                         ),
-                        if (speedText.isNotEmpty)
-                          Text(
-                            speedText,
-                            style: TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 13,
-                              color: widget.speedColor(source.speed),
-                            ),
+                        const SizedBox(height: 2),
+                        Text(
+                          source.sourceName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primary,
                           ),
+                        ),
                       ],
                     ),
                   ),
-                );
-              }),
-            ),
+                ),
+              ),
+              if (speedText.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: speedColor(source.speed),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      speedText,
+                      style: const TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              if (resolutionText.isNotEmpty)
+                Positioned(
+                  top: speedText.isNotEmpty ? 28 : 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      resolutionText,
+                      style: const TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textInverse,
+                      ),
+                    ),
+                  ),
+                ),
+              if (selected)
+                const Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Icon(
+                    Icons.check_circle,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+            ],
           ),
         ),
       ),

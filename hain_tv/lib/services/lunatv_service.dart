@@ -12,7 +12,7 @@ import 'cache_service.dart';
 import 'user_data_service.dart';
 
 class LunaTVConfig {
-  static const Duration searchTimeout = Duration(seconds: 8);
+  static const Duration searchTimeout = Duration(seconds: 30);
   static const Duration detailTimeout = Duration(seconds: 20);
   static const Duration liveTimeout = Duration(seconds: 15);
   static const Duration shortDramaTimeout = Duration(seconds: 15);
@@ -51,7 +51,7 @@ class LunaTVService {
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.1.0 Flutter',
+      'User-Agent': 'HainTV/1.1.1 Flutter',
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -175,7 +175,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.1.0 Flutter',
+              'User-Agent': 'HainTV/1.1.1 Flutter',
             },
             body: json.encode(body),
           )

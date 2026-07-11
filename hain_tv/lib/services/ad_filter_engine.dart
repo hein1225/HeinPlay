@@ -16,7 +16,9 @@ class AdFilterEngine {
     required String originalUrl,
     Map<String, String> headers = const {},
   }) async {
-    if (!await AdFilterService.isEnabled()) {
+    final enabled = await AdFilterService.isEnabled();
+    debugPrint('AdFilterEngine: 去广告开关=$enabled');
+    if (!enabled) {
       debugPrint('AdFilterEngine: 去广告已关闭');
       return null;
     }

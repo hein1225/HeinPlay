@@ -434,40 +434,6 @@ class CategoryScreenState extends State<CategoryScreen> {
     return _selectedPrimary == '全部';
   }
 
-  bool _showSecondaryRowForPrimary(String primary) {
-    if (widget.kind == 'movie') return primary != '全部';
-    if (widget.kind == 'tv') return primary == '最近热门';
-    if (widget.kind == 'show') return primary == '最近热门';
-    return false;
-  }
-
-  bool _showDimensionButtonsForPrimary(String primary) {
-    if (widget.kind == 'anime') {
-      return primary == '番剧' || primary == '剧场版';
-    }
-    return primary == '全部';
-  }
-
-  List<_FilterDimension> _dimensionsForPrimary(String primary) {
-    final isAnime = widget.kind == 'anime';
-    final isAnimeMovie = isAnime && primary == '剧场版';
-    final isAnimeTv = isAnime && primary == '番剧';
-
-    final base = <_FilterDimension>[];
-    if (isAnimeTv || isAnimeMovie) {
-      base.add(const _FilterDimension(key: 'label', label: '标签'));
-    } else {
-      base.add(const _FilterDimension(key: 'type', label: '类型'));
-    }
-    base.add(const _FilterDimension(key: 'region', label: '地区'));
-    base.add(const _FilterDimension(key: 'year', label: '年代'));
-    if (!isAnimeMovie) {
-      base.add(const _FilterDimension(key: 'platform', label: '平台'));
-    }
-    base.add(const _FilterDimension(key: 'sort', label: '排序'));
-    return base;
-  }
-
   @override
   void dispose() {
     _scrollController.dispose();
@@ -1262,64 +1228,12 @@ class CategoryScreenState extends State<CategoryScreen> {
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _onCategoryTagDown(index, node);
+      // 下键仅移动焦点到当前已选中分类的第二行（筛选/子分类/星期），不切换分类；
+      // 分类切换统一由 FocusableWidget 的 onTap（确认键/鼠标点击）处理。
+      _focusSecondRowFirst();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
-  }
-
-  void _onCategoryTagDown(int index, FocusNode node) {
-    final option = _config.primaryOptions[index];
-    final primary = option.value;
-
-    if (widget.kind != 'anime') {
-      _focusSecondRowFirst();
-      return;
-    }
-
-    debugPrint('[CategoryTag] down index=$index primary=$primary selected=$_selectedPrimary');
-    if (_selectedPrimary != primary) {
-      setState(() {
-        _activeDimension = null;
-        _selectedPrimary = primary;
-        _selectedSecondary = _defaultSecondaryForPrimary(primary);
-        _params = _resetParamsForPrimary(primary);
-      });
-      _loadData(refresh: true);
-    }
-
-    _focusSecondRowForPrimary(primary);
-  }
-
-  void _focusSecondRowForPrimary(String primary) {
-    FocusNode? target;
-    if (primary == '每日放送') {
-      if (_weekdayFocusNodes.isNotEmpty) target = _weekdayFocusNodes.first;
-    } else if (_showSecondaryRowForPrimary(primary)) {
-      if (_secondaryTagFocusNodes.isNotEmpty) target = _secondaryTagFocusNodes.first;
-    } else if (_showDimensionButtonsForPrimary(primary)) {
-      final firstKey = _dimensionsForPrimary(primary).first.key;
-      debugPrint('[Focus] firstKey=$firstKey availableNodes=${_dimensionButtonFocusNodes.keys}');
-      target = _dimensionButtonFocusNodes[firstKey];
-    }
-
-    if (target == null) {
-      _focusFirstPoster();
-      return;
-    }
-
-    final effectiveTarget = target;
-    debugPrint('[Focus] target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus} context=${effectiveTarget.context}');
-    effectiveTarget.requestFocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      debugPrint('[Focus] post-frame target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus} context=${effectiveTarget.context}');
-      effectiveTarget.requestFocus();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        debugPrint('[Focus] post-frame2 target=$effectiveTarget hasPrimaryFocus=${effectiveTarget.hasPrimaryFocus} hasFocus=${effectiveTarget.hasFocus}');
-      });
-    });
   }
 
   Widget _buildCategoryTags() {
@@ -1702,6 +1616,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       );
     }
 
+    final isBangumiDaily = widget.kind == 'anime' && _selectedPrimary == '每日放送';
     final items = _movies.map((movie) {
       return PosterItem(
         id: movie.id,
@@ -1709,6 +1624,7 @@ class CategoryScreenState extends State<CategoryScreen> {
         posterUrl: movie.poster,
         year: movie.year,
         rating: movie.rate,
+        ratingLabel: isBangumiDaily ? 'Bangumi' : '豆瓣',
         onTap: () => _openDetail(context, movie),
       );
     }).toList();

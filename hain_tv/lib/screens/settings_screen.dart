@@ -22,7 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoSwitchSource = true;
   int _autoSwitchSourceTimeout = 15;
   String _m3u8ProxyUrl = '';
-  bool _adFilterEnabled = true;
+  bool _adFilterEnabled = false;
   bool _hardwareDecoding = true;
 
   @override
@@ -271,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('关于'),
           _buildInfoTile(
             title: '版本',
-            value: '1.1.0',
+            value: '1.1.1',
           ),
           _buildInfoTile(
             title: '作者',

@@ -357,13 +357,21 @@ class _TvShellState extends State<TvShell> {
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                 child: Row(
                   children: [
-                    const Text(
+                    Text(
                       '海因影视',
                       style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
                         color: AppColors.primary,
+                        letterSpacing: 1.2,
+                        shadows: [
+                          Shadow(
+                            color: AppColors.primary.withValues(alpha: 0.45),
+                            blurRadius: 10,
+                            offset: const Offset(0, 0),
+                          ),
+                        ],
                       ),
                     ),
                     const Spacer(),

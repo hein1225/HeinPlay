@@ -10,12 +10,15 @@ class TvPosterCard extends StatelessWidget {
   final String year;
   final String? subtitle;
   final String? rating;
+  final String? ratingLabel;
+  final String? bangumiRating;
   final VoidCallback? onTap;
   final bool autofocus;
   final FocusNode? focusNode;
   final FocusOnKeyEventCallback? onKeyEvent;
   final ValueChanged<bool>? onFocusChange;
   final bool selected;
+  final double aspectRatio;
 
   const TvPosterCard({
     super.key,
@@ -24,12 +27,15 @@ class TvPosterCard extends StatelessWidget {
     required this.year,
     this.subtitle,
     this.rating,
+    this.ratingLabel,
+    this.bangumiRating,
     this.onTap,
     this.autofocus = false,
     this.focusNode,
     this.onKeyEvent,
     this.onFocusChange,
     this.selected = false,
+    this.aspectRatio = 2 / 3,
   });
 
   Widget _buildImage(BuildContext context) {
@@ -70,10 +76,16 @@ class TvPosterCard extends StatelessWidget {
     );
   }
 
-  Widget _buildRatingBadge(String rate) {
+  Widget _buildRatingBadge(
+    String rate, {
+    String? label,
+    bool isBangumi = false,
+  }) {
     final score = double.tryParse(rate);
     final Color bgColor;
-    if (score == null) {
+    if (isBangumi) {
+      bgColor = const Color(0xFFF472B6); // Bangumi 粉
+    } else if (score == null) {
       bgColor = AppColors.textMuted;
     } else if (score >= 9.0) {
       bgColor = const Color(0xFF3B82F6); // 蓝色
@@ -86,16 +98,16 @@ class TvPosterCard extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Text(
-        rate,
+        label != null ? '$label $rate' : rate,
         style: const TextStyle(
           fontFamily: 'NotoSansSC',
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w700,
           color: Colors.white,
         ),
@@ -113,7 +125,7 @@ class TvPosterCard extends StatelessWidget {
       onFocusChange: onFocusChange,
       focusedScale: 1.04,
       child: AspectRatio(
-        aspectRatio: 2 / 3,
+        aspectRatio: aspectRatio,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppRadius.md),
           child: Stack(
@@ -147,36 +159,46 @@ class TvPosterCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontFamily: 'NotoSansSC',
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: Colors.white,
                         ),
                       ),
                       const SizedBox(height: AppSpacing.xs),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              subtitle ?? (year.isNotEmpty ? year : '未知年份'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'NotoSansSC',
-                                fontSize: 12,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          ),
-                          if (rating != null && rating!.isNotEmpty) ...[
-                            const SizedBox(width: AppSpacing.sm),
-                            _buildRatingBadge(rating!),
-                          ],
-                        ],
+                      Text(
+                        subtitle ?? (year.isNotEmpty ? year : '未知年份'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 11,
+                          color: Colors.white70,
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
+              if (rating != null && rating!.isNotEmpty)
+                Positioned(
+                  top: AppSpacing.xs,
+                  right: AppSpacing.xs,
+                  child: _buildRatingBadge(
+                    rating!,
+                    label: ratingLabel ?? '豆瓣',
+                    isBangumi: ratingLabel == 'Bangumi',
+                  ),
+                ),
+              if (bangumiRating != null && bangumiRating!.isNotEmpty)
+                Positioned(
+                  top: AppSpacing.xs,
+                  left: AppSpacing.xs,
+                  child: _buildRatingBadge(
+                    bangumiRating!,
+                    label: 'Bangumi',
+                    isBangumi: true,
+                  ),
+                ),
             ],
           ),
         ),
