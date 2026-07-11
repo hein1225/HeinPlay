@@ -238,7 +238,7 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
   }
 }
 
-class TvPosterGrid extends StatelessWidget {
+class TvPosterGrid extends StatefulWidget {
   final List<PosterItem> items;
   final int? crossAxisCount;
   final EdgeInsets padding;
@@ -278,16 +278,57 @@ class TvPosterGrid extends StatelessWidget {
     return 3;
   }
 
-  int _computeCrossAxisCount(double width) => computeCrossAxisCount(width);
+  @override
+  State<TvPosterGrid> createState() => _TvPosterGridState();
+}
+
+class _TvPosterGridState extends State<TvPosterGrid> {
+  final List<GlobalKey> _itemKeys = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _syncKeys();
+  }
+
+  @override
+  void didUpdateWidget(covariant TvPosterGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncKeys();
+  }
+
+  void _syncKeys() {
+    while (_itemKeys.length < widget.items.length) {
+      _itemKeys.add(GlobalKey());
+    }
+    while (_itemKeys.length > widget.items.length) {
+      _itemKeys.removeLast();
+    }
+  }
+
+  void _ensureVisible(int index) {
+    if (index < 0 || index >= _itemKeys.length) return;
+    final context = _itemKeys[index].currentContext;
+    if (context == null) return;
+    Scrollable.ensureVisible(
+      context,
+      alignment: 0.5,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  int _computeCrossAxisCount(double width) =>
+      widget.crossAxisCount ?? TvPosterGrid.computeCrossAxisCount(width);
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final count = crossAxisCount ?? _computeCrossAxisCount(constraints.maxWidth);
+        final count = _computeCrossAxisCount(constraints.maxWidth);
         return GridView.builder(
-            controller: controller,
-            padding: padding,
+            controller: widget.controller,
+            padding: widget.padding,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: count,
               crossAxisSpacing: AppSpacing.md,
@@ -295,24 +336,34 @@ class TvPosterGrid extends StatelessWidget {
               childAspectRatio: 0.7,
             ),
             scrollCacheExtent: ScrollCacheExtent.pixels(2000),
-            itemCount: items.length,
+            itemCount: widget.items.length,
             itemBuilder: (context, index) {
-            final item = items[index];
+            final item = widget.items[index];
             final isFirst = index == 0;
-            final count = crossAxisCount ?? _computeCrossAxisCount(constraints.maxWidth);
+            final itemCount = _computeCrossAxisCount(constraints.maxWidth);
             return TvPosterCard(
-              autofocus: autofocusFirstItem && isFirst,
-              focusNode: itemFocusNodes != null
-                  ? itemFocusNodes![index]
-                  : (isFirst ? firstItemFocusNode : null),
-              selected: selectedPredicate?.call(index) ?? false,
+              key: _itemKeys[index],
+              autofocus: widget.autofocusFirstItem && isFirst,
+              focusNode: widget.itemFocusNodes != null
+                  ? widget.itemFocusNodes![index]
+                  : (isFirst ? widget.firstItemFocusNode : null),
+              selected: widget.selectedPredicate?.call(index) ?? false,
               aspectRatio: 0.7,
               onKeyEvent: (node, event) {
-                if (onItemKeyEvent != null) {
-                  final result = onItemKeyEvent!(index, count, node, event);
+                if (widget.onItemKeyEvent != null) {
+                  final result = widget.onItemKeyEvent!(
+                    index,
+                    itemCount,
+                    node,
+                    event,
+                  );
                   if (result == KeyEventResult.handled) return result;
                 }
-                return onKeyEvent?.call(node, event) ?? KeyEventResult.ignored;
+                return widget.onKeyEvent?.call(node, event) ??
+                    KeyEventResult.ignored;
+              },
+              onFocusChange: (focused) {
+                if (focused) _ensureVisible(index);
               },
               title: item.title,
               posterUrl: item.posterUrl,
