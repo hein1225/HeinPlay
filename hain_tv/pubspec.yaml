@@ -1,7 +1,7 @@
 name: hain_tv
 description: "海因影视 TV 版"
 publish_to: 'none'
-version: 1.1.2+7
+version: 1.1.3+8
 
 environment:
   sdk: ^3.12.0

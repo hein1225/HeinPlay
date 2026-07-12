@@ -29,6 +29,7 @@ class SearchScreenState extends State<SearchScreen> {
   final _resultScrollController = ScrollController();
   BoxConstraints? _resultGridConstraints;
   int _resultCrossAxisCount = 4;
+  int _historyCrossAxisCount = 3;
 
   bool _loading = false;
   String? _error;
@@ -285,6 +286,14 @@ class SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  int get _effectiveResultCrossAxisCount {
+    final constraints = _resultGridConstraints;
+    if (constraints != null) {
+      return _computeCrossAxisCount(constraints.maxWidth);
+    }
+    return _resultCrossAxisCount;
+  }
+
   int? get _currentHistoryIndex {
     final focus = FocusManager.instance.primaryFocus;
     if (focus == null) return null;
@@ -318,7 +327,7 @@ class SearchScreenState extends State<SearchScreen> {
   /// 搜索框（TextField）会消耗方向键事件，外层 Focus 的 onKeyEvent 无法收到，
   /// 因此通过 HardwareKeyboard 层面监听，确保 TV 遥控器方向键能按预期在各个区域移动。
   bool _handleHardwareKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
 
     // 仅在本页面获得焦点时处理，避免影响顶部导航栏或其他页面
     if (!_focusInSearchPage) return false;
@@ -327,9 +336,16 @@ class SearchScreenState extends State<SearchScreen> {
   }
 
   _KeyAction _handleDirectionKey(LogicalKeyboardKey key) {
-    // 按右：左侧任意位置移动到搜索结果第一项（有结果时）
+    final resultCrossAxisCount = _effectiveResultCrossAxisCount;
+    final historyCols = _historyCrossAxisCount;
+
+    // 按右：搜索框→二维码；二维码/历史→搜索结果第一项
     if (key == LogicalKeyboardKey.arrowRight) {
-      if (_focusInSearchBox || _focusInQr || _focusInHistory) {
+      if (_focusInSearchBox) {
+        _qrFocusNode.requestFocus();
+        return _KeyAction.handled;
+      }
+      if (_focusInQr || _focusInHistory) {
         if (_resultFocusNodes.isNotEmpty) {
           _resultFocusNodes.first.requestFocus();
           return _KeyAction.handled;
@@ -338,23 +354,31 @@ class SearchScreenState extends State<SearchScreen> {
       }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        if (idx % _resultCrossAxisCount != _resultCrossAxisCount - 1 &&
-            idx + 1 < _resultFocusNodes.length) {
-          _focusResultIndex(idx + 1, _resultCrossAxisCount);
+        if (idx + 1 < _resultFocusNodes.length) {
+          _resultFocusNodes[idx + 1].requestFocus();
         }
         return _KeyAction.handled;
       }
       return _KeyAction.ignored;
     }
 
-    // 按左：搜索结果任意行最左列回到搜索框
+    // 按左：二维码→搜索框；结果/历史网格内横向移动（首个海报左键不再回到搜索框）
     if (key == LogicalKeyboardKey.arrowLeft) {
+      if (_focusInQr) {
+        _focusNode.requestFocus();
+        return _KeyAction.handled;
+      }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        if (idx % _resultCrossAxisCount == 0) {
-          _focusNode.requestFocus();
-        } else {
-          _focusResultIndex(idx - 1, _resultCrossAxisCount);
+        if (idx > 0) {
+          _resultFocusNodes[idx - 1].requestFocus();
+        }
+        return _KeyAction.handled;
+      }
+      if (_focusInHistory) {
+        final idx = _currentHistoryIndex!;
+        if (idx > 0) {
+          _historyFocusNodes[idx - 1].requestFocus();
         }
         return _KeyAction.handled;
       }
@@ -363,11 +387,7 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 按下
     if (key == LogicalKeyboardKey.arrowDown) {
-      if (_focusInSearchBox) {
-        _qrFocusNode.requestFocus();
-        return _KeyAction.handled;
-      }
-      if (_focusInQr) {
+      if (_focusInSearchBox || _focusInQr) {
         if (_historyFocusNodes.isNotEmpty) {
           _historyFocusNodes.first.requestFocus();
           return _KeyAction.handled;
@@ -376,8 +396,9 @@ class SearchScreenState extends State<SearchScreen> {
       }
       if (_focusInHistory) {
         final idx = _currentHistoryIndex!;
-        if (idx < _historyFocusNodes.length - 1) {
-          _historyFocusNodes[idx + 1].requestFocus();
+        final nextIdx = idx + historyCols;
+        if (nextIdx < _historyFocusNodes.length) {
+          _historyFocusNodes[nextIdx].requestFocus();
         } else if (_resultFocusNodes.isNotEmpty) {
           _resultFocusNodes.first.requestFocus();
         }
@@ -385,9 +406,9 @@ class SearchScreenState extends State<SearchScreen> {
       }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        final next = idx + _resultCrossAxisCount;
-        if (next < _resultFocusNodes.length) {
-          _focusResultIndex(next, _resultCrossAxisCount);
+        final nextIdx = idx + resultCrossAxisCount;
+        if (nextIdx < _resultFocusNodes.length) {
+          _resultFocusNodes[nextIdx].requestFocus();
         }
         return _KeyAction.handled;
       }
@@ -396,27 +417,32 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 按上
     if (key == LogicalKeyboardKey.arrowUp) {
-      if (_focusInQr) {
-        _focusNode.requestFocus();
-        return _KeyAction.handled;
+      if (_focusInSearchBox || _focusInQr) {
+        // 将焦点交回顶部导航栏（TvShell 的搜索项）
+        return _KeyAction.ignored;
       }
       if (_focusInHistory) {
         final idx = _currentHistoryIndex!;
-        if (idx > 0) {
-          _historyFocusNodes[idx - 1].requestFocus();
+        final prevIdx = idx - historyCols;
+        if (prevIdx >= 0) {
+          _historyFocusNodes[prevIdx].requestFocus();
         } else {
-          _qrFocusNode.requestFocus();
+          _focusNode.requestFocus();
         }
         return _KeyAction.handled;
       }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        if (idx >= _resultCrossAxisCount) {
-          _focusResultIndex(idx - _resultCrossAxisCount, _resultCrossAxisCount);
-          return _KeyAction.handled;
+        if (idx >= resultCrossAxisCount) {
+          _resultFocusNodes[idx - resultCrossAxisCount].requestFocus();
+        } else {
+          if (_historyFocusNodes.isNotEmpty) {
+            _historyFocusNodes.last.requestFocus();
+          } else {
+            _focusNode.requestFocus();
+          }
         }
-        // 位于结果网格第一行，把回到顶部导航栏交给 TvShell 处理
-        return _KeyAction.ignored;
+        return _KeyAction.handled;
       }
       return _KeyAction.ignored;
     }
@@ -424,54 +450,10 @@ class SearchScreenState extends State<SearchScreen> {
     return _KeyAction.ignored;
   }
 
-  void _focusResultIndex(int target, int crossAxisCount) {
-    if (target < 0 || target >= _resultFocusNodes.length) return;
-
-    final constraints = _resultGridConstraints;
-    if (constraints != null && _resultScrollController.hasClients) {
-      const horizontalPadding = AppSpacing.lg * 2;
-      const crossSpacing = AppSpacing.md;
-      const mainSpacing = AppSpacing.lg;
-      const aspectRatio = 0.55;
-
-      final availableWidth = constraints.maxWidth - horizontalPadding;
-      final itemWidth =
-          (availableWidth - (crossAxisCount - 1) * crossSpacing) / crossAxisCount;
-      final itemHeight = itemWidth / aspectRatio;
-      final rowHeight = itemHeight + mainSpacing;
-
-      final targetRow = target ~/ crossAxisCount;
-      final targetTop = AppSpacing.lg + targetRow * rowHeight;
-      final targetBottom = targetTop + itemHeight;
-
-      final viewportHeight = constraints.maxHeight;
-      final currentOffset = _resultScrollController.offset;
-      final viewportBottom = currentOffset + viewportHeight;
-
-      double? targetOffset;
-      if (targetTop < currentOffset) {
-        targetOffset = targetTop;
-      } else if (targetBottom > viewportBottom) {
-        targetOffset = targetBottom - viewportHeight;
-      }
-
-      if (targetOffset != null) {
-        _resultScrollController.animateTo(
-          targetOffset.clamp(
-            _resultScrollController.position.minScrollExtent,
-            _resultScrollController.position.maxScrollExtent,
-          ),
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
-      }
-    }
-
-    _resultFocusNodes[target].requestFocus();
-  }
-
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
     final action = _handleDirectionKey(event.logicalKey);
     return action == _KeyAction.handled
         ? KeyEventResult.handled
@@ -483,28 +465,36 @@ class SearchScreenState extends State<SearchScreen> {
     return Focus(
       onKeyEvent: _handleKeyEvent,
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 左列：搜索框 + 手机扫码 + 搜索历史
-            SizedBox(
-              width: 320,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildSearchBox(),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildQrButton(),
-                  const SizedBox(height: AppSpacing.lg),
-                  Expanded(child: _buildHistorySection()),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.lg),
-            // 右列：搜索结果
-            Expanded(child: _buildResultsArea()),
-          ],
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final historyCols = _computeHistoryCrossAxisCount(constraints.maxWidth);
+            if (historyCols != _historyCrossAxisCount) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _historyCrossAxisCount = historyCols);
+              });
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 第一行：搜索框 + 手机扫码
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: _buildSearchBox()),
+                    const SizedBox(width: AppSpacing.md),
+                    _buildQrButton(),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                // 第二行：搜索历史（两行）
+                _buildHistorySection(constraints.maxWidth, historyCols),
+                const SizedBox(height: AppSpacing.md),
+                // 第三行：搜索结果
+                Expanded(child: _buildResultsArea()),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -512,14 +502,14 @@ class SearchScreenState extends State<SearchScreen> {
 
   Widget _buildSearchBox() {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: AppColors.bgElevated,
         borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(color: AppColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const Text(
             '搜索',
@@ -530,35 +520,43 @@ class SearchScreenState extends State<SearchScreen> {
               color: AppColors.textSecondary,
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: _controller,
-            focusNode: _focusNode,
-            autofocus: true,
-            style: const TextStyle(color: AppColors.textPrimary),
-            textInputAction: TextInputAction.search,
-            onSubmitted: (value) => _search(value),
-            decoration: InputDecoration(
-              hintText: '输入关键词',
-              hintStyle: const TextStyle(color: AppColors.textMuted),
-              prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
-              suffixIcon: _controller.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: AppColors.textSecondary),
-                      onPressed: _clearInput,
-                    )
-                  : null,
-              filled: true,
-              fillColor: AppColors.bgApp,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                borderSide: BorderSide.none,
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              autofocus: true,
+              style: const TextStyle(color: AppColors.textPrimary),
+              textInputAction: TextInputAction.search,
+              onSubmitted: (value) => _search(value),
+              decoration: InputDecoration(
+                hintText: '输入关键词',
+                hintStyle: const TextStyle(color: AppColors.textMuted),
+                suffixIcon: _controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(
+                          Icons.clear,
+                          color: AppColors.textSecondary,
+                          size: 18,
+                        ),
+                        onPressed: _clearInput,
+                      )
+                    : null,
+                filled: true,
+                fillColor: AppColors.bgApp,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: AppSpacing.xs,
+                  horizontal: AppSpacing.sm,
+                ),
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                borderSide: const BorderSide(color: AppColors.primary, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
             ),
           ),
         ],
@@ -570,38 +568,35 @@ class SearchScreenState extends State<SearchScreen> {
     return FocusableWidget(
       focusNode: _qrFocusNode,
       onTap: _showQrDialog,
+      onKeyEvent: _handleKeyEvent,
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        width: 100,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.sm,
+        ),
         decoration: BoxDecoration(
           color: AppColors.primaryTint,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: AppColors.primary),
         ),
-        child: Column(
+        child: const Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               Icons.qr_code_scanner,
               color: AppColors.primary,
-              size: 40,
+              size: 24,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            SizedBox(height: AppSpacing.xs),
             Text(
-              '手机扫码输入',
+              '手机输入',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              '扫描二维码后用手机输入搜索',
-              style: TextStyle(
-                fontFamily: 'NotoSansSC',
-                fontSize: 12,
-                color: AppColors.textSecondary,
               ),
             ),
           ],
@@ -610,34 +605,57 @@ class SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildHistorySection() {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        decoration: BoxDecoration(
-          color: AppColors.bgElevated,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-          Row(
-            children: [
-              const Icon(Icons.history, color: AppColors.textSecondary, size: 16),
-              const SizedBox(width: AppSpacing.xs),
-              const Text(
-                '近期搜索',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+  Widget _buildHistorySection(double width, int crossAxisCount) {
+    const crossSpacing = AppSpacing.sm;
+    const mainSpacing = AppSpacing.sm;
+    const padding = AppSpacing.sm;
+    const targetItemHeight = 40.0;
+    const titleWidth = 90.0;
+    final availableForItems =
+        width - padding * 2 - titleWidth - AppSpacing.sm;
+    final itemWidth =
+        (availableForItems - (crossAxisCount - 1) * crossSpacing) /
+            crossAxisCount;
+    final sectionHeight = padding * 2 + 2 * targetItemHeight + mainSpacing;
+
+    return Container(
+      height: sectionHeight,
+      padding: const EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: AppColors.bgElevated,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: titleWidth,
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.history,
+                  color: AppColors.textSecondary,
+                  size: 16,
                 ),
-              ),
-            ],
+                const SizedBox(width: AppSpacing.xs),
+                const Expanded(
+                  child: Text(
+                    '近期搜索',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: _searchHistory.isEmpty
                 ? const Center(
@@ -650,72 +668,52 @@ class SearchScreenState extends State<SearchScreen> {
                       ),
                     ),
                   )
-                : SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (int index = 0;
-                            index < _searchHistory.length;
-                            index++) ...[
-                          Builder(
-                            builder: (context) {
-                              final query = _searchHistory[index];
-                              return FocusableWidget(
-                                focusNode: _historyFocusNodes[index],
-                                onTap: () => _search(query),
-                                onKeyEvent: _handleKeyEvent,
-                                onFocusChange: (focused) {
-                                  if (focused) {
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                      if (context.mounted) {
-                                        Scrollable.ensureVisible(
-                                          context,
-                                          duration: const Duration(
-                                              milliseconds: 200),
-                                          curve: Curves.easeOut,
-                                          alignment: 0.5,
-                                        );
-                                      }
-                                    });
-                                  }
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: AppSpacing.md,
-                                    vertical: AppSpacing.sm,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.bgApp,
-                                    borderRadius:
-                                        BorderRadius.circular(AppRadius.sm),
-                                    border:
-                                        Border.all(color: AppColors.border),
-                                  ),
-                                  child: Text(
-                                    query,
-                                    style: const TextStyle(
-                                      fontFamily: 'NotoSansSC',
-                                      fontSize: 13,
-                                      color: AppColors.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          if (index < _searchHistory.length - 1)
-                            const SizedBox(height: AppSpacing.sm),
-                        ],
-                      ],
+                : GridView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      crossAxisSpacing: crossSpacing,
+                      mainAxisSpacing: mainSpacing,
+                      childAspectRatio: itemWidth / targetItemHeight,
                     ),
+                    itemCount: _searchHistory.length,
+                    itemBuilder: (context, index) {
+                      final query = _searchHistory[index];
+                      return FocusableWidget(
+                        focusNode: _historyFocusNodes[index],
+                        onTap: () => _search(query),
+                        onKeyEvent: _handleKeyEvent,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: AppSpacing.xs,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.bgApp,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Center(
+                            child: Text(
+                              query,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontFamily: 'NotoSansSC',
+                                fontSize: 13,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
-              ],
-            ),
           ),
-        );
+        ],
+      ),
+    );
   }
 
   Widget _buildResultsArea() {
@@ -814,5 +812,18 @@ class SearchScreenState extends State<SearchScreen> {
     if (width > 800) return 5;
     if (width > 500) return 4;
     return 3;
+  }
+
+  int _computeHistoryCrossAxisCount(double width) {
+    const minItemWidth = 120.0;
+    const crossSpacing = AppSpacing.sm;
+    const padding = AppSpacing.sm * 2;
+    const titleWidth = 90.0;
+    const titleSpacing = AppSpacing.sm;
+    final available = width - padding - titleWidth - titleSpacing;
+    int count =
+        ((available + crossSpacing) / (minItemWidth + crossSpacing)).floor();
+    // 保证 6 条历史能在两行内完整显示，避免第三行被截断
+    return count.clamp(3, 6);
   }
 }

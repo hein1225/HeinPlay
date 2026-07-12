@@ -67,6 +67,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _longPressSeekTimer;
   Timer? _continuousSeekTimer;
   Timer? _clockTimer;
+  Timer? _autoSwitchTimer;
   DateTime _currentTime = DateTime.now();
 
   // 固定快进快退步长
@@ -221,10 +222,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onDurationUpdate(Duration duration) {
     if (!mounted) return;
     setState(() => _duration = duration);
-    // 如果因超时导致界面显示了“播放失败”，但实际视频已初始化成功，则清除错误
-    if (duration.inMilliseconds > 0 &&
-        _error == '播放失败，请尝试切换播放源' &&
-        !_initialized) {
+    // 如果因超时导致界面显示了播放失败提示，但实际视频已初始化成功，
+    // 则取消待执行的自动换源并清除错误。
+    final pendingAutoSwitch = _error == '播放失败，即将进行自动换源' ||
+        _error == '播放失败，请手动更换播放源' ||
+        _error == '播放失败，请尝试切换播放源';
+    if (duration.inMilliseconds > 0 && pendingAutoSwitch && !_initialized) {
+      _autoSwitchTimer?.cancel();
+      _autoSwitchTimer = null;
       setState(() {
         _error = null;
         _initialized = true;
@@ -342,6 +347,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
 
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+
     setState(() {
       _initialized = false;
       _error = null;
@@ -405,14 +413,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     bool success = await tryOpen(url);
 
-    final autoSwitchSource = await UserDataService.getAutoSwitchSource();
-    if (!success && autoSwitchSource && _sources.length > 1) {
-      success = await _tryAutoSwitchSource(
-        index,
-        timeoutSeconds: timeoutSeconds,
-      );
-    }
-
     if (!mounted) return;
 
     // 如果超时判定失败，但当前源实际已就绪（ duration 有效），修正为成功，
@@ -425,10 +425,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       success = true;
     }
 
+    final autoSwitchSource = await UserDataService.getAutoSwitchSource();
+
     if (success) {
+      _autoSwitchTimer?.cancel();
+      _autoSwitchTimer = null;
       setState(() {
         _currentEpisodeIndex = index;
         _initialized = true;
+        _error = null;
       });
       // 恢复上次播放位置，并限制在新视频总时长范围内
       if (_pendingInitialPositionMs > 0) {
@@ -440,34 +445,54 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _pendingInitialPositionMs = 0;
       }
       _showControlsWithoutFocusShift();
+    } else if (autoSwitchSource && _sources.length > 1) {
+      // 自动换源开启且有其他源时，按设置时间延迟后尝试下一个源。
+      setState(() {
+        _error = '播放失败，即将进行自动换源';
+        _initialized = true;
+      });
+      _autoSwitchTimer = Timer(Duration(seconds: timeoutSeconds), () async {
+        if (!mounted) return;
+        final switched = await _tryAutoSwitchSource(
+          index,
+          timeoutSeconds: timeoutSeconds,
+        );
+        if (mounted && !switched) {
+          setState(() {
+            _error = '播放失败，请手动更换播放源';
+            _initialized = true;
+          });
+        }
+      });
     } else {
       setState(() {
-        _error = '播放失败，请尝试切换播放源';
+        _error = '播放失败，请手动更换播放源';
         _initialized = true;
       });
     }
   }
 
+  /// 当前源播放失败时，按详情页已有的测速排序依次尝试其他源。
+  /// 全屏播放期间不再重新测速，仅做播放可用性切换。
   Future<bool> _tryAutoSwitchSource(
     int targetEpisodeIndex, {
     required int timeoutSeconds,
   }) async {
     if (_sources.length <= 1) return false;
 
-    // 记录切换前播放位置，切换成功后恢复
     final previousPositionMs = _position.inMilliseconds;
 
-    // 按 speed 降序排序（最快的排前面），排除当前源
-    final candidates = _sources.asMap().entries.toList()
-      ..sort((a, b) => (b.value.speed ?? 0).compareTo(a.value.speed ?? 0));
-
-    for (final entry in candidates) {
-      if (entry.key == _currentSourceIndex) continue;
+    // 直接使用详情页测速后的源顺序（速度快的排在前面）
+    for (var i = 0; i < _sources.length; i++) {
+      if (i == _currentSourceIndex) continue;
       if (!mounted) break;
 
-      setState(() => _switchingSource = true);
+      setState(() {
+        _switchingSource = true;
+        _error = null;
+      });
 
-      final option = _sources[entry.key];
+      final option = _sources[i];
       final response = await LunaTVService.getDetail(
         source: option.source,
         id: option.id,
@@ -490,7 +515,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         continue;
       }
 
-      // 清理旧 backend
       _backend?.dispose();
       for (final sub in _subscriptions) {
         sub.cancel();
@@ -499,7 +523,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       setState(() {
         _currentVideoDetail = response.data!;
-        _currentSourceIndex = entry.key;
+        _currentSourceIndex = i;
         _currentEpisodeIndex = targetEpisodeIndex;
         _switchingSource = false;
         _skipConfig = null;
@@ -511,7 +535,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       _loadSkipConfig();
 
-      // 重新初始化 backend
       final backend = PlayerBackendFactory.create(_currentPlayerBackend);
       _backend = backend;
       _backend?.fit = _videoFit;
@@ -533,7 +556,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }),
         );
 
-      // 尝试播放目标集数，并对 M3U8 地址应用去广告过滤
       var url = newEpisodes[targetEpisodeIndex].trim();
       final filteredUrl = await AdFilterEngine.filterM3u8(
         sourceType: _currentVideoDetail.source,
@@ -544,9 +566,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       try {
-        debugPrint(
-          '自动切换源播放: ${option.title} -> $url',
-        );
+        debugPrint('自动切换源播放: ${option.title} -> $url');
         final startTime = DateTime.now();
         await _backend
             ?.open(
@@ -562,13 +582,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             : _duration.inMilliseconds > 0;
         if (!ready) {
           debugPrint('自动切换源等待播放就绪超时');
-          // 继续尝试下一个源
           continue;
         }
 
         if (mounted) {
           setState(() => _initialized = true);
-          // 恢复切换前播放位置，并限制在新视频总时长范围内
           if (previousPositionMs > 0) {
             final maxMs = _duration.inMilliseconds > 500
                 ? _duration.inMilliseconds - 500
@@ -582,7 +600,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       } catch (e, stackTrace) {
         debugPrint('自动切换源播放失败: $e');
         debugPrint('$stackTrace');
-        // 继续尝试下一个源
       }
     }
 
@@ -592,6 +609,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _switchSource(int index) async {
     if (index < 0 || index >= _sources.length) return;
     if (index == _currentSourceIndex) return;
+
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
 
     setState(() => _switchingSource = true);
     final option = _sources[index];
@@ -876,6 +896,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _switchPlayerBackend(PlayerBackendType type) async {
     if (type == _currentPlayerBackend) return;
+
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
 
     setState(() => _switchingSource = true);
 
@@ -1377,6 +1400,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _controlsTimer?.cancel();
     _gestureIndicatorTimer?.cancel();
     _clockTimer?.cancel();
+    _autoSwitchTimer?.cancel();
     _bottomControlsFocusNode.dispose();
     for (final sub in _subscriptions) {
       sub.cancel();
@@ -1974,15 +1998,64 @@ class _SourceSelectorDialog extends StatefulWidget {
 
 class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
   late final ScrollController _scrollController;
-  final _selectedKey = GlobalKey();
-  final _selectedFocusNode = FocusNode();
+  late final List<FocusNode> _focusNodes;
+  late final List<GlobalKey> _itemKeys;
+  int _focusedIndex = 0;
 
   @override
   void initState() {
     super.initState();
+    _focusedIndex = widget.currentIndex.clamp(0, widget.sources.length - 1);
     _scrollController = ScrollController();
+    _focusNodes = List.generate(widget.sources.length, (_) => FocusNode());
+    _itemKeys = List.generate(widget.sources.length, (_) => GlobalKey());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = _selectedKey.currentContext;
+      if (!mounted) return;
+      HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      _focusItem(_focusedIndex);
+    });
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
+    _scrollController.dispose();
+    for (final node in _focusNodes) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+
+    var currentIndex = _focusNodes.indexWhere((node) => node.hasPrimaryFocus);
+    if (currentIndex < 0) currentIndex = _focusedIndex;
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      if (currentIndex + 1 < widget.sources.length) {
+        setState(() => _focusedIndex = currentIndex + 1);
+        _focusItem(_focusedIndex);
+        return true;
+      }
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      if (currentIndex > 0) {
+        setState(() => _focusedIndex = currentIndex - 1);
+        _focusItem(_focusedIndex);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _focusItem(int index) {
+    if (index < 0 || index >= _focusNodes.length) return;
+    _focusNodes[index].requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = _itemKeys[index].currentContext;
       if (ctx != null) {
         Scrollable.ensureVisible(
           ctx,
@@ -1990,15 +2063,7 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
           duration: const Duration(milliseconds: 200),
         );
       }
-      _selectedFocusNode.requestFocus();
     });
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _selectedFocusNode.dispose();
-    super.dispose();
   }
 
   @override
@@ -2013,35 +2078,42 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
         ),
       ),
       content: FocusScope(
-        autofocus: true,
-        child: SizedBox(
-          width: 640,
-          height: 240,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            controller: _scrollController,
-            itemCount: widget.sources.length,
-            itemBuilder: (context, index) {
-              final source = widget.sources[index];
-              final selected = index == widget.currentIndex;
-              return Padding(
-                padding: EdgeInsets.only(
-                  right: index < widget.sources.length - 1
-                      ? AppSpacing.md
-                      : 0,
-                ),
-                child: _SourceSelectorCard(
-                  key: selected ? _selectedKey : null,
-                  focusNode: selected ? _selectedFocusNode : null,
-                  autofocus: selected,
-                  source: source,
-                  selected: selected,
-                  formatSpeed: widget.formatSpeed,
-                  speedColor: widget.speedColor,
-                  onTap: () => widget.onSelect(index),
-                ),
-              );
-            },
+        child: Actions(
+          // 禁用默认方向键焦点遍历，避免与自定义 HardwareKeyboard 处理冲突导致跳格。
+          actions: <Type, Action<Intent>>{
+            DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+              onInvoke: (_) => null,
+            ),
+          },
+          child: SizedBox(
+            width: 640,
+            height: 240,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              controller: _scrollController,
+              child: Row(
+                children: [
+                  for (var index = 0; index < widget.sources.length; index++)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        right: index < widget.sources.length - 1
+                            ? AppSpacing.md
+                            : 0,
+                      ),
+                      child: _SourceSelectorCard(
+                        key: _itemKeys[index],
+                        focusNode: _focusNodes[index],
+                        autofocus: index == widget.currentIndex,
+                        source: widget.sources[index],
+                        selected: index == widget.currentIndex,
+                        formatSpeed: widget.formatSpeed,
+                        speedColor: widget.speedColor,
+                        onTap: () => widget.onSelect(index),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

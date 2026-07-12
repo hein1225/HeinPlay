@@ -157,13 +157,15 @@ class CategoryScreenState extends State<CategoryScreen> {
   final List<FocusNode> _dropdownOptionFocusNodes = [];
   final List<FocusNode> _posterFocusNodes = [];
   final List<FocusNode> _weekdayFocusNodes = [];
-  BoxConstraints? _gridConstraints;
 
   List<BangumiCalendarItem> _bangumiCalendarItems = [];
   late String _selectedWeekday;
 
   // 用于取消过时的分类数据加载，切换分类时递增，异步回调中对比不匹配则放弃结果。
   int _loadToken = 0;
+
+  // 海报墙当前列数，用于焦点移动时提前触发加载更多。
+  int _posterCrossAxisCount = 0;
 
   // ===================== 分类选项（与 LunaTV DoubanSelector 一致） =====================
 
@@ -210,8 +212,8 @@ class CategoryScreenState extends State<CategoryScreen> {
   ];
 
   static const _animePrimaryOptions = [
-    _OptionItem('番剧', '番剧'),
     _OptionItem('每日放送', '每日放送'),
+    _OptionItem('番剧', '番剧'),
     _OptionItem('剧场版', '剧场版'),
   ];
 
@@ -356,7 +358,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       category: 'all',
       format: _config.defaultFormat,
       sort: _config.defaultSort,
-      pageLimit: 25,
+      pageLimit: 30,
     );
     _scrollController.addListener(_onScroll);
     _categoryTagFocusNodes.addAll(
@@ -400,6 +402,7 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   void _focusSelectedCategoryTag() {
+    _scrollPosterGridToTop();
     final index = _selectedPrimaryIndex;
     if (index >= 0 && index < _categoryTagFocusNodes.length) {
       _categoryTagFocusNodes[index].requestFocus();
@@ -407,8 +410,13 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   void _focusSecondRowFirst() {
+    _scrollPosterGridToTop();
     if (_selectedPrimary == '每日放送') {
-      if (_weekdayFocusNodes.isNotEmpty) {
+      final selectedIndex = BangumiService.weekdays
+          .indexWhere((d) => d['en'] == _selectedWeekday);
+      if (selectedIndex >= 0 && selectedIndex < _weekdayFocusNodes.length) {
+        _weekdayFocusNodes[selectedIndex].requestFocus();
+      } else if (_weekdayFocusNodes.isNotEmpty) {
         _weekdayFocusNodes.first.requestFocus();
       }
     } else if (_showSecondaryRow) {
@@ -479,47 +487,34 @@ class CategoryScreenState extends State<CategoryScreen> {
   void _focusPosterIndex(int target, int crossAxisCount) {
     if (target < 0 || target >= _posterFocusNodes.length) return;
 
-    final constraints = _gridConstraints;
-    if (constraints != null && _scrollController.hasClients) {
-      const horizontalPadding = AppSpacing.lg * 2;
-      const crossSpacing = AppSpacing.md;
-      const mainSpacing = AppSpacing.lg;
-      const aspectRatio = 0.55;
+    if (crossAxisCount > 0) _posterCrossAxisCount = crossAxisCount;
 
-      final availableWidth = constraints.maxWidth - horizontalPadding;
-      final itemWidth =
-          (availableWidth - (crossAxisCount - 1) * crossSpacing) / crossAxisCount;
-      final itemHeight = itemWidth / aspectRatio;
-      final rowHeight = itemHeight + mainSpacing;
-
-      final targetRow = target ~/ crossAxisCount;
-      final targetTop = AppSpacing.lg + targetRow * rowHeight;
-      final targetBottom = targetTop + itemHeight;
-
-      final viewportHeight = constraints.maxHeight;
-      final currentOffset = _scrollController.offset;
-      final viewportBottom = currentOffset + viewportHeight;
-
-      double? targetOffset;
-      if (targetTop < currentOffset) {
-        targetOffset = targetTop;
-      } else if (targetBottom > viewportBottom) {
-        targetOffset = targetBottom - viewportHeight;
-      }
-
-      if (targetOffset != null) {
-        _scrollController.animateTo(
-          targetOffset.clamp(
-            _scrollController.position.minScrollExtent,
-            _scrollController.position.maxScrollExtent,
-          ),
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
-      }
-    }
-
+    // 竖直滚动统一由 TvPosterGrid 的 onFocusChange 处理，
+    // 避免此处与 TvPosterGrid 使用不同行高/间距参数导致滚动偏移错误。
     _posterFocusNodes[target].requestFocus();
+    _maybePreloadMore(target, crossAxisCount);
+  }
+
+  void _maybePreloadMore(int index, int crossAxisCount) {
+    final count = crossAxisCount > 0 ? crossAxisCount : _posterCrossAxisCount;
+    if (count <= 0 || _movies.isEmpty || _loadingMore || !_hasMore) return;
+
+    final row = index ~/ count;
+    final totalRows = (_movies.length + count - 1) ~/ count;
+    if (totalRows >= 2 && row >= totalRows - 2) {
+      debugPrint('CategoryScreen[${widget.kind}] 焦点预加载: index=$index row=$row totalRows=$totalRows');
+      _loadMore();
+    }
+  }
+
+  void _scrollPosterGridToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.minScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   KeyEventResult _handlePosterKeyEvent(
@@ -529,8 +524,10 @@ class CategoryScreenState extends State<CategoryScreen> {
     KeyEvent event,
   ) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (crossAxisCount > 0) _posterCrossAxisCount = crossAxisCount;
 
     void focusPreviousRow() {
+      _scrollPosterGridToTop();
       _focusSecondRowFirst();
     }
 
@@ -555,7 +552,19 @@ class CategoryScreenState extends State<CategoryScreen> {
         if (index < crossAxisCount) {
           focusPreviousRow();
         } else {
-          _focusPosterIndex(index - crossAxisCount, crossAxisCount);
+          final target = index - crossAxisCount;
+          // 每日放送按上回到最顶行时先滚动回顶部，保证第一行完整显示
+          if (widget.kind == 'anime' &&
+              _selectedPrimary == '每日放送' &&
+              target < crossAxisCount &&
+              _scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.minScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+            );
+          }
+          _focusPosterIndex(target, crossAxisCount);
         }
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowDown:
@@ -687,6 +696,14 @@ class CategoryScreenState extends State<CategoryScreen> {
 
           debugPrint('CategoryScreen[${widget.kind}] 状态更新: movies=${_movies.length}, hasMore=$_hasMore');
         });
+        // 刷新后把海报墙滚回顶部，避免旧分类的滚动偏移残留
+        if (refresh) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _scrollController.hasClients) {
+              _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+            }
+          });
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('CategoryScreen[${widget.kind}] 加载失败: $e');
@@ -785,6 +802,7 @@ class CategoryScreenState extends State<CategoryScreen> {
         page: 0,
       );
     });
+    _scrollPosterGridToTop();
     _loadData(refresh: true);
   }
 
@@ -797,6 +815,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       _selectedSecondary = _defaultSecondaryForPrimary(value);
       _params = _resetParamsForPrimary(value);
     });
+    _scrollPosterGridToTop();
     _loadData(refresh: true);
   }
 
@@ -854,6 +873,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       _selectedSecondary = value;
       _params = _params.copyWith(page: 0);
     });
+    _scrollPosterGridToTop();
     _loadData(refresh: true);
   }
 
@@ -1199,7 +1219,7 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   Widget _buildTopFilterBar() {
     return Container(
-      height: 116,
+      height: 80,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       decoration: const BoxDecoration(
         color: AppColors.bgSurface,
@@ -1209,15 +1229,16 @@ class CategoryScreenState extends State<CategoryScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _buildLabeledRow(
             label: '分类',
-            height: 56,
+            height: 36,
             child: _buildCategoryTags(),
           ),
           _buildLabeledRow(
             label: _secondRowLabel,
-            height: 52,
+            height: 36,
             child: _buildSecondRow(),
           ),
         ],
@@ -1286,7 +1307,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
-                        vertical: AppSpacing.xs,
+                        vertical: 2,
                       ),
                       decoration: BoxDecoration(
                         color: selected
@@ -1369,7 +1390,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
-                        vertical: AppSpacing.xs,
+                        vertical: 2,
                       ),
                       decoration: BoxDecoration(
                         color: selected
@@ -1435,7 +1456,7 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   Widget _buildWeekdayRow() {
     return SizedBox(
-      height: 52,
+      height: 36,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -1449,6 +1470,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                     focusNode: _weekdayFocusNodes[i],
                     onTap: () {
                       setState(() => _selectedWeekday = day['en']!);
+                      _scrollPosterGridToTop();
                       _loadData(refresh: true);
                     },
                     onFocusChange: (focused) {
@@ -1469,7 +1491,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                     child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
-                      vertical: AppSpacing.xs,
+                      vertical: 2,
                     ),
                     decoration: BoxDecoration(
                       color: selected ? AppColors.primary : AppColors.bgElevated,
@@ -1526,7 +1548,7 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   Widget _buildDimensionButtons() {
     return SizedBox(
-      height: 52,
+      height: 36,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -1569,7 +1591,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
-                        vertical: AppSpacing.xs,
+                        vertical: 2,
                       ),
                       decoration: BoxDecoration(
                         color: active ? AppColors.primary : AppColors.bgElevated,
@@ -1655,7 +1677,6 @@ class CategoryScreenState extends State<CategoryScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        _gridConstraints = constraints;
         return Column(
           children: [
             Expanded(

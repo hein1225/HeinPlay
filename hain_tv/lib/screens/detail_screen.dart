@@ -165,6 +165,7 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _detailLoading = true;
   bool _doubanLoading = true;
   bool _speedTesting = false;
+  bool _hasSpeedTested = false;
   bool _searchingSources = false;
   String? _error;
   VideoDetail? _videoDetail;
@@ -172,6 +173,10 @@ class _DetailScreenState extends State<DetailScreen> {
   int _selectedEpisodeIndex = 0;
   bool _episodeSortAscending = true;
   int _selectedSourceIndex = 0;
+
+  // 用户手动选择了播放源，或存在播放记录时，禁止自动测速后调回优选源。
+  bool _userSelectedSource = false;
+
   bool _isFavorite = false;
   bool _fuzzySearchEnabled = false;
   PlayerBackendType _playerBackend = PlayerBackendType.mediaKit;
@@ -213,15 +218,18 @@ class _DetailScreenState extends State<DetailScreen> {
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
     _playRecord = widget.playRecord;
-    _loadFavoriteStatus();
-    _loadPlayerBackend();
-    _loadPlayRecord();
+    // 若传入播放记录，优先选中记录里的源，避免被自动测速调走。
+    _applyPlayRecordSourceSelection();
     _loadData();
   }
 
   /// 按标题查询是否有播放记录。
   /// [force] 为 true 时，即使已有记录也会重新查询，用于从播放页返回后刷新。
-  Future<void> _loadPlayRecord({bool force = false}) async {
+  /// [applySelection] 为 true 时，查询到记录后自动选中记录中的源。
+  Future<void> _loadPlayRecord({
+    bool force = false,
+    bool applySelection = false,
+  }) async {
     if (_playRecord != null && !force) return;
     try {
       final record = await PlayRecordService.getByTitle(
@@ -229,10 +237,28 @@ class _DetailScreenState extends State<DetailScreen> {
         year: widget.year,
       );
       if (mounted) {
-        setState(() => _playRecord = record);
+        setState(() {
+          _playRecord = record;
+          if (applySelection && record != null) {
+            _applyPlayRecordSourceSelection();
+          }
+        });
       }
     } catch (e) {
       debugPrint('查询播放记录失败: $e');
+    }
+  }
+
+  /// 根据当前 [_playRecord] 选中对应源，并标记为用户已选择，防止自动测速调走。
+  void _applyPlayRecordSourceSelection() {
+    final record = _playRecord;
+    if (record == null || _sources.isEmpty) return;
+    final index = _sources.indexWhere(
+      (s) => s.source == record.source && s.id == record.id,
+    );
+    if (index >= 0) {
+      _selectedSourceIndex = index;
+      _userSelectedSource = true;
     }
   }
 
@@ -304,6 +330,13 @@ class _DetailScreenState extends State<DetailScreen> {
       });
     }
 
+    // 先查询播放记录；若存在记录则优先使用记录中的源。
+    await _loadPlayRecord(applySelection: true);
+
+    // 源确定后再加载收藏状态与播放器后端。
+    await _loadFavoriteStatus();
+    await _loadPlayerBackend();
+
     // 如果没有源或明确要求搜索（如从播放记录进入），在后台异步搜索更多源，不阻塞页面内容展示
     if (widget.title.isNotEmpty &&
         (_sources.isEmpty || widget.searchOnLoad)) {
@@ -340,6 +373,16 @@ class _DetailScreenState extends State<DetailScreen> {
     }
 
     await Future.wait(futures);
+
+    // 源已直接传入且未要求后台搜索、用户未手动选源且无播放记录时，
+    // 首次进入执行一次自动测速择优。
+    if (!widget.searchOnLoad &&
+        _sources.length >= 2 &&
+        !_hasSpeedTested &&
+        !_speedTesting &&
+        !_userSelectedSource) {
+      unawaited(_runSpeedTest());
+    }
   }
 
   /// 后台搜索播放源，搜索到一个即刷新界面，全部完成后加载当前选中源详情。
@@ -477,27 +520,51 @@ class _DetailScreenState extends State<DetailScreen> {
       }
     }
 
+    // 若用户已手动选源，尽量保留当前选中的源；否则优先使用播放记录源。
+    final currentSourceKey = _sources.isNotEmpty &&
+            _selectedSourceIndex < _sources.length
+        ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+        : null;
+    final preservedIndex = currentSourceKey != null
+        ? mergedSources.indexWhere(
+            (s) => '${s.source}+${s.id}' == currentSourceKey,
+          )
+        : -1;
+
     setState(() {
       _sources = mergedSources;
-      _selectedSourceIndex = 0;
+      if (_userSelectedSource && preservedIndex >= 0) {
+        _selectedSourceIndex = preservedIndex;
+      } else if (originalSource != null) {
+        final originalIndex = mergedSources.indexWhere(
+          (s) => '${s.source}+${s.id}' == originalSource,
+        );
+        if (originalIndex >= 0) {
+          _selectedSourceIndex = originalIndex;
+          _userSelectedSource = true;
+        } else {
+          _selectedSourceIndex = 0;
+        }
+      } else {
+        _selectedSourceIndex = 0;
+      }
       if (isFinal) _searchingSources = false;
     });
-
-    // 若存在原始源，默认选中它，保证“继续播放”使用原来的源
-    if (originalSource != null) {
-      final originalIndex = _sources.indexWhere(
-        (s) => '${s.source}+${s.id}' == originalSource,
-      );
-      if (originalIndex >= 0) {
-        setState(() => _selectedSourceIndex = originalIndex);
-      }
-    }
 
     // 视频详情尚未加载时，自动加载当前选中源
     if (isFinal &&
         _videoDetail == null &&
         _currentSource.source.isNotEmpty) {
       unawaited(_loadVideoDetail());
+    }
+
+    // 首次搜索完成后，若存在多个源、未测速且用户未手动选源/无播放记录，执行一次自动测速择优
+    if (isFinal &&
+        _sources.length >= 2 &&
+        !_hasSpeedTested &&
+        !_speedTesting &&
+        !_userSelectedSource) {
+      unawaited(_runSpeedTest());
     }
   }
 
@@ -520,9 +587,6 @@ class _DetailScreenState extends State<DetailScreen> {
           _videoDetail = response.data;
           _detailLoading = false;
         });
-        if (_sources.isNotEmpty && !_speedTesting) {
-          _runSpeedTest();
-        }
       } else {
       setState(() {
         _error = response.message ?? '获取视频详情失败';
@@ -630,6 +694,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
     setState(() {
       _selectedSourceIndex = index;
+      _userSelectedSource = true;
       _videoDetail = null;
       _error = null;
       _selectedEpisodeIndex = 0;
@@ -640,8 +705,10 @@ class _DetailScreenState extends State<DetailScreen> {
     await _loadVideoDetail();
   }
 
-  Future<void> _runSpeedTest() async {
+  Future<void> _runSpeedTest({bool force = false}) async {
     if (_sources.length < 2 || _speedTesting) return;
+    if (!force && _hasSpeedTested) return;
+
     setState(() => _speedTesting = true);
 
     final tested = await SearchService.speedTestSources(
@@ -662,10 +729,14 @@ class _DetailScreenState extends State<DetailScreen> {
         _sources[i] = tested[i];
       }
       _speedTesting = false;
+      _hasSpeedTested = true;
     });
 
     final bestIndex = _findBestSourceIndex();
-    if (bestIndex != _selectedSourceIndex && bestIndex >= 0) {
+    // 仅当用户未手动选源且无播放记录时，才自动切换到测速最快的源。
+    if (!_userSelectedSource &&
+        bestIndex != _selectedSourceIndex &&
+        bestIndex >= 0) {
       await _onSourceChanged(bestIndex);
     }
   }
@@ -750,21 +821,9 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     if (index < 0 || index >= detail.episodes.length) return;
 
-    // 优先使用指定的源（如播放记录的原始源），否则按速度择优
-    var bestIndex = preferredSourceIndex ?? _selectedSourceIndex;
-    if (preferredSourceIndex == null && _sources.isNotEmpty) {
-      var bestSpeed = _sources[bestIndex].speed ?? 0;
-      for (var i = 0; i < _sources.length; i++) {
-        final speed = _sources[i].speed ?? 0;
-        if (speed > bestSpeed) {
-          bestSpeed = speed;
-          bestIndex = i;
-        }
-      }
-      if (bestIndex != _selectedSourceIndex) {
-        setState(() => _selectedSourceIndex = bestIndex);
-      }
-    }
+    // 播放时优先使用指定的源（如播放记录），否则使用用户当前选中的源。
+    // 自动测速择优只在详情页初始化时执行一次，播放时不再调回优选源。
+    final sourceIndex = preferredSourceIndex ?? _selectedSourceIndex;
 
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -772,7 +831,7 @@ class _DetailScreenState extends State<DetailScreen> {
           videoDetail: detail,
           episodeIndex: index,
           sources: _sources,
-          initialSourceIndex: bestIndex,
+          initialSourceIndex: sourceIndex,
           playerBackend: _playerBackend,
           initialPositionMs: initialPlayTime * 1000,
         ),
@@ -859,7 +918,7 @@ class _DetailScreenState extends State<DetailScreen> {
             if (_searchingSources) const SizedBox(width: AppSpacing.sm),
             if (_sources.length >= 2)
               FocusableWidget(
-                onTap: _runSpeedTest,
+                onTap: () => _runSpeedTest(force: true),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.md,

@@ -284,6 +284,10 @@ class TvPosterGrid extends StatefulWidget {
 
 class _TvPosterGridState extends State<TvPosterGrid> {
   final List<GlobalKey> _itemKeys = [];
+  final ScrollController _internalScrollController = ScrollController();
+  int _crossAxisCount = 1;
+  int _lastFocusedRow = -1;
+  double _rowHeight = 0;
 
   @override
   void initState() {
@@ -295,6 +299,17 @@ class _TvPosterGridState extends State<TvPosterGrid> {
   void didUpdateWidget(covariant TvPosterGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncKeys();
+    // 数据整体刷新（首项变化）时重置上次聚焦行，避免滚动定位沿用上一条数据的状态
+    if (widget.items.isNotEmpty &&
+        (oldWidget.items.isEmpty || oldWidget.items.first.id != widget.items.first.id)) {
+      _lastFocusedRow = -1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _internalScrollController.dispose();
+    super.dispose();
   }
 
   void _syncKeys() {
@@ -306,13 +321,41 @@ class _TvPosterGridState extends State<TvPosterGrid> {
     }
   }
 
+  ScrollController get _scrollController =>
+      widget.controller ?? _internalScrollController;
+
   void _ensureVisible(int index) {
     if (index < 0 || index >= _itemKeys.length) return;
-    final context = _itemKeys[index].currentContext;
-    if (context == null) return;
-    Scrollable.ensureVisible(
-      context,
-      alignment: 0.5,
+    final row = index ~/ _crossAxisCount;
+    // 同一行内左右移动不触发竖直滚动，避免海报墙上下跳动
+    if (row == _lastFocusedRow) {
+      debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 同一行，不滚动');
+      return;
+    }
+
+    final controller = _scrollController;
+    if (!controller.hasClients || _rowHeight <= 0) {
+      debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 无客户端或行高未计算');
+      return;
+    }
+
+    final topPadding = widget.padding.top;
+    // 焦点选中行始终作为可见的第一行海报行显示
+    double targetOffset = topPadding + row * _rowHeight;
+    // 最顶行回到最小偏移，留出顶部内边距，避免放大后被裁切
+    if (row == 0) {
+      targetOffset = controller.position.minScrollExtent;
+    }
+
+    targetOffset = targetOffset.clamp(
+      controller.position.minScrollExtent,
+      controller.position.maxScrollExtent,
+    );
+
+    debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 滚动 -> target=$targetOffset');
+    _lastFocusedRow = row;
+    controller.animateTo(
+      targetOffset,
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeOut,
     );
@@ -326,21 +369,33 @@ class _TvPosterGridState extends State<TvPosterGrid> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final count = _computeCrossAxisCount(constraints.maxWidth);
+        // 列数变化时重置上次记录的行，避免行号计算失效
+        if (count != _crossAxisCount) {
+          _lastFocusedRow = -1;
+        }
+        _crossAxisCount = count;
+
+        // 计算单行高度：item 宽度 / 宽高比 + 行间距
+        final itemWidth = (constraints.maxWidth -
+                widget.padding.horizontal -
+                AppSpacing.md * (count - 1)) /
+            count;
+        _rowHeight = itemWidth / 0.78 + 6;
         return GridView.builder(
-            controller: widget.controller,
+            controller: _scrollController,
             padding: widget.padding,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: count,
               crossAxisSpacing: AppSpacing.md,
-              mainAxisSpacing: AppSpacing.md,
-              childAspectRatio: 0.7,
+              mainAxisSpacing: 6,
+              childAspectRatio: 0.78,
             ),
             scrollCacheExtent: ScrollCacheExtent.pixels(2000),
             itemCount: widget.items.length,
             itemBuilder: (context, index) {
             final item = widget.items[index];
             final isFirst = index == 0;
-            final itemCount = _computeCrossAxisCount(constraints.maxWidth);
+            final itemCount = count;
             return TvPosterCard(
               key: _itemKeys[index],
               autofocus: widget.autofocusFirstItem && isFirst,
@@ -348,7 +403,7 @@ class _TvPosterGridState extends State<TvPosterGrid> {
                   ? widget.itemFocusNodes![index]
                   : (isFirst ? widget.firstItemFocusNode : null),
               selected: widget.selectedPredicate?.call(index) ?? false,
-              aspectRatio: 0.7,
+              aspectRatio: 0.78,
               onKeyEvent: (node, event) {
                 if (widget.onItemKeyEvent != null) {
                   final result = widget.onItemKeyEvent!(
