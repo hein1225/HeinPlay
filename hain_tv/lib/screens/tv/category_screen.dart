@@ -1,18 +1,18 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:visibility_detector/visibility_detector.dart';
-import '../focus/focusable.dart';
-import '../models/bangumi_calendar_item.dart';
-import '../models/douban_movie.dart';
-import '../models/douban_recommends_params.dart';
-import '../services/bangumi_service.dart';
-import '../services/douban_service.dart';
-import '../models/api_response.dart';
-import '../theme.dart';
-import '../utils/back_interceptor.dart';
-import '../widgets/tv_grid.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/bangumi_calendar_item.dart';
+import 'package:hain_tv/models/douban_movie.dart';
+import 'package:hain_tv/models/douban_recommends_params.dart';
+import 'package:hain_tv/services/bangumi_service.dart';
+import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/models/api_response.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/utils/back_interceptor.dart';
+import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
 
 class _OptionItem {

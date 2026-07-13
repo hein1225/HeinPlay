@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'screens/login_screen.dart';
-import 'services/user_data_service.dart';
-import 'theme.dart';
-import 'widgets/tv_shell.dart';
+import 'package:hain_tv/screens/tv/login_screen.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/tv/tv_shell.dart';
 
 class HainTvApp extends StatelessWidget {
   const HainTvApp({super.key});

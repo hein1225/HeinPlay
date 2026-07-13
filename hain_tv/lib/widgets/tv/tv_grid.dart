@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import '../theme.dart';
+import 'package:hain_tv/theme.dart';
 import 'tv_card.dart';
 
 class PosterItem {

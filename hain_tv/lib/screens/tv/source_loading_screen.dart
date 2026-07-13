@@ -1,11 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../focus/focusable.dart';
-import '../models/play_record.dart' as models;
-import '../models/source_option.dart';
-import '../services/lunatv_service.dart';
-import '../services/search_service.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/play_record.dart' as models;
+import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/search_service.dart';
+import 'package:hain_tv/theme.dart';
 import 'player_screen.dart';
 
 class SourceLoadingScreen extends StatefulWidget {

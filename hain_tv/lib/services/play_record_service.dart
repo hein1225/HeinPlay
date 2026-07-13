@@ -5,6 +5,7 @@ import '../models/play_record.dart' as models;
 import 'douban_service.dart';
 import 'local_storage_service.dart' as local;
 import 'lunatv_service.dart';
+import 'play_record_refresh_notifier.dart';
 
 /// 播放记录统一管理服务。
 ///
@@ -29,6 +30,9 @@ class PlayRecordService {
         year: record.year.isNotEmpty ? record.year : null,
       ),
     );
+
+    // 本地保存后立即通知各页面刷新，无需等待远程上传
+    PlayRecordRefreshNotifier.instance.notify();
 
     // 异步上传，不阻塞播放与退出
     unawaited(_uploadToLunaTV(record));
@@ -93,6 +97,15 @@ class PlayRecordService {
     return merged;
   }
 
+  /// 仅获取本地播放记录列表，按保存时间降序。
+  /// 不请求远程服务器，不 enrich 豆瓣海报，用于快速刷新 UI。
+  static Future<List<models.PlayRecord>> getAllLocal() async {
+    final localRecords = await local.LocalStorageService.getPlayHistory();
+    final merged = _mergeByTitle(localRecords.map(_localToModel));
+    return merged.values.toList()
+      ..sort((a, b) => b.saveTime.compareTo(a.saveTime));
+  }
+
   /// 获取合并后的播放记录列表（本地 + 远程），按保存时间降序。
   /// 同一影视的不同播放源记录会合并为一条，保留最近一次的播放源。
   static Future<List<models.PlayRecord>> getAll() async {
@@ -122,14 +135,29 @@ class PlayRecordService {
     return await _enrichAllWithDoubanPosters(result);
   }
 
-  /// 获取指定标题的最新播放记录（合并本地与远程）。
-  static Future<models.PlayRecord?> getByTitle(String title, {String year = ''}) async {
-    final all = await getAll();
+  /// 获取指定标题的最新播放记录。
+  ///
+  /// 当 [localOnly] 为 true 时只读取本地记录，不请求远程服务器，
+  /// 用于播放退出后快速刷新详情页继续播放按钮。
+  static Future<models.PlayRecord?> getByTitle(
+    String title, {
+    String year = '',
+    bool localOnly = false,
+  }) async {
+    final all = localOnly ? await getAllLocal() : await getAll();
     final key = _mergeKey(title, year);
     return all.cast<models.PlayRecord?>().firstWhere(
           (r) => _mergeKey(r!.title, r.year) == key,
           orElse: () => null,
         );
+  }
+
+  /// 仅读取本地指定标题的最新播放记录，不请求远程服务器。
+  static Future<models.PlayRecord?> getLatestLocalByTitle(
+    String title, {
+    String year = '',
+  }) async {
+    return getByTitle(title, year: year, localOnly: true);
   }
 
   /// 将本地记录模型转换为统一模型。

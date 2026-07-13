@@ -7,7 +7,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/update_info.dart';
-import '../widgets/update_dialog.dart';
+import 'package:hain_tv/widgets/tv/update_dialog.dart';
 import 'permission_service.dart';
 import 'user_data_service.dart';
 
@@ -34,12 +34,13 @@ class UpdateService {
 
   static Future<UpdateInfo?> checkUpdate({
     UpdateChannel channel = UpdateChannel.domestic,
+    String platform = 'tv',
   }) async {
     final url = channel == UpdateChannel.domestic
         ? _domesticReleasesUrl
         : _githubReleasesUrl;
     debugPrint(
-        'UpdateService: 开始检查更新，当前版本 $currentVersion，渠道 ${_channelName(channel)}，URL $url');
+        'UpdateService: 开始检查更新，当前版本 $currentVersion，平台 $platform，渠道 ${_channelName(channel)}，URL $url');
 
     final response = await http
         .get(
@@ -83,8 +84,8 @@ class UpdateService {
       final name = (asset['name'] as String? ?? '').toLowerCase();
       final url = asset['browser_download_url'] as String?;
       debugPrint('UpdateService: asset=$name, url=$url');
-      // TV 版只下载以 tv.apk 结尾的包，避免与手机版、Windows 版混淆
-      if (name.endsWith('tv.apk') && url != null && url.isNotEmpty) {
+      // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk
+      if (name.endsWith('${platform.toLowerCase()}.apk') && url != null && url.isNotEmpty) {
         apkUrl = url;
         break;
       }
@@ -219,6 +220,7 @@ class UpdateService {
     bool silent = false,
     bool force = false,
     UpdateChannel channel = UpdateChannel.domestic,
+    String platform = 'tv',
   }) async {
     // 非手动检查且 24 小时内已检查过，则跳过，避免每次启动都请求网络
     if (!force) {
@@ -234,7 +236,7 @@ class UpdateService {
 
     UpdateInfo? info;
     try {
-      info = await checkUpdate(channel: channel);
+      info = await checkUpdate(channel: channel, platform: platform);
     } catch (e) {
       debugPrint('UpdateService: 检查更新失败: $e');
       if (!silent && context.mounted) {

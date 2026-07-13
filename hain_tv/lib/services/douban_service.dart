@@ -123,7 +123,7 @@ class DoubanService {
         await _cacheService.set(
           cacheKey,
           items.map((e) => e.toJson()).toList(),
-          const Duration(hours: 6),
+          const Duration(hours: 24),
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
@@ -186,7 +186,7 @@ class DoubanService {
         await _cacheService.set(
           cacheKey,
           items.map((e) => e.toJson()).toList(),
-          const Duration(hours: 6),
+          const Duration(hours: 24),
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
@@ -364,7 +364,7 @@ class DoubanService {
         await _cacheService.set(
           cacheKey,
           items.map((e) => e.toJson()).toList(),
-          const Duration(hours: 6),
+          const Duration(hours: 24),
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }

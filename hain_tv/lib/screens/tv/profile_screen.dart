@@ -1,17 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../focus/focusable.dart';
-import '../models/favorite.dart';
-import '../models/play_record.dart' as models;
-import '../models/source_option.dart';
-import '../services/favorite_service.dart';
-import '../services/lunatv_service.dart';
-import '../services/play_record_service.dart';
-import '../services/profile_refresh_notifier.dart';
-import '../services/update_service.dart';
-import '../theme.dart';
-import '../widgets/tv_grid.dart';
-import '../widgets/update_channel_dialog.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:hain_tv/models/favorite.dart';
+import 'package:hain_tv/models/play_record.dart' as models;
+import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/services/favorite_refresh_notifier.dart';
+import 'package:hain_tv/services/favorite_service.dart';
+import 'package:hain_tv/services/local_storage_service.dart' as local;
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/play_record_refresh_notifier.dart';
+import 'package:hain_tv/services/profile_refresh_notifier.dart';
+import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/tv/tv_grid.dart';
+import 'package:hain_tv/widgets/tv/update_channel_dialog.dart';
 import 'player_screen.dart';
 import 'detail_screen.dart';
 import 'settings_screen.dart';
@@ -30,7 +36,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
-    ProfileRefreshNotifier.instance.removeListener(_onRefresh);
+    ProfileRefreshNotifier.instance.removeListener(_onProfileRefresh);
+    PlayRecordRefreshNotifier.instance.removeListener(_onPlayRecordRefresh);
+    FavoriteRefreshNotifier.instance.removeListener(_onFavoriteRefresh);
     for (final node in _menuFocusNodes) {
       node.dispose();
     }
@@ -41,32 +49,83 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _loadData();
-    ProfileRefreshNotifier.instance.addListener(_onRefresh);
+    ProfileRefreshNotifier.instance.addListener(_onProfileRefresh);
+    PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
+    FavoriteRefreshNotifier.instance.addListener(_onFavoriteRefresh);
   }
 
-  void _onRefresh() {
+  void _onProfileRefresh() {
     if (mounted) _loadData();
   }
 
+  void _onPlayRecordRefresh() {
+    if (mounted) _loadHistory(localOnly: true);
+  }
+
+  void _onFavoriteRefresh() {
+    if (mounted) _loadFavorites(localOnly: true);
+  }
+
   Future<void> _loadData() async {
+    // 收藏先读本地立即显示，再后台同步远程
+    await _loadFavorites(localOnly: true);
+    unawaited(_loadFavorites(localOnly: false));
+    // 播放记录先读本地立即显示，再后台同步远程记录与豆瓣海报
+    await _loadHistory(localOnly: true);
+    unawaited(_loadHistory(localOnly: false));
+  }
+
+  Future<void> _loadFavorites({bool localOnly = false}) async {
     List<Favorite> favorites = [];
     try {
-      final response = await LunaTVService.getFavorites();
-      if (response.success && response.data != null) {
-        favorites = response.data!;
+      if (localOnly) {
+        final localFavorites = await local.LocalStorageService.getFavorites();
+        favorites = localFavorites
+            .map(
+              (f) => Favorite(
+                source: f.source,
+                id: f.id,
+                title: f.title,
+                cover: f.posterUrl ?? '',
+                sourceName: '',
+                saveTime: f.createdAt.millisecondsSinceEpoch,
+              ),
+            )
+            .toList();
+      } else {
+        final response = await LunaTVService.getFavorites();
+        if (response.success && response.data != null) {
+          favorites = response.data!;
+          // 将远程收藏同步回本地
+          for (final f in favorites) {
+            await local.LocalStorageService.addFavorite(
+              local.FavoriteRecord(
+                source: f.source,
+                id: f.id,
+                title: f.title,
+                posterUrl: f.cover.isNotEmpty ? f.cover : null,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(f.saveTime ?? DateTime.now().millisecondsSinceEpoch),
+              ),
+            );
+          }
+        }
       }
     } catch (e) {}
 
+    if (!mounted) return;
+    setState(() => _favorites = favorites);
+  }
+
+  Future<void> _loadHistory({bool localOnly = false}) async {
     List<models.PlayRecord> history = [];
     try {
-      history = await PlayRecordService.getAll();
+      history = localOnly
+          ? await PlayRecordService.getAllLocal()
+          : await PlayRecordService.getAll();
     } catch (e) {}
 
     if (!mounted) return;
-    setState(() {
-      _favorites = favorites;
-      _history = history;
-    });
+    setState(() => _history = history);
   }
 
   Future<void> _openFavorite(Favorite favorite) async {
@@ -308,56 +367,89 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.code,
-                color: AppColors.primary,
-                size: 16,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              const Text(
-                '国内仓库：',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textSecondary,
+              Expanded(
+                child: _buildRepoQrItem(
+                  label: '国内仓库',
+                  url: 'https://gitcode.com/gcw_QbmhmbO8/HeinPlay',
                 ),
               ),
-              Text(
-                'https://gitcode.com/gcw_QbmhmbO8/HeinPlay',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              const Icon(
-                Icons.code,
-                color: AppColors.primary,
-                size: 16,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              const Text(
-                'GitHub 仓库：',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              Text(
-                'https://github.com/hein1225/HeinPlay',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.primary,
+              const SizedBox(width: AppSpacing.xl),
+              Expanded(
+                child: _buildRepoQrItem(
+                  label: 'GitHub 仓库',
+                  url: 'https://github.com/hein1225/HeinPlay',
                 ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRepoQrItem({required String label, required String url}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.code,
+              color: AppColors.primary,
+              size: 16,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              '$label：',
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                url,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.primary,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              padding: const EdgeInsets.all(AppSpacing.xs),
+              child: QrImageView(
+                data: url,
+                version: QrVersions.auto,
+                size: 100,
+                backgroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                '手机扫码访问$label',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

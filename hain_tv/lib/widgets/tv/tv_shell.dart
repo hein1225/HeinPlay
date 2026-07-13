@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../focus/focusable.dart';
-import '../screens/category_screen.dart';
-import '../screens/home_screen.dart';
-import '../screens/profile_screen.dart';
-import '../screens/search_screen.dart';
-import '../services/permission_service.dart';
-import '../services/update_service.dart';
-import '../theme.dart';
-import '../utils/back_interceptor.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/screens/tv/category_screen.dart';
+import 'package:hain_tv/screens/tv/home_screen.dart';
+import 'package:hain_tv/screens/tv/profile_screen.dart';
+import 'package:hain_tv/screens/tv/search_screen.dart';
+import 'package:hain_tv/services/connectivity_service.dart';
+import 'package:hain_tv/services/permission_service.dart';
+import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/utils/back_interceptor.dart';
 
 class _NavItem {
   final String label;
@@ -51,6 +52,7 @@ class _TvShellState extends State<TvShell> {
     for (int i = 0; i < _items.length; i++) {
       _navFocusNodes.add(FocusNode());
     }
+    ConnectivityService.instance.startMonitoring();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _checkFirstLaunch();
       if (mounted) {
@@ -303,6 +305,7 @@ class _TvShellState extends State<TvShell> {
 
   @override
   void dispose() {
+    ConnectivityService.instance.stopMonitoring();
     for (var node in _navFocusNodes) {
       node.dispose();
     }
@@ -356,25 +359,50 @@ class _TvShellState extends State<TvShell> {
                 color: AppColors.bgSurface,
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                 child: Row(
-                  children: [
-                    Text(
-                      '海因影视',
-                      style: TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.primary,
-                        letterSpacing: 1.2,
-                        shadows: [
-                          Shadow(
-                            color: AppColors.primary.withValues(alpha: 0.45),
-                            blurRadius: 10,
-                            offset: const Offset(0, 0),
-                          ),
-                        ],
-                      ),
+                children: [
+                  Text(
+                    '海因影视',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primary,
+                      letterSpacing: 1.2,
+                      shadows: [
+                        Shadow(
+                          color: AppColors.primary.withValues(alpha: 0.45),
+                          blurRadius: 10,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
                     ),
-                    const Spacer(),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: ConnectivityService.instance.isServerConnected,
+                    builder: (context, connected, child) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: connected ? AppColors.success : AppColors.error,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Text(
+                          connected ? '已连接服务器' : '服务器未连接',
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const Spacer(),
                     ..._items.asMap().entries.map((entry) {
                       return _buildNavItem(entry.value, entry.key);
                     }).toList(),

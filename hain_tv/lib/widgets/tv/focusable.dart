@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
-import '../theme.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:hain_tv/theme.dart';
 
 class FocusableWidget extends StatefulWidget {
   final Widget child;

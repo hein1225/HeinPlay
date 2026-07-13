@@ -1,0 +1,7 @@
+flutter_launcher_icons:
+  image_path: "../plan/mo_ico.png"
+  android: true
+  ios: false
+  adaptive_icon_background: "#0A0A0F"
+  adaptive_icon_foreground: "../plan/mo_ico.png"
+  flavor: "mobile"

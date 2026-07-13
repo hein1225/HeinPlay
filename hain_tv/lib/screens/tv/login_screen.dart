@@ -1,12 +1,12 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import '../focus/focusable.dart';
-import '../services/lunatv_service.dart';
-import '../services/remote_input_service.dart';
-import '../services/user_data_service.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/remote_input_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});

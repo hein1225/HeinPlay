@@ -1,12 +1,12 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../focus/focusable.dart';
-import '../services/ad_filter_service.dart';
-import '../services/bangumi_service.dart';
-import '../services/cache_service.dart';
-import '../services/hain_tv_cache_manager.dart';
-import '../services/user_data_service.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/services/ad_filter_service.dart';
+import 'package:hain_tv/services/bangumi_service.dart';
+import 'package:hain_tv/services/cache_service.dart';
+import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});

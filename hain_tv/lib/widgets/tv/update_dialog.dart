@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
-import '../focus/focusable.dart';
-import '../models/update_info.dart';
-import '../services/user_data_service.dart';
-import '../theme.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/update_info.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
 
 Future<void> showUpdateDialog(
   BuildContext context,

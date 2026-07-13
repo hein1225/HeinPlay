@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../focus/focusable.dart';
 
 /// 权限管理服务：处理首次启动权限提示
 class PermissionService {
@@ -58,34 +57,27 @@ class PermissionService {
           ),
         ),
         actions: [
-          FocusableWidget(
-            autofocus: true,
-            onTap: () => Navigator.of(context).pop(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: const Text(
-                '稍后',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  color: Color(0xFF9CA3AF),
-                ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text(
+              '稍后',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                color: Color(0xFF9CA3AF),
               ),
             ),
           ),
-          FocusableWidget(
-            onTap: () async {
+          TextButton(
+            onPressed: () async {
               Navigator.of(context).pop();
               await _requestStoragePermissionInternal();
             },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: const Text(
-                '允许',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  color: Color(0xFFE50914),
-                  fontWeight: FontWeight.w600,
-                ),
+            child: const Text(
+              '允许',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                color: Color(0xFFE50914),
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -96,20 +88,24 @@ class PermissionService {
 
   /// 内部请求存储权限方法
   static Future<bool> _requestStoragePermissionInternal() async {
-    // 首先请求基本存储权限
-    final storageStatus = await Permission.storage.request();
-    
-    if (storageStatus.isGranted) {
+    if (!Platform.isAndroid) return true;
+
+    // Android 13+ 使用新的媒体权限替代 READ_EXTERNAL_STORAGE
+    final photos = await Permission.photos.request();
+    final videos = await Permission.videos.request();
+    final audio = await Permission.audio.request();
+
+    if (photos.isGranted || videos.isGranted || audio.isGranted) {
       return true;
     }
-    
+
+    // Android 12 及以下回退到传统存储权限
+    final storageStatus = await Permission.storage.request();
+    if (storageStatus.isGranted) return true;
+
     // 如果被拒绝，尝试请求管理外部存储权限（Android 11+）
-    if (Platform.isAndroid) {
-      final manageStatus = await Permission.manageExternalStorage.request();
-      return manageStatus.isGranted;
-    }
-    
-    return false;
+    final manageStatus = await Permission.manageExternalStorage.request();
+    return manageStatus.isGranted;
   }
 
   /// 请求存储权限并返回结果（供设置页面使用）

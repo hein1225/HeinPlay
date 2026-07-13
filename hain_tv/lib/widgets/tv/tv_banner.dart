@@ -1,9 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
+﻿import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import '../focus/focusable.dart';
-import '../services/bangumi_service.dart';
-import '../services/hain_tv_cache_manager.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/services/bangumi_service.dart';
+import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/theme.dart';
 
 class TvBanner extends StatelessWidget {
   final String title;

@@ -2,12 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:visibility_detector/visibility_detector.dart';
-import '../models/douban_movie.dart';
-import '../models/play_record.dart';
-import '../services/douban_service.dart';
-import '../services/play_record_service.dart';
-import '../theme.dart';
-import '../widgets/tv_grid.dart';
+import 'package:hain_tv/models/douban_movie.dart';
+import 'package:hain_tv/models/play_record.dart';
+import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/play_record_refresh_notifier.dart';
+import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -42,6 +43,7 @@ class HomeScreenState extends State<HomeScreen> {
     _hotShowsFirstFocusNode = FocusNode(debugLabel: 'homeHotShowsFirst');
     _hotAnimesFirstFocusNode = FocusNode(debugLabel: 'homeHotAnimesFirst');
     _loadData();
+    PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
   }
 
   @override
@@ -51,7 +53,12 @@ class HomeScreenState extends State<HomeScreen> {
     _hotTvFirstFocusNode.dispose();
     _hotShowsFirstFocusNode.dispose();
     _hotAnimesFirstFocusNode.dispose();
+    PlayRecordRefreshNotifier.instance.removeListener(_onPlayRecordRefresh);
     super.dispose();
+  }
+
+  void _onPlayRecordRefresh() {
+    if (mounted) _loadContinueWatching(localOnly: true);
   }
 
   void focusFirstContent() {
@@ -65,13 +72,17 @@ class HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     const pageLimit = 18;
     try {
+      // 播放记录先读本地立即显示，避免远程请求阻塞首页渲染
+      await _loadContinueWatching(localOnly: true);
+      // 后台同步远程记录与豆瓣海报
+      unawaited(_loadContinueWatching(localOnly: false));
+
       final results = await Future.wait([
         DoubanService.getHotMovies(pageLimit: pageLimit),
         DoubanService.getHotTvShows(pageLimit: pageLimit),
         DoubanService.getHotShows(pageLimit: pageLimit),
         DoubanService.getHotAnimes(pageLimit: pageLimit),
       ]);
-      await _loadContinueWatching();
 
       if (mounted) {
         setState(() {
@@ -92,10 +103,12 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadContinueWatching() async {
+  Future<void> _loadContinueWatching({bool localOnly = false}) async {
     try {
-      final records = await PlayRecordService.getAll();
-      if (mounted && records.isNotEmpty) {
+      final records = localOnly
+          ? await PlayRecordService.getAllLocal()
+          : await PlayRecordService.getAll();
+      if (mounted) {
         setState(() {
           _continueWatching = records.take(12).toList();
         });

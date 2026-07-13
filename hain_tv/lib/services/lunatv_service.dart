@@ -5,7 +5,6 @@ import '../models/favorite.dart';
 import '../models/live_channel.dart';
 import '../models/play_record.dart';
 import '../models/search_result.dart';
-import '../models/short_drama.dart';
 import '../models/skip_segment.dart';
 import '../models/video_detail.dart';
 import 'cache_service.dart';
@@ -15,20 +14,11 @@ class LunaTVConfig {
   static const Duration searchTimeout = Duration(seconds: 30);
   static const Duration detailTimeout = Duration(seconds: 20);
   static const Duration liveTimeout = Duration(seconds: 15);
-  static const Duration shortDramaTimeout = Duration(seconds: 15);
   static const Duration defaultTimeout = Duration(seconds: 15);
   static const int maxRetryCount = 2;
   static const Duration searchCacheTtl = Duration(minutes: 30);
   static const Duration detailCacheTtl = Duration(minutes: 30);
   static const Duration liveCacheTtl = Duration(minutes: 5);
-  static const Duration shortDramaCacheTtl = Duration(minutes: 30);
-}
-
-class ShortDramaListResult {
-  final List<ShortDrama> list;
-  final bool hasMore;
-
-  ShortDramaListResult({required this.list, required this.hasMore});
 }
 
 class LunaTVService {
@@ -354,69 +344,6 @@ class LunaTVService {
       );
     } catch (e) {
       return ApiResponse.error('LunaTV 直播频道异常: $e');
-    }
-  }
-
-  static Future<ApiResponse<ShortDramaListResult>> getShortDramas({
-    required int categoryId,
-    int page = 1,
-    int size = 20,
-  }) async {
-    await _initCache();
-    final cacheKey = _cacheService.generateShortDramasCacheKey(
-      categoryId: categoryId,
-      page: page,
-      size: size,
-    );
-    final cached = await _cacheService.get<ShortDramaListResult>(
-      cacheKey,
-      (raw) {
-        final map = raw as Map<String, dynamic>;
-        return ShortDramaListResult(
-          list: (map['list'] as List<dynamic>)
-              .map((e) => ShortDrama.fromJson(e as Map<String, dynamic>))
-              .toList(),
-          hasMore: map['hasMore'] == true,
-        );
-      },
-    );
-    if (cached != null) return ApiResponse.success(cached);
-
-    try {
-      final response = await _get(
-        '/api/shortdrama/list',
-        queryParameters: {
-          'categoryId': categoryId.toString(),
-          'page': page.toString(),
-          'size': size.toString(),
-        },
-        timeout: LunaTVConfig.shortDramaTimeout,
-      );
-
-      if (response.statusCode == 200) {
-        final data = _decodeBody(response);
-        final listData = data['list'] as List<dynamic>? ?? [];
-        final hasMore = data['hasMore'] == true;
-        final list = listData
-            .map((e) => ShortDrama.fromJson(e as Map<String, dynamic>))
-            .toList();
-        final result = ShortDramaListResult(list: list, hasMore: hasMore);
-        await _cacheService.set(
-          cacheKey,
-          {
-            'list': list.map((e) => e.toJson()).toList(),
-            'hasMore': hasMore,
-          },
-          LunaTVConfig.shortDramaCacheTtl,
-        );
-        return ApiResponse.success(result, statusCode: response.statusCode);
-      }
-      return ApiResponse.error(
-        'LunaTV 短剧列表失败: ${response.statusCode}',
-        statusCode: response.statusCode,
-      );
-    } catch (e) {
-      return ApiResponse.error('LunaTV 短剧列表异常: $e');
     }
   }
 

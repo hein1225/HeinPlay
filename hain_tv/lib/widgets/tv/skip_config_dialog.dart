@@ -1,9 +1,9 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 import 'package:flutter/material.dart';
-import '../focus/focusable.dart';
-import '../models/skip_segment.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/skip_segment.dart';
+import 'package:hain_tv/theme.dart';
 
 class SkipConfigDialog extends StatefulWidget {
   final List<SkipSegment> segments;

@@ -1,14 +1,14 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import '../focus/focusable.dart';
-import '../models/search_result.dart';
-import '../services/local_storage_service.dart';
-import '../services/remote_input_service.dart';
-import '../services/search_service.dart';
-import '../theme.dart';
-import '../widgets/tv_grid.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/search_result.dart';
+import 'package:hain_tv/services/local_storage_service.dart';
+import 'package:hain_tv/services/remote_input_service.dart';
+import 'package:hain_tv/services/search_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
 
 class SearchScreen extends StatefulWidget {

@@ -1,25 +1,25 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import '../focus/focusable.dart';
-import '../models/bangumi_calendar_item.dart';
-import '../models/douban_movie.dart';
-import '../models/favorite.dart';
-import '../models/play_record.dart' as models;
-import '../models/search_result.dart';
-import '../models/source_option.dart';
-import '../models/video_detail.dart';
-import '../player/video_player_backend.dart';
-import '../services/bangumi_service.dart';
-import '../services/douban_service.dart';
-import '../services/hain_tv_cache_manager.dart';
-import '../services/local_storage_service.dart' as local;
-import '../services/lunatv_service.dart';
-import '../services/play_record_service.dart';
-import '../services/profile_refresh_notifier.dart';
-import '../services/search_service.dart';
-import '../services/user_data_service.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/bangumi_calendar_item.dart';
+import 'package:hain_tv/models/douban_movie.dart';
+import 'package:hain_tv/models/favorite.dart';
+import 'package:hain_tv/models/play_record.dart' as models;
+import 'package:hain_tv/models/search_result.dart';
+import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/models/video_detail.dart';
+import 'package:hain_tv/player/video_player_backend.dart';
+import 'package:hain_tv/services/bangumi_service.dart';
+import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/favorite_refresh_notifier.dart';
+import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/services/local_storage_service.dart' as local;
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/search_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
 import 'player_screen.dart';
 
 class DetailScreen extends StatefulWidget {
@@ -226,15 +226,18 @@ class _DetailScreenState extends State<DetailScreen> {
   /// 按标题查询是否有播放记录。
   /// [force] 为 true 时，即使已有记录也会重新查询，用于从播放页返回后刷新。
   /// [applySelection] 为 true 时，查询到记录后自动选中记录中的源。
+  /// [localOnly] 为 true 时只读本地，避免远程请求阻塞 UI。
   Future<void> _loadPlayRecord({
     bool force = false,
     bool applySelection = false,
+    bool localOnly = false,
   }) async {
     if (_playRecord != null && !force) return;
     try {
       final record = await PlayRecordService.getByTitle(
         widget.title,
         year: widget.year,
+        localOnly: localOnly,
       );
       if (mounted) {
         setState(() {
@@ -295,12 +298,33 @@ class _DetailScreenState extends State<DetailScreen> {
     return result == requested;
   }
 
-  Future<void> _loadFavoriteStatus() async {
+  Future<void> _loadFavoriteStatus({bool localOnly = false}) async {
     final source = _currentSource.source;
     final id = _currentSource.id;
     if (source.isEmpty || id.isEmpty) return;
-    final key = '$source+$id';
-    final isFavorite = await LunaTVService.isFavorite(key);
+
+    bool isFavorite;
+    if (localOnly) {
+      isFavorite = await local.LocalStorageService.isFavorite(source, id);
+    } else {
+      final key = '$source+$id';
+      isFavorite = await LunaTVService.isFavorite(key);
+      // 同步远程状态到本地
+      if (isFavorite) {
+        final record = local.FavoriteRecord(
+          source: source,
+          id: id,
+          title: widget.title,
+          posterUrl: widget.poster ?? _doubanDetails?.poster,
+          year: widget.year,
+          createdAt: DateTime.now(),
+        );
+        await local.LocalStorageService.addFavorite(record);
+      } else {
+        await local.LocalStorageService.removeFavorite(source, id);
+      }
+    }
+
     if (mounted) {
       setState(() => _isFavorite = isFavorite);
     }
@@ -330,16 +354,25 @@ class _DetailScreenState extends State<DetailScreen> {
       });
     }
 
-    // 先查询播放记录；若存在记录则优先使用记录中的源。
-    await _loadPlayRecord(applySelection: true);
+    // 如果没有源或明确要求搜索，提前进入搜索状态，避免先显示"精确匹配无结果"
+    final needsSourceSearch = widget.title.isNotEmpty &&
+        (_sources.isEmpty || widget.searchOnLoad);
+    if (needsSourceSearch && mounted) {
+      setState(() => _searchingSources = true);
+    }
+
+    // 先查询本地播放记录；若存在记录则优先使用记录中的源。
+    await _loadPlayRecord(applySelection: true, localOnly: true);
+    // 后台同步远程记录与豆瓣海报
+    unawaited(_loadPlayRecord(applySelection: true, localOnly: false));
 
     // 源确定后再加载收藏状态与播放器后端。
-    await _loadFavoriteStatus();
+    await _loadFavoriteStatus(localOnly: true);
+    unawaited(_loadFavoriteStatus(localOnly: false));
     await _loadPlayerBackend();
 
-    // 如果没有源或明确要求搜索（如从播放记录进入），在后台异步搜索更多源，不阻塞页面内容展示
-    if (widget.title.isNotEmpty &&
-        (_sources.isEmpty || widget.searchOnLoad)) {
+    // 在后台异步搜索更多源，不阻塞页面内容展示
+    if (needsSourceSearch) {
       unawaited(_searchSourcesInBackground());
     }
 
@@ -385,6 +418,13 @@ class _DetailScreenState extends State<DetailScreen> {
     }
   }
 
+  /// 提取用于模糊/简化搜索的基准名称：取第一个空格或标点（:：-–—）之前的部分。
+  String _extractSearchBaseName(String title) {
+    final splitIndex = title.indexOf(RegExp(r'[\s:：\-–—]'));
+    if (splitIndex <= 0) return title.trim();
+    return title.substring(0, splitIndex).trim();
+  }
+
   /// 后台搜索播放源，搜索到一个即刷新界面，全部完成后加载当前选中源详情。
   /// 海报墙进入默认使用精确匹配；若 [fuzzy] 为 true 则启用模糊匹配。
   Future<void> _searchSourcesInBackground({bool fuzzy = false}) async {
@@ -398,15 +438,17 @@ class _DetailScreenState extends State<DetailScreen> {
     // Bangumi 每日放送条目直接使用严格模糊匹配，避免精确模式把带后缀
     // 的源标题（如"名侦探柯南（1996）"）过滤掉，与 LunaTV 行为对齐。
     final initialExactMatch = widget.bangumiId != null ? false : !fuzzy;
+    // 手动模糊搜索时使用影视名基准名（首个空格/标点前），提升命中率
+    final searchKeyword = fuzzy ? _extractSearchBaseName(widget.title) : widget.title;
     debugPrint(
-      '[SourceSearch] 开始搜索: title=${widget.title}, year=${widget.year}, '
+      '[SourceSearch] 开始搜索: title=${widget.title}, keyword=$searchKeyword, year=${widget.year}, '
       'bangumiId=${widget.bangumiId}, exactMatch=$initialExactMatch, fuzzy=$fuzzy',
     );
     final onProgress = (List<SourceOption> sources) {
       _mergeAndUpdateSources(sources, fuzzy: fuzzy, isFinal: false);
     };
     var response = await SearchService.searchSourcesFastWithVariants(
-      keyword: widget.title,
+      keyword: searchKeyword,
       exactMatch: initialExactMatch,
       fuzzy: fuzzy,
       onProgress: onProgress,
@@ -416,15 +458,12 @@ class _DetailScreenState extends State<DetailScreen> {
       'count=${response.data?.length ?? 0}, message=${response.message}',
     );
 
-    // 若原始标题无结果，尝试用简化标题重试
+    // 若原始标题无结果，尝试用基准名（首个空格/标点前）重试
     if ((!response.success || response.data == null || response.data!.isEmpty) &&
-        !fuzzy &&
-        (widget.title.contains(':') ||
-            widget.title.contains('：') ||
-            widget.title.contains('-'))) {
-      final simplified = widget.title.split(RegExp(r'[:：\-]')).first.trim();
+        !fuzzy) {
+      final simplified = _extractSearchBaseName(widget.title);
       if (simplified.isNotEmpty && simplified != widget.title) {
-        debugPrint('[SourceSearch] 尝试简化标题: $simplified');
+        debugPrint('[SourceSearch] 尝试基准名重试: $simplified');
         response = await SearchService.searchSourcesFastWithVariants(
           keyword: simplified,
           exactMatch: true,
@@ -432,7 +471,7 @@ class _DetailScreenState extends State<DetailScreen> {
           onProgress: onProgress,
         );
         debugPrint(
-          '[SourceSearch] 简化标题结果: count=${response.data?.length ?? 0}',
+          '[SourceSearch] 基准名重试结果: count=${response.data?.length ?? 0}',
         );
       }
     }
@@ -700,7 +739,8 @@ class _DetailScreenState extends State<DetailScreen> {
       _selectedEpisodeIndex = 0;
       _detailLoading = true;
     });
-    await _loadFavoriteStatus();
+    await _loadFavoriteStatus(localOnly: true);
+    unawaited(_loadFavoriteStatus(localOnly: false));
     await _loadPlayerBackend();
     await _loadVideoDetail();
   }
@@ -753,35 +793,49 @@ class _DetailScreenState extends State<DetailScreen> {
     final id = _currentSource.id;
     if (source.isEmpty || id.isEmpty) return;
     final key = '$source+$id';
-    final favorite = Favorite(
+
+    // 1. 先按本地状态切换，立即刷新 UI
+    final currentlyFavorite = await local.LocalStorageService.isFavorite(source, id);
+    final targetFavorite = !currentlyFavorite;
+    final record = local.FavoriteRecord(
       source: source,
       id: id,
       title: widget.title,
-      cover: widget.poster ?? _doubanDetails?.poster ?? '',
-      sourceName: _currentSource.sourceName,
+      posterUrl: widget.poster ?? _doubanDetails?.poster,
+      year: widget.year,
+      createdAt: DateTime.now(),
     );
-
-    try {
-      final added = await LunaTVService.toggleFavorite(key: key, favorite: favorite);
-      final record = local.FavoriteRecord(
-        source: source,
-        id: id,
-        title: widget.title,
-        posterUrl: widget.poster ?? _doubanDetails?.poster,
-        year: widget.year,
-        createdAt: DateTime.now(),
-      );
-      if (added) {
-        await local.LocalStorageService.addFavorite(record);
-      } else {
-        await local.LocalStorageService.removeFavorite(source, id);
-      }
-      ProfileRefreshNotifier.instance.notify();
-    } catch (e) {
-      debugPrint('切换收藏失败: $e');
+    if (targetFavorite) {
+      await local.LocalStorageService.addFavorite(record);
+    } else {
+      await local.LocalStorageService.removeFavorite(source, id);
     }
+    if (mounted) {
+      setState(() => _isFavorite = targetFavorite);
+    }
+    FavoriteRefreshNotifier.instance.notify();
 
-    await _loadFavoriteStatus();
+    // 2. 后台同步到 LunaTV 服务器
+    unawaited(_syncFavoriteToRemote(key: key, add: targetFavorite));
+  }
+
+  Future<void> _syncFavoriteToRemote({required String key, required bool add}) async {
+    try {
+      final favorite = Favorite(
+        source: _currentSource.source,
+        id: _currentSource.id,
+        title: widget.title,
+        cover: widget.poster ?? _doubanDetails?.poster ?? '',
+        sourceName: _currentSource.sourceName,
+      );
+      if (add) {
+        await LunaTVService.addFavorite(key: key, favorite: favorite);
+      } else {
+        await LunaTVService.deleteFavorite(key);
+      }
+    } catch (e) {
+      debugPrint('同步远程收藏失败: $e');
+    }
   }
 
   /// 查找播放记录原始源在当前源列表中的索引。
@@ -838,16 +892,22 @@ class _DetailScreenState extends State<DetailScreen> {
       ),
     );
 
-    // 从播放页返回后立即刷新播放记录，无需回到首页
+    // 从播放页返回后异步刷新播放记录：先读本地立即更新 UI，再在后台同步远程/海报
     if (mounted) {
-      await _loadPlayRecord(force: true);
-    }
-    // 若播放记录更新导致当前集数/进度变化，刷新视频详情以同步状态
-    if (mounted &&
-        _playRecord != null &&
-        _playRecord!.index > 0 &&
-        _playRecord!.index <= detail.episodes.length) {
-      setState(() => _selectedEpisodeIndex = _playRecord!.index - 1);
+      unawaited(
+        _loadPlayRecord(force: true, localOnly: true).then((_) async {
+          if (mounted) {
+            // 若播放记录更新导致当前集数/进度变化，刷新视频详情以同步状态
+            if (_playRecord != null &&
+                _playRecord!.index > 0 &&
+                _playRecord!.index <= detail.episodes.length) {
+              setState(() => _selectedEpisodeIndex = _playRecord!.index - 1);
+            }
+            // 后台再拉取远程记录和豆瓣海报，不阻塞当前页面
+            unawaited(_loadPlayRecord(force: true, localOnly: false));
+          }
+        }),
+      );
     }
   }
 

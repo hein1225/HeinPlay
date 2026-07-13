@@ -129,14 +129,6 @@ class CacheService {
     return 'lunatv_live_$sourceKey';
   }
 
-  String generateShortDramasCacheKey({
-    required int categoryId,
-    required int page,
-    required int size,
-  }) {
-    return 'lunatv_shortdrama_${categoryId}_${page}_$size';
-  }
-
   String generateSkipConfigsCacheKey({
     required String source,
     required String id,

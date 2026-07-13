@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../focus/focusable.dart';
-import '../services/update_service.dart';
-import '../theme.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/theme.dart';
 
 Future<UpdateChannel?> showUpdateChannelDialog(BuildContext context) async {
   return showDialog<UpdateChannel>(

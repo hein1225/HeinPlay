@@ -14,12 +14,45 @@ build/
 .idea/
 .vscode/
 *.iml
-
-# Android signing & local config
-*.jks
-key.properties
-local.properties
+*.ipr
+*.iws
+.atom/
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Android signing & local config (global)
+*.jks
+key.properties
+local.properties
+
+# =====================
+# hain_tv project specific
+# =====================
+
+# Flutter/Dart Pub related
+/hain_tv/**/doc/api/
+/hain_tv/**/ios/Flutter/.last_build_id
+/hain_tv/.pub/
+/hain_tv/.flutter-plugins-dependencies
+/hain_tv/pub-cache/
+
+# Symbolication / Obfuscation
+/hain_tv/app.*.symbols
+/hain_tv/app.*.map.json
+
+# Android Studio build artifacts
+/hain_tv/android/app/debug/
+/hain_tv/android/app/profile/
+/hain_tv/android/app/release/
+/hain_tv/android/.kotlin/
+
+# Signing keys and passwords should never be committed
+/hain_tv/android/key.properties
+/hain_tv/android/key-mobile.properties
+/hain_tv/android/*.keystore
+/hain_tv/android/*.jks
+
+# Distribution / build outputs
+/hain_tv/dist/

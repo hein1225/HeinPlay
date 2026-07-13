@@ -1,6 +1,6 @@
-# 海因影视 TV 版
+# 海因影视
 
-基于 Flutter 开发的智能电视端影视播放应用，面向 Android TV 及大屏设备优化，同时支持 Web 与 Windows 桌面端。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
 ![海因影视 TV 版界面预览](docs/screenshots/home.png)
 
@@ -44,7 +44,8 @@
 ### 个人中心
 
 - **播放历史**：记录播放进度，随时续看。
-- **收藏夹**：收藏喜欢的影片，方便快速访问。
+- **收藏夹**：收藏喜欢的影片，本地优先存储并立即展示，后台异步同步到 LunaTV 服务器，离线也能浏览已收藏内容。
+- **服务器连接状态**：顶部状态栏实时显示 LunaTV 服务器连接状态（已连接为绿色、未连接为红色）。
 - **扫码登录**：支持扫码同步账号数据。
 - **软件设置**：播放器后端、硬件解码、数据源、M3U8 代理、M3U8 本地去广告、缓存管理。
 - **检查更新**：支持国内渠道与 GitHub 渠道双源检查，带下载进度与自动安装。
@@ -83,8 +84,11 @@
 | 平台         | 状态     | 说明                            |
 | ---------- | ------ | ----------------------------- |
 | Android TV | 主要目标平台 | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航 |
+| Android    | 已发布    | 手机竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
 | Web        | 支持     | 受浏览器 CORS 限制，部分图片资源可能无法加载     |
-| Windows    | 支持     | 桌面调试与预览                       |
+| Windows    | 调试中    | 桌面端调试与预览，正式发布敬请期待             |
+| Linux      | 计划中    | 桌面端版本后续支持                    |
+| iOS        | 计划中    | 移动端版本后续支持                    |
 
 ## 项目结构
 
@@ -141,6 +145,9 @@ flutter run -d windows
 # 构建 Android TV Release APK
 .\scripts\build_android_tv.ps1
 
+# 构建 Android 手机版 Release APK
+.\scripts\build_mobile.ps1
+
 # 构建 Web 版本
 .\scripts\build_web.ps1
 
@@ -148,11 +155,20 @@ flutter run -d windows
 .\scripts\generate_icons.ps1
 ```
 
-Release 构建会使用 `android/key.properties` 中配置的签名密钥。
+Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mobile.properties`（手机版）中配置的签名密钥。详细构建说明请查看 [BUILD_GUIDE.md](./BUILD_GUIDE.md)。
 
 ## 更新日志
 
 <details open>
+<summary><strong>1.1.3</strong></summary>
+
+- **手机版正式发布**：新增 Android 手机版入口，与 TV 版共用业务层但拥有独立的竖屏触屏 UI；支持首页、分类、搜索、个人中心四大模块；播放器支持屏幕旋转与横竖屏自适应；构建产物区分 `tv` / `mobile` 两个 Flavor，使用不同包名与签名密钥。手机版 APK 可在 GitCode / GitHub Release 页面下载。
+- **TV 版「我的」页仓库二维码**：在软件介绍区域新增国内仓库与 GitHub 仓库二维码，方便手机扫码下载。
+- 应用版本号统一更新至 `1.1.3`。
+
+</details>
+
+<details>
 <summary><strong>1.1.2（紧急更新）</strong></summary>
 
 - **解决 Bangumi 被墙问题**：新增 Bangumi 数据代理与图片代理设置，默认使用 CMLiussss 反代，恢复动漫「每日放送」的数据与海报加载。
@@ -228,7 +244,8 @@ Release 构建会使用 `android/key.properties` 中配置的签名密钥。
 - **主题色选择**：在设置中提供多套主题色方案，允许用户自定义应用强调色。
 - **LunaTV 直播源**：对接 LunaTV 直播源接口，在应用内直接浏览和播放电视直播频道。
 - **TVBox 订阅源支持**：尝试解析 TVBox 标准订阅源（如 JSON、TXT 格式），将其作为影视播放源导入与切换。
-- 手机版和Windows版本正在路上，马上就要开发完毕
+- **Windows 版本**：桌面端 Windows 版本正在开发中，敬请期待。
+- **Linux / iOS 版本**：后续计划支持 Linux 桌面端与 iOS 移动端。
 
 ## 重要：需妥善保管的密钥文件
 
