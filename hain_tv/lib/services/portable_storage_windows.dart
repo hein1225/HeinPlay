@@ -15,8 +15,10 @@ import 'package:shared_preferences_platform_interface/types.dart';
 class PortableStorageWindows {
   static late final String appDir;
   static late final String dataDir;
+  static bool _initialized = false;
 
   static Future<void> initialize() async {
+    if (_initialized) return;
     appDir = File(Platform.resolvedExecutable).parent.path;
     dataDir = p.join(appDir, 'data');
 
@@ -30,6 +32,7 @@ class PortableStorageWindows {
       }
     }
     await Directory(dataDir).create(recursive: true);
+    _initialized = true;
   }
 
   /// 检测目录是否存在且具有写入权限。

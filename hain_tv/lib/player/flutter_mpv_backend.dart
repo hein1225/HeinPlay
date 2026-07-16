@@ -78,10 +78,12 @@ class FlutterMpvBackend implements VideoPlayerBackend {
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
     final lowerUrl = url.toLowerCase();
     final isLocalProxy = _isLocalProxyUrl(url);
+    final isM3u8 = lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/');
+    // 统一逻辑：仅当源本身声明 proxyMode，或用户配置了全局 M3U8 代理且当前是 M3U8 时，
+    // 才走全局代理；否则直接播放原始 URL（参照 Selene）。
     final needsProxy =
-        !isLocalProxy &&
-        (proxyMode || lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/'));
-    if (proxyUrl.isNotEmpty && needsProxy) {
+        !isLocalProxy && (proxyMode || (proxyUrl.isNotEmpty && isM3u8));
+    if (needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
     debugPrint('FlutterMpvBackend open: $finalUrl');

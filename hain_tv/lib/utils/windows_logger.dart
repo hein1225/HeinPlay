@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -24,9 +25,13 @@ class WindowsLogger {
       // 直接写入并等待完成，确保初始化后立即生成日志文件。
       _writeToFile('[${_now()}] [WindowsLogger] 日志初始化成功: $_logDir');
       await _flushPending();
+      // release 模式下也通过 print 输出路径，方便用户定位日志文件。
+      // ignore: avoid_print
+      print('WindowsLogger: 日志路径 ${_logFilePath()}');
       return true;
     }
-    debugPrint('WindowsLogger: 日志目录初始化失败');
+    // ignore: avoid_print
+    print('WindowsLogger: 日志目录初始化失败');
     return false;
   }
 
@@ -36,16 +41,39 @@ class WindowsLogger {
       try {
         await PortableStorageWindows.initialize();
         _logDir = p.join(PortableStorageWindows.dataDir, 'windows_logs');
-        final dir = Directory(_logDir!);
+        var dir = Directory(_logDir!);
         if (!await dir.exists()) {
           await dir.create(recursive: true);
         }
+        // 测试目录是否真正可写，若不可写则回退到 %APPDATA%。
+        if (!await _isDirectoryWritable(_logDir!)) {
+          final appData = Platform.environment['APPDATA'];
+          if (appData != null && appData.isNotEmpty) {
+            _logDir = p.join(appData, 'com.heinplay', 'hain_tv', 'windows_logs');
+            dir = Directory(_logDir!);
+            if (!await dir.exists()) {
+              await dir.create(recursive: true);
+            }
+          }
+        }
         await _cleanupOldLogs();
       } catch (e) {
-        debugPrint('WindowsLogger 初始化失败: $e');
+        // ignore: avoid_print
+        print('WindowsLogger 初始化失败: $e');
       }
     }
     _initialized = true;
+  }
+
+  static Future<bool> _isDirectoryWritable(String dir) async {
+    try {
+      final testFile = File(p.join(dir, '.write_test'));
+      await testFile.writeAsString('test', flush: true);
+      await testFile.delete();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> _cleanupOldLogs() async {
@@ -102,7 +130,9 @@ class WindowsLogger {
     final line = '[${_now()}] [$tag] $message';
     debugPrint(line);
     if (Platform.isWindows) {
-      _writeToFile(line);
+      _pendingLines.add(line);
+      // 使用 microtask 尽快异步刷新，避免在 UI 线程同步阻塞文件 IO。
+      scheduleMicrotask(_flushPending);
     }
   }
 
@@ -140,7 +170,8 @@ class WindowsLogger {
         flush: true,
       );
     } catch (e) {
-      debugPrint('WindowsLogger 写入失败: $e');
+      // ignore: avoid_print
+      print('WindowsLogger 写入失败: $e');
     } finally {
       _flushing = false;
       // 刷新期间可能有新日志加入，继续处理。

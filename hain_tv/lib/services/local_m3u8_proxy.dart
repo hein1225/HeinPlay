@@ -16,8 +16,14 @@ class LocalM3u8Proxy {
   final Map<String, String> _baseHeaders = {};
   http.Client? _client;
   bool _closing = false;
+  bool _filterEnabled = false;
 
   bool get isRunning => _server != null;
+
+  /// 设置是否对子 M3U8 启用广告过滤。
+  void setFilterEnabled(bool enabled) {
+    _filterEnabled = enabled;
+  }
 
   void _log(String message) {
     WindowsLogger.log('LocalM3u8Proxy', message);
@@ -56,10 +62,17 @@ class LocalM3u8Proxy {
     _server = null;
     _playlistContent = null;
     _baseHeaders.clear();
-    try {
-      _client?.close();
-    } catch (_) {}
+    // HttpClient.close() 会等待 pending 请求结束，这里不阻塞关闭流程，
+    // 避免应用退出时因正在下载的 segment 而卡顿。
+    final client = _client;
     _client = null;
+    if (client != null) {
+      try {
+        client.close();
+      } catch (_) {
+        // 忽略关闭错误
+      }
+    }
     _closing = false;
     _log('LocalM3u8Proxy stopped');
   }
@@ -159,9 +172,13 @@ class LocalM3u8Proxy {
       headers['Origin'] = origin;
     }
 
-    // 透传 Range
+    // 透传 Range，但 M3U8 播放列表必须获取完整内容才能正确计算总时长，
+    // 否则播放器收到 206 部分响应会导致进度条/时长显示异常。
+    final isM3u8Url =
+        targetUrl.toLowerCase().contains('.m3u8') ||
+        targetUrl.toLowerCase().contains('/hls/');
     final range = request.headers.value('range');
-    if (range != null && range.isNotEmpty) {
+    if (range != null && range.isNotEmpty && !isM3u8Url) {
       headers['Range'] = range;
     }
 
@@ -169,6 +186,7 @@ class LocalM3u8Proxy {
       final requestMethod = isHead ? 'HEAD' : 'GET';
       final requestUri = Uri.parse(targetUrl);
       final client = _client ?? http.Client();
+      _log('proxySegment request: $targetUrl');
       final response = await client
           .send(
             http.Request(requestMethod, requestUri)..headers.addAll(headers),
@@ -176,17 +194,18 @@ class LocalM3u8Proxy {
           .timeout(const Duration(seconds: 30))
           .then(http.Response.fromStream);
 
+      _log(
+        'proxySegment response: $targetUrl status=${response.statusCode} '
+        'contentType=${response.headers['content-type']} '
+        'contentLength=${response.headers['content-length']}',
+      );
+
       final out = request.response;
       out.statusCode = response.statusCode;
 
       final contentType = response.headers['content-type'];
       if (contentType != null && contentType.isNotEmpty) {
         out.headers.contentType = _parseContentType(contentType);
-      }
-
-      final contentLength = response.headers['content-length'];
-      if (contentLength != null && contentLength.isNotEmpty) {
-        out.headers.add('Content-Length', contentLength);
       }
 
       final acceptRanges = response.headers['accept-ranges'];
@@ -204,16 +223,39 @@ class LocalM3u8Proxy {
 
       if (!isHead) {
         var bodyBytes = response.bodyBytes;
-        // 如果响应是子 M3U8/播放列表，先进行广告过滤，再把资源 URL 重写为本地代理地址
-        if (_isM3u8Content(response)) {
+        final isM3u8 = _isM3u8Content(response);
+        // 如果响应是子 M3U8/播放列表且请求成功，按需进行广告过滤，
+        // 再把资源 URL 重写为本地代理地址。
+        if (response.statusCode >= 200 &&
+            response.statusCode < 300 &&
+            isM3u8) {
           final decoded = utf8.decode(bodyBytes, allowMalformed: true);
-          final filtered = _filterM3u8(targetUrl, decoded);
+          _log(
+            'proxySegment sub-m3u8 raw: $targetUrl\n${_summarizeContent(decoded)}',
+          );
+          final filtered = _filterEnabled ? _filterM3u8(targetUrl, decoded) : decoded;
           final resolved = resolveRelativeUrls(filtered, targetUrl);
           final rewritten = rewriteToLocalProxy(resolved, baseUrl!);
           bodyBytes = utf8.encode(rewritten);
-          out.headers.set('Content-Length', bodyBytes.length.toString());
+          // 确保播放器把子 M3U8 识别为播放列表
+          out.headers.contentType = ContentType('application', 'vnd.apple.mpegurl');
+          _log(
+            'proxySegment sub-m3u8 rewritten: $targetUrl\n${_summarizeContent(utf8.decode(bodyBytes, allowMalformed: true))}',
+          );
+        } else if (response.statusCode < 200 || response.statusCode >= 300) {
+          // 记录非 2xx 响应摘要，便于排查 404/403 等问题
+          final preview = utf8.decode(bodyBytes, allowMalformed: true);
+          _log(
+            'proxySegment error response: $targetUrl status=${response.statusCode} '
+            'bodyPreview=${preview.length > 200 ? '${preview.substring(0, 200)}...' : preview}',
+          );
         }
+        // 必须根据实际 body 长度设置 Content-Length，避免上游返回错误页面时长度不一致。
+        out.headers.set('Content-Length', bodyBytes.length.toString());
         out.add(bodyBytes);
+        _log(
+          'proxySegment served: $targetUrl status=${response.statusCode} bytes=${bodyBytes.length}',
+        );
       }
       await out.close();
     } catch (e, stack) {
@@ -297,6 +339,14 @@ class LocalM3u8Proxy {
         line.startsWith('#EXT-X-SESSION-KEY') ||
         line.startsWith('#EXT-X-RENDITION-REPORT') ||
         line.startsWith('#EXT-X-CONTENT-STEERING');
+  }
+
+  /// 取 M3U8/文本内容前若干行用于诊断，避免日志过大。
+  static String _summarizeContent(String content, {int maxLines = 20}) {
+    final lines = content.split('\n');
+    final head = lines.take(maxLines).join('\n');
+    if (lines.length <= maxLines) return head;
+    return '$head\n... (${lines.length} 行)';
   }
 
   static String _resolveUriLine(String base, String line) {

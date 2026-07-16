@@ -91,17 +91,19 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     return Scaffold(
       backgroundColor: AppColors.bgApp,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildSearchBox(),
-              const SizedBox(height: AppSpacing.md),
-              _buildHistorySection(),
-              const SizedBox(height: AppSpacing.md),
-              Expanded(child: _buildResultsArea()),
-            ],
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildSearchBox(),
+                const SizedBox(height: AppSpacing.md),
+                _buildHistorySection(),
+                const SizedBox(height: AppSpacing.md),
+                _buildResultsArea(),
+              ],
+            ),
           ),
         ),
       ),
@@ -256,6 +258,11 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       );
     }).toList();
 
-    return MobilePosterGrid(items: items);
+    return MobilePosterGrid(
+      items: items,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+    );
   }
 }

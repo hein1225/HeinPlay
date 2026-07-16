@@ -56,3 +56,19 @@ local.properties
 
 # Distribution / build outputs
 /hain_tv/dist/
+
+# Windows runtime logs / debug temp files
+/hain_tv/data/windows_logs/
+/hain_tv/windows_log*.txt
+/hain_tv/windows_log*.md
+/hain_tv/*.log
+/hain_tv/*.tmp
+/hain_tv/*.temp
+
+# Generic runtime logs
+data/windows_logs/
+*.log
+*_log*.txt
+*_log*.md
+*.tmp
+*.temp

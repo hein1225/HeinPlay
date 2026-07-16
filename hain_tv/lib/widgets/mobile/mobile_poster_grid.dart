@@ -10,6 +10,8 @@ class MobilePosterGrid extends StatelessWidget {
   final double childAspectRatio;
   final void Function(int index, PosterItem item)? onTapItem;
   final bool Function(int index)? selectedPredicate;
+  final bool shrinkWrap;
+  final ScrollPhysics? physics;
 
   const MobilePosterGrid({
     super.key,
@@ -19,6 +21,8 @@ class MobilePosterGrid extends StatelessWidget {
     this.childAspectRatio = 0.62,
     this.onTapItem,
     this.selectedPredicate,
+    this.shrinkWrap = false,
+    this.physics,
   });
 
   int _computeCrossAxisCount(double width) {
@@ -36,6 +40,8 @@ class MobilePosterGrid extends StatelessWidget {
         return GridView.builder(
           controller: controller,
           padding: padding,
+          shrinkWrap: shrinkWrap,
+          physics: physics,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: AppSpacing.md,

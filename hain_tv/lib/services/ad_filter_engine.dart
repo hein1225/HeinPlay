@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -33,11 +34,14 @@ class AdFilterEngine {
       return null;
     }
 
-    // Windows 端部分播放器（libmpv/fvp）对非标准端口 HTTPS 兼容性差，
-    // 即使去广告开关关闭，也强制走本地 HTTP 代理，把 HTTPS 源转成本地 HTTP 流。
-    final needsProxy = enabled || isWindows;
+    // 参照 Selene 播放源处理方式：仅当去广告开启时才走本地 HTTP 代理。
+    // Windows 端直接播放原始 URL，由 flutter_mpv/FVP 自身处理 HLS。
+    final needsProxy = enabled;
     if (!needsProxy) {
-      WindowsLogger.log('AdFilterEngine', ' 去广告已关闭且非 Windows，直接播放');
+      WindowsLogger.log(
+        'AdFilterEngine',
+        ' 去广告已关闭，直接播放原始 URL (Windows=$isWindows)',
+      );
       return null;
     }
 
@@ -49,7 +53,6 @@ class AdFilterEngine {
         WindowsLogger.log('AdFilterEngine', ' 使用 M3U8 代理下载: $fetchUrl');
       }
 
-      final uri = Uri.parse(fetchUrl);
       final originUri = Uri.parse(originalUrl);
       final origin = '${originUri.scheme}://${originUri.host}';
       final requestHeaders = Map<String, String>.from(headers);
@@ -65,10 +68,11 @@ class AdFilterEngine {
 
       WindowsLogger.log('AdFilterEngine', ' 开始下载 M3U8: $fetchUrl');
       final response = await http
-          .get(uri, headers: requestHeaders)
+          .get(Uri.parse(fetchUrl), headers: requestHeaders)
           .timeout(const Duration(seconds: 15));
-      debugPrint(
-        'AdFilterEngine: M3U8 下载完成 status=${response.statusCode} length=${response.bodyBytes.length}',
+      WindowsLogger.log(
+        'AdFilterEngine',
+        ' M3U8 下载完成 status=${response.statusCode} length=${response.bodyBytes.length}',
       );
 
       if (response.statusCode != 200) {
@@ -84,6 +88,10 @@ class AdFilterEngine {
         WindowsLogger.log('AdFilterEngine', ' M3U8 内容为空');
         return null;
       }
+      WindowsLogger.log(
+        'AdFilterEngine',
+        ' M3U8 内容摘要: ${_summarizeContent(originalContent)}',
+      );
 
       String content = originalContent;
       if (enabled) {
@@ -100,6 +108,9 @@ class AdFilterEngine {
       }
 
       _proxy ??= LocalM3u8Proxy();
+      // 子 M3U8 过滤状态与去广告开关保持一致；
+      // Windows 非去广告场景直接播放原始 URL，不再经过本地代理。
+      _proxy!.setFilterEnabled(enabled);
       final baseUrl = await _proxy!.start();
       WindowsLogger.log('AdFilterEngine', ' 本地代理已启动: $baseUrl');
       // 先把相对 URL 解析为绝对 URL，避免 libmpv/fvp 读到相对路径后向本地代理根目录请求。
@@ -120,8 +131,20 @@ class AdFilterEngine {
     }
   }
 
+  /// 取 M3U8 内容前若干行用于诊断，避免日志过大。
+  static String _summarizeContent(String content, {int maxLines = 20}) {
+    final lines = content.split('\n');
+    final head = lines.take(maxLines).join('\n');
+    if (lines.length <= maxLines) return head;
+    return '$head\n... (${lines.length} 行)';
+  }
+
   static Future<void> dispose() async {
-    await _proxy?.stop();
+    // 停止代理时不阻塞当前调用方，避免退出播放或关闭应用时因网络请求等待而卡顿。
+    final proxy = _proxy;
     _proxy = null;
+    if (proxy != null) {
+      unawaited(proxy.stop());
+    }
   }
 }
