@@ -199,24 +199,10 @@ Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mob
 <details open>
 <summary><strong>1.1.4</strong></summary>
 
-- **Windows 桌面端正式发布并重构**
-  - 播放器后端统一为 `flutter_mpv`，移除其他后端切换选项，解决 Windows 下多后端兼容性问题。
-  - 新增 Windows 专用文件日志：日志保存在 `data/windows_logs/hain_tv_YYYY-MM-DD.log`，按天滚动并自动清理超过 1 天的旧日志。
-  - 用户数据（SharedPreferences、缓存、日志）默认重定向到软件 exe 同级目录的 `data` 文件夹；若目录无写入权限则自动回退到 `%APPDATA%\com.heinplay\hain_tv\data`。
-  - 新增桌面窗口管理：支持 ESC 键返回、播放页「全屏/退出全屏」按钮、双击屏幕切换全屏、窗口关闭前 flush 日志。
-  - Windows 平台 M3U8 源强制走本地 HTTP 代理，解决 HTTPS 非标准端口/证书验证导致的播放失败问题。
-
-- **全平台数据刷新逻辑重构**
-  - 首次进入首页时强制从服务器全量同步播放记录与收藏夹，合并后写入本地缓存；后续切回首页直接读取本地。
-  - 播放详情页完成播放后仍保持「先写本地 + 异步同步服务器」，并增量刷新首页继续播放与「我的」页面。
-  - TV / 手机版「我的」页面改为读取本地缓存，不再每次切换分页都请求服务器。
-
-- **播放体验优化**
-  - 收藏夹点击影片统一为先进入详情页，再选择播放。
-  - 详情页与全屏播放页通过 `ValueNotifier` 同步播放源列表，播放页可实时获取详情页搜索/测速结果。
-  - 全屏播放换源功能永久可用，换源时同时显示测速信息与排名。
-
-- **Release 文件与设备对应**：`heinplay-1.1.4-tv.apk` 用于 Android TV / 电视盒子，`heinplay-1.1.4-mobile.apk` 用于 Android 手机 / 平板，`heinplay-1.1.4-windows-portable.zip` 用于 Windows 10/11 电脑；Android 端要求 Android 7.0+（API 24+）。
+- **Windows 桌面端正式发布**：统一使用 `flutter_mpv`，新增 Windows 日志、用户数据便携化、ESC 返回与全屏切换等桌面交互。
+- **全平台数据刷新重构**：首次进入首页强制全量同步播放记录与收藏夹并缓存，播放后增量刷新首页与「我的」。
+- **播放体验优化**：收藏夹点击统一进入详情页，详情页与播放页实时同步播放源，换源永久可用并显示测速排名。
+- **Release 文件命名统一**：`heinplay-1.1.4-tv.apk`、`heinplay-1.1.4-mobile.apk`、`heinplay-1.1.4-windows-portable.zip`。
 
 </details>
 
