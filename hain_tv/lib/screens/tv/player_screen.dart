@@ -1165,8 +1165,8 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
           _bottomControlsFocusNode.traversalDescendants.contains(currentFocus);
 
       switch (event.logicalKey) {
-        // 返回/Esc 在控制栏显示时不在这里处理，统一交给 PopScope/路由返回处理，
-        // 以避免焦点系统在控制栏内时与 PopScope 重复响应导致直接退出播放。
+        // 返回/Esc 在控制栏显示时不在这里处理，统一交给 _handleHardwareKeyEvent
+        // 兜底处理，以保证控制栏显示时先隐藏控制栏，再按一次才返回。
         case LogicalKeyboardKey.select:
         case LogicalKeyboardKey.enter:
         case LogicalKeyboardKey.mediaPlayPause:
@@ -1327,11 +1327,19 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
         return true;
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.escape:
-        // Windows：全屏时 ESC 先退出全屏，再按一次返回详情页。
-        if (DeviceUtils.isWindows && _isFullScreen) {
+        if (!DeviceUtils.isWindows) {
+          // TV/Android：返回/ESC 同时会被系统映射为返回手势，若再调用 pop/maybePop
+          // 会与 PopScope 重复响应导致连退两层。此处直接消费 KeyEvent，
+          // 统一交给系统返回手势与 PopScope 处理：控制栏显示时 PopScope 会隐藏控制栏，
+          // 隐藏后再按才返回详情页。
+          return true;
+        }
+        // Windows：没有系统返回手势，需要在此处理 ESC。
+        // 统一走 maybePop 由 PopScope 控制返回，避免焦点系统与 PopScope 重复响应。
+        if (_isFullScreen) {
           _toggleFullScreen();
-        } else if (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
+        } else {
+          Navigator.of(context).maybePop();
         }
         return true;
       default:

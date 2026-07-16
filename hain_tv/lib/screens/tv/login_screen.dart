@@ -203,7 +203,11 @@ class _LoginScreenState extends State<LoginScreen> {
               return KeyEventResult.handled;
             case LogicalKeyboardKey.goBack:
             case LogicalKeyboardKey.escape:
-              Navigator.of(context).pop();
+              // TV/Android 返回键会触发系统返回手势，此处直接消费 KeyEvent，
+              // 避免与系统返回重复响应导致连退两层。Windows ESC 需要主动 pop。
+              if (DeviceUtils.isWindows) {
+                Navigator.of(context).pop();
+              }
               return KeyEventResult.handled;
           }
         }

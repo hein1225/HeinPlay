@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿# 构建 Web 版本（用于本地测试）
+﻿﻿﻿﻿﻿﻿﻿﻿# 构建 Web 版本（用于本地测试）
 Set-Location -Path "$PSScriptRoot\.."
 
 flutter build web --release

@@ -389,6 +389,8 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   /// 全局硬件按键兜底处理，确保 Windows 下 ESC 可返回上一页。
+  /// TV/Android 的返回键由系统返回手势处理，此处直接消费 KeyEvent，
+  /// 避免与 PopScope/Navigator.pop 重复响应导致连退两层。
   bool _handleHardwareKeyEvent(KeyEvent event) {
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
@@ -396,8 +398,10 @@ class _DetailScreenState extends State<DetailScreen> {
 
     if (event.logicalKey == LogicalKeyboardKey.goBack ||
         event.logicalKey == LogicalKeyboardKey.escape) {
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
+      if (DeviceUtils.isWindows) {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
       }
       return true;
     }
