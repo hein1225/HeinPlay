@@ -1,25 +1,14 @@
+import 'dart:io';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum DoubanDataSource {
-  direct,
-  cdnTencent,
-  cdnAliyun,
-  corsProxy,
-}
+enum DoubanDataSource { direct, cdnTencent, cdnAliyun, corsProxy }
 
-enum PlayerBackendType { mediaKit, exo }
+enum PlayerBackendType { exo, flutterMpv, fvp }
 
-enum BangumiApiProxyType {
-  direct,
-  cmliussss,
-  custom,
-}
+enum BangumiApiProxyType { direct, cmliussss, custom }
 
-enum BangumiImageProxyType {
-  direct,
-  cmliussss,
-  custom,
-}
+enum BangumiImageProxyType { direct, cmliussss, custom }
 
 class UserDataService {
   static const String _serverUrlKey = 'server_url';
@@ -33,10 +22,14 @@ class UserDataService {
   static const String _defaultQualityKey = 'default_quality';
   static const String _autoSwitchPlayerKey = 'auto_switch_player';
   static const String _autoSwitchSourceKey = 'auto_switch_source';
-  static const String _autoSwitchSourceTimeoutKey = 'auto_switch_source_timeout_seconds';
+  static const String _autoSwitchSourceTimeoutKey =
+      'auto_switch_source_timeout_seconds';
   static const String _skippedVersionKey = 'skipped_update_version';
   static const String _lastUpdateCheckTimeKey = 'last_update_check_time';
-  static const String _perVideoPlayerBackendPrefix = 'per_video_player_backend_';
+  static const String _perVideoPlayerBackendPrefix =
+      'per_video_player_backend_';
+  static const String _homeFirstEntryCompletedKey =
+      'home_first_entry_completed';
   // 与 Selene 保持一致，方便共用已配置的代理
   static const String _m3u8ProxyUrlKey = 'm3u8_proxy_url';
   static const String _hardwareDecodingKey = 'hardware_decoding';
@@ -133,12 +126,18 @@ class UserDataService {
     await prefs.setString(_playerBackendKey, type.name);
   }
 
+  static PlayerBackendType get _platformDefaultBackend {
+    if (Platform.isWindows) return PlayerBackendType.fvp;
+    return PlayerBackendType.exo;
+  }
+
   static Future<PlayerBackendType> getPlayerBackend() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString(_playerBackendKey) ?? 'exo';
+    final key = prefs.getString(_playerBackendKey);
+    if (key == null || key.isEmpty) return _platformDefaultBackend;
     return PlayerBackendType.values.firstWhere(
       (e) => e.name == key,
-      orElse: () => PlayerBackendType.exo,
+      orElse: () => _platformDefaultBackend,
     );
   }
 
@@ -225,6 +224,7 @@ class UserDataService {
 
   static Future<bool> getHardwareDecoding() async {
     final prefs = await SharedPreferences.getInstance();
+    // 默认开启硬件解码，用户可在播放器设置中手动关闭。
     return prefs.getBool(_hardwareDecodingKey) ?? true;
   }
 
@@ -244,15 +244,16 @@ class UserDataService {
   static Future<PlayerBackendType> getPlayerBackendForVideo(
     String source,
     String id, {
-    PlayerBackendType fallback = PlayerBackendType.exo,
+    PlayerBackendType? fallback,
   }) async {
+    final effectiveFallback = fallback ?? _platformDefaultBackend;
     final prefs = await SharedPreferences.getInstance();
     final key = _perVideoBackendKey(source, id);
     final name = prefs.getString(key);
-    if (name == null || name.isEmpty) return fallback;
+    if (name == null || name.isEmpty) return effectiveFallback;
     return PlayerBackendType.values.firstWhere(
       (e) => e.name == name,
-      orElse: () => fallback,
+      orElse: () => effectiveFallback,
     );
   }
 
@@ -276,6 +277,18 @@ class UserDataService {
     final ms = prefs.getInt(_lastUpdateCheckTimeKey);
     if (ms == null) return null;
     return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  /// 是否已完成首次进入首页的全量刷新。
+  static Future<bool> isHomeFirstEntryCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_homeFirstEntryCompletedKey) ?? false;
+  }
+
+  /// 标记首次进入首页的全量刷新已完成。
+  static Future<void> markHomeFirstEntryCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_homeFirstEntryCompletedKey, true);
   }
 
   // ===================== Bangumi 代理设置 =====================

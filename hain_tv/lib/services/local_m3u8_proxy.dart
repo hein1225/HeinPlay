@@ -1,21 +1,27 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'm3u8_ad_filter.dart';
+import '../utils/windows_logger.dart';
 
 /// 本地 M3U8/TS 代理服务。
 ///
-/// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / media_kit / video_player）
+/// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / flutter_mpv / 外部 mpv）
 /// 中播放时头部透传不一致的问题。所有资源请求统一走本地代理，由代理补全头部。
 class LocalM3u8Proxy {
   HttpServer? _server;
   String? _playlistContent;
   final Map<String, String> _baseHeaders = {};
+  http.Client? _client;
+  bool _closing = false;
 
   bool get isRunning => _server != null;
+
+  void _log(String message) {
+    WindowsLogger.log('LocalM3u8Proxy', message);
+  }
 
   String? get baseUrl {
     final server = _server;
@@ -31,7 +37,8 @@ class LocalM3u8Proxy {
     }
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server!.listen(_handleRequest);
-    debugPrint('LocalM3u8Proxy started at $baseUrl');
+    _client ??= http.Client();
+    _log('LocalM3u8Proxy started at $baseUrl');
     return baseUrl!;
   }
 
@@ -44,11 +51,17 @@ class LocalM3u8Proxy {
   }
 
   Future<void> stop() async {
+    _closing = true;
     await _server?.close(force: true);
     _server = null;
     _playlistContent = null;
     _baseHeaders.clear();
-    debugPrint('LocalM3u8Proxy stopped');
+    try {
+      _client?.close();
+    } catch (_) {}
+    _client = null;
+    _closing = false;
+    _log('LocalM3u8Proxy stopped');
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -72,8 +85,8 @@ class LocalM3u8Proxy {
           ..close();
       }
     } catch (e, stack) {
-      debugPrint('LocalM3u8Proxy handleRequest error: $e');
-      debugPrint('$stack');
+      _log('LocalM3u8Proxy handleRequest error: $e');
+      _log('$stack');
       try {
         request.response
           ..statusCode = HttpStatus.internalServerError
@@ -93,7 +106,10 @@ class LocalM3u8Proxy {
     await response.close();
   }
 
-  Future<void> _servePlaylist(HttpRequest request, {bool isHead = false}) async {
+  Future<void> _servePlaylist(
+    HttpRequest request, {
+    bool isHead = false,
+  }) async {
     final content = _playlistContent ?? '#EXTM3U\n#EXT-X-ENDLIST\n';
     final bytes = utf8.encode(content);
     final response = request.response
@@ -122,7 +138,8 @@ class LocalM3u8Proxy {
     final targetUri = Uri.parse(targetUrl);
 
     final headers = <String, String>{
-      'User-Agent': _baseHeaders['User-Agent'] ??
+      'User-Agent':
+          _baseHeaders['User-Agent'] ??
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
               ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       'Accept': '*/*',
@@ -151,12 +168,13 @@ class LocalM3u8Proxy {
     try {
       final requestMethod = isHead ? 'HEAD' : 'GET';
       final requestUri = Uri.parse(targetUrl);
-      final client = http.Client();
+      final client = _client ?? http.Client();
       final response = await client
-          .send(http.Request(requestMethod, requestUri)..headers.addAll(headers))
+          .send(
+            http.Request(requestMethod, requestUri)..headers.addAll(headers),
+          )
           .timeout(const Duration(seconds: 30))
-          .then(http.Response.fromStream)
-          .whenComplete(client.close);
+          .then(http.Response.fromStream);
 
       final out = request.response;
       out.statusCode = response.statusCode;
@@ -190,7 +208,7 @@ class LocalM3u8Proxy {
         if (_isM3u8Content(response)) {
           final decoded = utf8.decode(bodyBytes, allowMalformed: true);
           final filtered = _filterM3u8(targetUrl, decoded);
-          final resolved = _resolveRelativeUrls(filtered, targetUrl);
+          final resolved = resolveRelativeUrls(filtered, targetUrl);
           final rewritten = rewriteToLocalProxy(resolved, baseUrl!);
           bodyBytes = utf8.encode(rewritten);
           out.headers.set('Content-Length', bodyBytes.length.toString());
@@ -199,12 +217,16 @@ class LocalM3u8Proxy {
       }
       await out.close();
     } catch (e, stack) {
-      debugPrint('LocalM3u8Proxy proxySegment error: $e');
-      debugPrint('$stack');
-      request.response
-        ..statusCode = HttpStatus.badGateway
-        ..write('Proxy error')
-        ..close();
+      if (!_closing) {
+        _log('LocalM3u8Proxy proxySegment error: $e');
+        _log('$stack');
+      }
+      try {
+        request.response
+          ..statusCode = HttpStatus.badGateway
+          ..write('Proxy error')
+          ..close();
+      } catch (_) {}
     }
   }
 
@@ -222,7 +244,7 @@ class LocalM3u8Proxy {
   }
 
   /// 将 M3U8 内容中的相对 URL 根据 [baseUrl] 解析为绝对 URL。
-  static String _resolveRelativeUrls(String content, String baseUrl) {
+  static String resolveRelativeUrls(String content, String baseUrl) {
     final baseUri = Uri.parse(baseUrl);
     final lines = content.split('\n');
     final result = <String>[];
@@ -309,10 +331,7 @@ class LocalM3u8Proxy {
   }
 
   /// 将 M3U8 内容中的所有资源 URL 重写为本地代理地址。
-  static String rewriteToLocalProxy(
-    String content,
-    String proxyBaseUrl,
-  ) {
+  static String rewriteToLocalProxy(String content, String proxyBaseUrl) {
     final lines = content.split('\n');
     final result = <String>[];
 
@@ -381,14 +400,15 @@ class LocalM3u8Proxy {
       final filter = M3u8AdFilter();
       final filtered = filter.purify(baseUrl, content);
       if (filtered != null && filtered != content) {
-        debugPrint(
-          'LocalM3u8Proxy 子 M3U8 过滤: ${filter.currentAdCount} 个片段',
+        WindowsLogger.log(
+          'LocalM3u8Proxy',
+          '子 M3U8 过滤: ${filter.currentAdCount} 个片段',
         );
         return filtered;
       }
     } catch (e, stack) {
-      debugPrint('LocalM3u8Proxy 子 M3U8 过滤失败: $e');
-      debugPrint('$stack');
+      WindowsLogger.log('LocalM3u8Proxy', '子 M3U8 过滤失败: $e');
+      WindowsLogger.log('LocalM3u8Proxy', '$stack');
     }
     return content;
   }

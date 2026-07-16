@@ -70,7 +70,8 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
       memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       },
       placeholder: (context, url) => placeholder,
@@ -206,7 +207,8 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
                       isBangumi: widget.ratingLabel == 'Bangumi',
                     ),
                   ),
-                if (widget.bangumiRating != null && widget.bangumiRating!.isNotEmpty)
+                if (widget.bangumiRating != null &&
+                    widget.bangumiRating!.isNotEmpty)
                   Positioned(
                     top: AppSpacing.xs,
                     left: AppSpacing.xs,
@@ -236,11 +238,7 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.check,
-                color: Colors.white,
-                size: 14,
-              ),
+              child: const Icon(Icons.check, color: Colors.white, size: 14),
             ),
           ),
         ],

@@ -1,0 +1,6 @@
+flutter_launcher_icons:
+  image_path: "../plan/mo_ico.png"
+  windows:
+    generate: true
+    image_path: "../plan/mo_ico.png"
+    icon_size: 48

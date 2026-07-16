@@ -1,17 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hain_tv/models/favorite.dart';
 import 'package:hain_tv/models/play_record.dart' as models;
-import 'package:hain_tv/models/source_option.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
-import 'package:hain_tv/screens/mobile/player_screen.dart';
 import 'package:hain_tv/screens/tv/settings_screen.dart';
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
 import 'package:hain_tv/services/favorite_service.dart';
-import 'package:hain_tv/services/local_storage_service.dart' as local;
-import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/profile_refresh_notifier.dart';
@@ -54,69 +51,39 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
   }
 
   void _onPlayRecordRefresh() {
-    if (mounted) _loadHistory(localOnly: true);
+    if (mounted) _loadHistory();
   }
 
   void _onFavoriteRefresh() {
-    if (mounted) _loadFavorites(localOnly: true);
+    if (mounted) _loadFavorites();
+  }
+
+  /// 切换到“我的”分页时读取本地缓存即可；
+  /// 首次进入首页时已强制全量同步服务器数据到本地。
+  Future<void> refresh() async {
+    await _loadData();
   }
 
   Future<void> _loadData() async {
-    // 收藏先读本地立即显示，再后台同步远程
-    await _loadFavorites(localOnly: true);
-    unawaited(_loadFavorites(localOnly: false));
-    // 播放记录先读本地立即显示，再后台同步远程记录与豆瓣海报
-    await _loadHistory(localOnly: true);
-    unawaited(_loadHistory(localOnly: false));
+    // 首次进入首页时已强制全量刷新并缓存，这里直接读取本地。
+    await _loadFavorites();
+    await _loadHistory();
   }
 
-  Future<void> _loadFavorites({bool localOnly = false}) async {
+  Future<void> _loadFavorites() async {
     List<Favorite> favorites = [];
     try {
-      if (localOnly) {
-        final localFavorites = await local.LocalStorageService.getFavorites();
-        favorites = localFavorites
-            .map(
-              (f) => Favorite(
-                source: f.source,
-                id: f.id,
-                title: f.title,
-                cover: f.posterUrl ?? '',
-                sourceName: '',
-                saveTime: f.createdAt.millisecondsSinceEpoch,
-              ),
-            )
-            .toList();
-      } else {
-        final response = await LunaTVService.getFavorites();
-        if (response.success && response.data != null) {
-          favorites = response.data!;
-          // 将远程收藏同步回本地
-          for (final f in favorites) {
-            await local.LocalStorageService.addFavorite(
-              local.FavoriteRecord(
-                source: f.source,
-                id: f.id,
-                title: f.title,
-                posterUrl: f.cover.isNotEmpty ? f.cover : null,
-                createdAt: DateTime.fromMillisecondsSinceEpoch(f.saveTime ?? DateTime.now().millisecondsSinceEpoch),
-              ),
-            );
-          }
-        }
-      }
+      favorites = await FavoriteService.getAll();
     } catch (e) {}
 
     if (!mounted) return;
     setState(() => _favorites = favorites);
   }
 
-  Future<void> _loadHistory({bool localOnly = false}) async {
+  Future<void> _loadHistory() async {
     List<models.PlayRecord> history = [];
     try {
-      history = localOnly
-          ? await PlayRecordService.getAllLocal()
-          : await PlayRecordService.getAll();
+      history = await PlayRecordService.getAllLocal();
     } catch (e) {}
 
     if (!mounted) return;
@@ -124,34 +91,9 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
   }
 
   Future<void> _openFavorite(Favorite favorite) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final response = await LunaTVService.getDetail(
-      source: favorite.source,
-      id: favorite.id,
-      title: favorite.title,
-    );
-    if (!response.success || response.data == null) {
-      messenger.showSnackBar(const SnackBar(content: Text('未找到播放资源')));
-      return;
-    }
-    final detail = response.data!;
-    final sourceOption = SourceOption(
-      source: detail.source,
-      sourceName: detail.sourceName,
-      id: detail.id,
-      title: detail.title,
-      poster: detail.poster.isNotEmpty ? detail.poster : null,
-      year: detail.year,
-      doubanId: detail.doubanId,
-    );
-    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MobilePlayerScreen(
-          videoDetail: detail,
-          episodeIndex: 0,
-          sources: [sourceOption],
-        ),
+        builder: (_) => MobileDetailScreen.fromFavorite(favorite),
       ),
     );
   }
@@ -165,9 +107,9 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
   }
 
   void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
   Future<void> _checkUpdate() async {
@@ -354,11 +296,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(
-              Icons.code,
-              color: AppColors.primary,
-              size: 16,
-            ),
+            const Icon(Icons.code, color: AppColors.primary, size: 16),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$label：',
@@ -390,56 +328,67 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bgApp,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-                child: Text(
-                  '我的',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
+    return VisibilityDetector(
+      key: const Key('mobile_profile_screen'),
+      onVisibilityChanged: (info) {
+        // 手机版切换到“我的”分页时强制刷新服务器播放记录与收藏夹。
+        if (info.visibleFraction > 0.5) {
+          refresh();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.bgApp,
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
+                  child: Text(
+                    '我的',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ),
-              ),
-              _buildMenuTile(
-                icon: Icons.history,
-                title: '播放记录',
-                subtitle: _history.isEmpty ? '暂无播放记录' : '${_history.length} 部',
-                onTap: _showRecords,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _buildMenuTile(
-                icon: Icons.favorite_outline,
-                title: '收藏夹',
-                subtitle: _favorites.isEmpty ? '暂无收藏' : '${_favorites.length} 部',
-                onTap: _showFavorites,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _buildMenuTile(
-                icon: Icons.settings_outlined,
-                title: '软件设置',
-                subtitle: '播放器、数据源、缓存',
-                onTap: _openSettings,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _buildMenuTile(
-                icon: Icons.system_update,
-                title: '检测更新',
-                subtitle: '当前版本 ${UpdateService.currentVersion}',
-                onTap: _checkUpdate,
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              _buildFooter(),
-            ],
+                _buildMenuTile(
+                  icon: Icons.history,
+                  title: '播放记录',
+                  subtitle: _history.isEmpty ? '暂无播放记录' : '${_history.length} 部',
+                  onTap: _showRecords,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuTile(
+                  icon: Icons.favorite_outline,
+                  title: '收藏夹',
+                  subtitle: _favorites.isEmpty
+                      ? '暂无收藏'
+                      : '${_favorites.length} 部',
+                  onTap: _showFavorites,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuTile(
+                  icon: Icons.settings_outlined,
+                  title: '软件设置',
+                  subtitle: '播放器、数据源、缓存',
+                  onTap: _openSettings,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuTile(
+                  icon: Icons.system_update,
+                  title: '检测更新',
+                  subtitle: '当前版本 ${UpdateService.currentVersion}',
+                  onTap: _checkUpdate,
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                _buildFooter(),
+              ],
+            ),
           ),
         ),
       ),

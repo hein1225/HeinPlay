@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/services/update_service.dart';
@@ -20,11 +20,7 @@ class UpdateChannelDialog extends StatefulWidget {
 }
 
 class _UpdateChannelDialogState extends State<UpdateChannelDialog> {
-  final List<FocusNode> _focusNodes = [
-    FocusNode(),
-    FocusNode(),
-    FocusNode(),
-  ];
+  final List<FocusNode> _focusNodes = [FocusNode(), FocusNode(), FocusNode()];
 
   @override
   void dispose() {
@@ -99,7 +95,8 @@ class _UpdateChannelDialogState extends State<UpdateChannelDialog> {
                   child: FocusableWidget(
                     autofocus: true,
                     focusNode: _focusNodes[0],
-                    onTap: () => Navigator.of(context).pop(UpdateChannel.domestic),
+                    onTap: () =>
+                        Navigator.of(context).pop(UpdateChannel.domestic),
                     child: _buildButton(
                       label: '国内渠道',
                       backgroundColor: AppColors.primary,
@@ -111,7 +108,8 @@ class _UpdateChannelDialogState extends State<UpdateChannelDialog> {
                 Expanded(
                   child: FocusableWidget(
                     focusNode: _focusNodes[1],
-                    onTap: () => Navigator.of(context).pop(UpdateChannel.github),
+                    onTap: () =>
+                        Navigator.of(context).pop(UpdateChannel.github),
                     child: _buildButton(
                       label: 'GitHub 渠道',
                       backgroundColor: AppColors.bgElevated,

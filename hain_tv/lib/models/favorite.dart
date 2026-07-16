@@ -36,6 +36,7 @@ class Favorite {
       'cover': cover,
       'source_name': sourceName,
       if (typeName != null) 'type_name': typeName,
+      if (saveTime != null) 'save_time': saveTime,
     };
   }
 }

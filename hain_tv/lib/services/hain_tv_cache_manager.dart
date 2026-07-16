@@ -12,11 +12,11 @@ class HainTvCacheManager extends CacheManager {
   }
 
   HainTvCacheManager._()
-      : super(
-          Config(
-            key,
-            stalePeriod: const Duration(days: 90),
-            maxNrOfCacheObjects: 2000,
-          ),
-        );
+    : super(
+        Config(
+          key,
+          stalePeriod: const Duration(days: 90),
+          maxNrOfCacheObjects: 2000,
+        ),
+      );
 }

@@ -1,8 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -26,7 +28,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _qrButtonFocusNode = FocusNode();
   bool _loading = false;
   String? _error;
-  int _focusedIndex = 0; // 0=扫码登录, 1=服务器, 2=用户名, 3=密码, 4=登录按钮
+  // Windows 电脑版不需要二维码登录；TV 版默认焦点在扫码登录，电脑版默认焦点在服务器地址输入框。
+  final bool _hasQrLogin = !DeviceUtils.isWindows;
+  late int _focusedIndex = _hasQrLogin ? 0 : 1;
 
   final _remoteInputService = RemoteInputService();
   StreamSubscription<Map<String, String>>? _qrLoginSub;
@@ -36,7 +40,25 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _loadSavedServer();
-    _setupQrLogin();
+    if (_hasQrLogin) {
+      _setupQrLogin();
+    }
+    // 首帧渲染后设置唯一初始焦点，避免多个 FocusableWidget 同时 autofocus 导致双焦点。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      switch (_focusedIndex) {
+        case 0:
+          _qrButtonFocusNode.requestFocus();
+        case 1:
+          _serverFocusNode.requestFocus();
+        case 2:
+          _usernameFocusNode.requestFocus();
+        case 3:
+          _passwordFocusNode.requestFocus();
+        case 4:
+          _loginButtonFocusNode.requestFocus();
+      }
+    });
   }
 
   void _setupQrLogin() {
@@ -84,13 +106,14 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _moveFocus(int direction) {
-    final newIndex = (_focusedIndex + direction).clamp(0, 4);
+    final minIndex = _hasQrLogin ? 0 : 1;
+    final newIndex = (_focusedIndex + direction).clamp(minIndex, 4);
     setState(() => _focusedIndex = newIndex);
 
     // 请求对应焦点
     switch (newIndex) {
       case 0:
-        _qrButtonFocusNode.requestFocus();
+        if (_hasQrLogin) _qrButtonFocusNode.requestFocus();
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
@@ -105,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void _onConfirm() {
     switch (_focusedIndex) {
       case 0:
-        _showQrLoginDialog();
+        if (_hasQrLogin) _showQrLoginDialog();
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
@@ -163,7 +186,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Focus(
-      autofocus: true,
+      // 仅用于拦截方向键/回车键，不自获取焦点；初始焦点由 initState 统一设置。
+      autofocus: false,
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
           switch (event.logicalKey) {
@@ -214,8 +238,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       _buildLogo(),
                       const SizedBox(height: AppSpacing.xl),
-                      _buildQrLoginButton(),
-                      const SizedBox(height: AppSpacing.lg),
+                      if (_hasQrLogin) ...[
+                        _buildQrLoginButton(),
+                        const SizedBox(height: AppSpacing.lg),
+                      ],
                       _buildForm(),
                       const SizedBox(height: AppSpacing.lg),
                       _buildLoginButton(),
@@ -276,22 +302,20 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         const SizedBox(height: AppSpacing.xs),
-        const Text(
-          'TV 版',
-          style: TextStyle(
-            fontSize: 14,
-            color: AppColors.textSecondary,
-          ),
+        Text(
+          Platform.isWindows ? '电脑版' : 'TV 版',
+          style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
         ),
       ],
     );
   }
 
   Widget _buildForm() {
+    // 索引与 _focusedIndex 对齐：1=服务器, 2=用户名, 3=密码
     return Column(
       children: [
         _buildTvInputField(
-          index: 0,
+          index: 1,
           controller: _serverController,
           focusNode: _serverFocusNode,
           label: '服务器地址',
@@ -300,7 +324,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
         _buildTvInputField(
-          index: 1,
+          index: 2,
           controller: _usernameController,
           focusNode: _usernameFocusNode,
           label: '用户名',
@@ -309,7 +333,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
         _buildTvInputField(
-          index: 2,
+          index: 3,
           controller: _passwordController,
           focusNode: _passwordFocusNode,
           label: '密码',
@@ -333,7 +357,9 @@ class _LoginScreenState extends State<LoginScreen> {
     final isFocused = _focusedIndex == index;
 
     return FocusableWidget(
-      autofocus: index == 1,
+      // 统一由 initState 中的 postFrameCallback 设置唯一初始焦点，
+      // 避免此处 autofocus 与扫码登录按钮冲突导致双焦点。
+      autofocus: false,
       onTap: () {
         setState(() => _focusedIndex = index);
         focusNode.requestFocus();
@@ -380,15 +406,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _buildLoginButton() {
     final isFocused = _focusedIndex == 4;
-    
+
     return FocusableWidget(
       focusNode: _loginButtonFocusNode,
+      // 统一由 initState 设置初始焦点，避免 autofocus 冲突。
+      autofocus: false,
       onTap: _loading ? null : _login,
       child: Container(
         width: double.infinity,
         height: 48,
         decoration: BoxDecoration(
-          color: _loading ? AppColors.primary.withValues(alpha: 0.5) : AppColors.primary,
+          color: _loading
+              ? AppColors.primary.withValues(alpha: 0.5)
+              : AppColors.primary,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(
             color: isFocused ? Colors.white : Colors.transparent,
@@ -423,7 +453,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return FocusableWidget(
       focusNode: _qrButtonFocusNode,
-      autofocus: true,
+      // 统一由 initState 中的 postFrameCallback 设置唯一初始焦点。
+      autofocus: false,
       onTap: _loading ? null : _showQrLoginDialog,
       child: Container(
         width: double.infinity,
@@ -452,7 +483,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   fontFamily: 'NotoSansSC',
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: isFocused ? AppColors.primary : AppColors.textSecondary,
+                  color: isFocused
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
                 ),
               ),
             ],
@@ -598,5 +631,4 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _qrDialogShowing = false);
     }
   }
-
 }

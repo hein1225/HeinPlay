@@ -19,6 +19,8 @@ class LunaTVConfig {
   static const Duration searchCacheTtl = Duration(minutes: 30);
   static const Duration detailCacheTtl = Duration(minutes: 30);
   static const Duration liveCacheTtl = Duration(minutes: 5);
+  static const Duration playRecordsCacheTtl = Duration(minutes: 30);
+  static const Duration favoritesCacheTtl = Duration(minutes: 30);
 }
 
 class LunaTVService {
@@ -41,7 +43,7 @@ class LunaTVService {
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.1.3 Flutter',
+      'User-Agent': 'HainTV/1.1.4 Flutter',
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -60,7 +62,9 @@ class LunaTVService {
       throw Exception('未配置 LunaTV 服务器地址');
     }
 
-    final uri = Uri.parse(base + path).replace(queryParameters: queryParameters);
+    final uri = Uri.parse(
+      base + path,
+    ).replace(queryParameters: queryParameters);
     final headers = await _headers();
     final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
 
@@ -119,7 +123,9 @@ class LunaTVService {
       throw Exception('未配置 LunaTV 服务器地址');
     }
 
-    final uri = Uri.parse(base + path).replace(queryParameters: queryParameters);
+    final uri = Uri.parse(
+      base + path,
+    ).replace(queryParameters: queryParameters);
     final headers = await _headers();
     final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
 
@@ -153,10 +159,7 @@ class LunaTVService {
       return ApiResponse.error('服务器地址不能为空');
     }
 
-    final body = <String, String>{
-      'username': username,
-      'password': password,
-    };
+    final body = <String, String>{'username': username, 'password': password};
 
     try {
       final response = await http
@@ -165,7 +168,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.1.3 Flutter',
+              'User-Agent': 'HainTV/1.1.4 Flutter',
             },
             body: json.encode(body),
           )
@@ -174,7 +177,10 @@ class LunaTVService {
       if (response.statusCode == 200) {
         final setCookie = response.headers['set-cookie'];
         if (setCookie != null && setCookie.isNotEmpty) {
-          return ApiResponse.success(setCookie, statusCode: response.statusCode);
+          return ApiResponse.success(
+            setCookie,
+            statusCode: response.statusCode,
+          );
         }
         return ApiResponse.success('', statusCode: response.statusCode);
       }
@@ -272,10 +278,7 @@ class LunaTVService {
     if (cached != null) return ApiResponse.success(cached);
 
     try {
-      final query = <String, String>{
-        'source': source,
-        'id': id,
-      };
+      final query = <String, String>{'source': source, 'id': id};
       if (title != null && title.isNotEmpty) query['title'] = title;
 
       final response = await _get(
@@ -367,9 +370,7 @@ class LunaTVService {
       if (useRange) {
         req.headers['Range'] = 'bytes=0-${sampleBytes - 1}';
       }
-      final streamedResponse = await http.Client()
-          .send(req)
-          .timeout(timeout);
+      final streamedResponse = await http.Client().send(req).timeout(timeout);
 
       if (streamedResponse.statusCode == 200 ||
           streamedResponse.statusCode == 206) {
@@ -414,56 +415,111 @@ class LunaTVService {
     return getDetail(source: source, id: id, title: title);
   }
 
+  /// 生成跨源身份 key，与 LunaTV 网页端保持一致。
+  /// 优先使用 doubanId，其次使用 title+year 组合。
+  static String? _generateSkipConfigIdentityKey({
+    required String title,
+    String? year,
+    int? doubanId,
+  }) {
+    if (doubanId != null && doubanId > 0) {
+      return 'douban:$doubanId';
+    }
+    if (title.isNotEmpty && year != null && year.isNotEmpty) {
+      return 'title:$title:$year';
+    }
+    return null;
+  }
+
   static Future<ApiResponse<EpisodeSkipConfig>> getSkipConfigs({
     required String source,
     required String id,
+    bool forceRefresh = false,
+    String? title,
+    String? year,
+    int? doubanId,
   }) async {
     await _initCache();
     final cacheKey = _cacheService.generateSkipConfigsCacheKey(
       source: source,
       id: id,
     );
-    final cached = await _cacheService.get<EpisodeSkipConfig>(
-      cacheKey,
-      (raw) => EpisodeSkipConfig.fromJson(raw as Map<String, dynamic>),
-    );
-    if (cached != null) return ApiResponse.success(cached);
-
-    try {
-      final body = json.encode({
-        'action': 'get',
-        'key': '$source+$id',
-      });
-      final response = await _post(
-        '/api/skipconfigs',
-        body: body,
-        timeout: LunaTVConfig.defaultTimeout,
+    if (!forceRefresh) {
+      final cached = await _cacheService.get<EpisodeSkipConfig>(
+        cacheKey,
+        (raw) => EpisodeSkipConfig.fromJson(raw as Map<String, dynamic>),
       );
-
-      if (response.statusCode == 200) {
-        final data = _decodeBody(response);
-        if (data['error'] != null) {
-          return ApiResponse.error(data['error'].toString());
-        }
-        final configData = data['config'] as Map<String, dynamic>?;
-        if (configData == null) {
-          return ApiResponse.error('暂无跳过配置');
-        }
-        final config = EpisodeSkipConfig.fromJson(configData);
-        await _cacheService.set(
-          cacheKey,
-          config.toJson(),
-          const Duration(days: 7),
-        );
-        return ApiResponse.success(config, statusCode: response.statusCode);
-      }
-      return ApiResponse.error(
-        '获取跳过配置失败: ${response.statusCode}',
-        statusCode: response.statusCode,
-      );
-    } catch (e) {
-      return ApiResponse.error('获取跳过配置异常: $e');
+      if (cached != null) return ApiResponse.success(cached);
     }
+
+    Future<ApiResponse<EpisodeSkipConfig>> doGet({
+      required String key,
+      String? identityKey,
+    }) async {
+      try {
+        final payload = <String, dynamic>{
+          'action': 'get',
+          'key': key,
+        };
+        if (identityKey != null && identityKey.isNotEmpty) {
+          payload['identityKey'] = identityKey;
+        }
+        final body = json.encode(payload);
+        final response = await _post(
+          '/api/skipconfigs',
+          body: body,
+          timeout: LunaTVConfig.defaultTimeout,
+        );
+
+        if (response.statusCode == 200) {
+          final data = _decodeBody(response);
+          if (data['error'] != null) {
+            return ApiResponse.error(data['error'].toString());
+          }
+          final configData = data['config'] as Map<String, dynamic>?;
+          if (configData == null) {
+            return ApiResponse.error('暂无跳过配置');
+          }
+          final config = EpisodeSkipConfig.fromJson(configData);
+          await _cacheService.set(
+            cacheKey,
+            config.toJson(),
+            const Duration(days: 7),
+          );
+          return ApiResponse.success(config, statusCode: response.statusCode);
+        }
+        return ApiResponse.error(
+          '获取跳过配置失败: ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      } catch (e) {
+        return ApiResponse.error('获取跳过配置异常: $e');
+      }
+    }
+
+    // 优先使用 source+id 精确匹配
+    var result = await doGet(key: '$source+$id');
+    if (result.success && result.data != null) {
+      return result;
+    }
+
+    // 未命中时尝试 identityKey 跨源匹配
+    final identityKey = _generateSkipConfigIdentityKey(
+      title: title ?? '',
+      year: year,
+      doubanId: doubanId,
+    );
+    if (identityKey != null && identityKey.isNotEmpty) {
+      result = await doGet(
+        key: '$source+$id',
+        identityKey: identityKey,
+      );
+      if (result.success && result.data != null) {
+        return result;
+      }
+    }
+
+    return result;
   }
 
   static Future<ApiResponse<EpisodeSkipConfig>> setSkipConfigs({
@@ -471,61 +527,133 @@ class LunaTVService {
     required String id,
     required String title,
     required List<SkipSegment> segments,
+    String? year,
+    int? doubanId,
   }) async {
     await _initCache();
-    try {
-      final body = json.encode({
-        'action': 'set',
-        'key': '$source+$id',
-        'config': {
-          'source': source,
-          'id': id,
-          'title': title,
-          'segments': segments.map((s) => s.toJson()).toList(),
-        },
-      });
-      final response = await _post(
-        '/api/skipconfigs',
-        body: body,
-        timeout: LunaTVConfig.defaultTimeout,
-      );
 
-      if (response.statusCode == 200) {
-        final data = _decodeBody(response);
-        if (data['error'] != null) {
-          return ApiResponse.error(data['error'].toString());
+    final config = EpisodeSkipConfig(
+      source: source,
+      id: id,
+      title: title,
+      segments: segments,
+      updatedTime: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    );
+
+    Future<ApiResponse<EpisodeSkipConfig>> doSet({
+      required String key,
+      String? identityKey,
+    }) async {
+      try {
+        final payload = <String, dynamic>{
+          'action': 'set',
+          'key': key,
+          'config': {
+            'source': source,
+            'id': id,
+            'title': title,
+            'segments': segments.map((s) => s.toJson()).toList(),
+          },
+        };
+        if (identityKey != null && identityKey.isNotEmpty) {
+          payload['identityKey'] = identityKey;
         }
-        final config = EpisodeSkipConfig(
-          source: source,
-          id: id,
-          title: title,
-          segments: segments,
-          updatedTime: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        final body = json.encode(payload);
+        final response = await _post(
+          '/api/skipconfigs',
+          body: body,
+          timeout: LunaTVConfig.defaultTimeout,
         );
-        final cacheKey = _cacheService.generateSkipConfigsCacheKey(
-          source: source,
-          id: id,
+
+        if (response.statusCode == 200) {
+          final data = _decodeBody(response);
+          if (data['error'] != null) {
+            return ApiResponse.error(data['error'].toString());
+          }
+          return ApiResponse.success(config, statusCode: response.statusCode);
+        }
+        return ApiResponse.error(
+          '保存跳过配置失败: ${response.statusCode}',
+          statusCode: response.statusCode,
         );
-        await _cacheService.set(
-          cacheKey,
-          config.toJson(),
-          const Duration(days: 7),
-        );
-        return ApiResponse.success(config, statusCode: response.statusCode);
+      } catch (e) {
+        return ApiResponse.error('保存跳过配置异常: $e');
       }
-      return ApiResponse.error(
-        '保存跳过配置失败: ${response.statusCode}',
-        statusCode: response.statusCode,
-      );
-    } catch (e) {
-      return ApiResponse.error('保存跳过配置异常: $e');
     }
+
+    // 1. 先保存到 source+id（精确匹配，向后兼容）
+    var result = await doSet(key: '$source+$id');
+    if (!result.success) {
+      return result;
+    }
+
+    // 2. 如果有 identityKey，再保存到 identityKey（跨源同步）
+    final identityKey = _generateSkipConfigIdentityKey(
+      title: title,
+      year: year,
+      doubanId: doubanId,
+    );
+    if (identityKey != null && identityKey.isNotEmpty) {
+      final identityResult = await doSet(
+        key: '$source+$id',
+        identityKey: identityKey,
+      );
+      if (!identityResult.success) {
+        return identityResult;
+      }
+    }
+
+    final cacheKey = _cacheService.generateSkipConfigsCacheKey(
+      source: source,
+      id: id,
+    );
+    await _cacheService.set(
+      cacheKey,
+      config.toJson(),
+      const Duration(days: 7),
+    );
+    return ApiResponse.success(config, statusCode: 200);
   }
 
   // ================== 播放历史接口 ==================
 
-  /// 获取当前用户的所有播放记录
-  static Future<ApiResponse<Map<String, PlayRecord>>> getPlayRecords() async {
+  /// 获取当前用户的所有播放记录。
+  /// [forceRefresh] 为 true 时跳过本地缓存直接请求服务器；否则优先返回缓存，
+  /// 由调用方决定是否后台刷新。
+  static Future<ApiResponse<Map<String, PlayRecord>>> getPlayRecords({
+    bool forceRefresh = false,
+  }) async {
+    await _initCache();
+    final cacheKey = _cacheService.generatePlayRecordsCacheKey();
+
+    if (!forceRefresh) {
+      final cached = await _cacheService.get<Map<String, PlayRecord>>(
+        cacheKey,
+        (raw) => (raw as Map<String, dynamic>).map(
+          (k, v) => MapEntry(k, PlayRecord.fromJson(k, v as Map<String, dynamic>)),
+        ),
+      );
+      if (cached != null) return ApiResponse.success(cached);
+    }
+
+    return _fetchAndCachePlayRecords(cacheKey);
+  }
+
+  static Future<ApiResponse<Map<String, PlayRecord>>> _fetchAndCachePlayRecords(
+    String cacheKey,
+  ) async {
+    final result = await _fetchPlayRecords();
+    if (result.success && result.data != null) {
+      await _cacheService.set(
+        cacheKey,
+        result.data!.map((k, v) => MapEntry(k, v.toJson())),
+        LunaTVConfig.playRecordsCacheTtl,
+      );
+    }
+    return result;
+  }
+
+  static Future<ApiResponse<Map<String, PlayRecord>>> _fetchPlayRecords() async {
     try {
       final response = await _get(
         '/api/playrecords',
@@ -557,10 +685,7 @@ class LunaTVService {
     required PlayRecord record,
   }) async {
     try {
-      final body = json.encode({
-        'key': key,
-        'record': record.toJson(),
-      });
+      final body = json.encode({'key': key, 'record': record.toJson()});
       final response = await _post(
         '/api/playrecords',
         body: body,
@@ -568,6 +693,8 @@ class LunaTVService {
       );
 
       if (response.statusCode == 200) {
+        await _initCache();
+        await _updatePlayRecordsCache(key, record);
         return ApiResponse.success(null, statusCode: response.statusCode);
       }
       return ApiResponse.error(
@@ -577,6 +704,30 @@ class LunaTVService {
     } catch (e) {
       return ApiResponse.error('保存播放记录异常: $e');
     }
+  }
+
+  /// 将单条播放记录合并到本地缓存，避免写操作后下次读取必须重新请求远程。
+  static Future<void> _updatePlayRecordsCache(
+    String key,
+    PlayRecord record,
+  ) async {
+    final cacheKey = _cacheService.generatePlayRecordsCacheKey();
+    final cached = await _cacheService.get<Map<String, PlayRecord>>(
+      cacheKey,
+      (raw) => (raw as Map<String, dynamic>).map(
+        (k, v) => MapEntry(k, PlayRecord.fromJson(k, v as Map<String, dynamic>)),
+      ),
+    );
+    if (cached == null) {
+      await _cacheService.delete(cacheKey);
+      return;
+    }
+    cached[key] = record;
+    await _cacheService.set(
+      cacheKey,
+      cached.map((k, v) => MapEntry(k, v.toJson())),
+      LunaTVConfig.playRecordsCacheTtl,
+    );
   }
 
   /// 删除单条播放记录
@@ -589,6 +740,8 @@ class LunaTVService {
       );
 
       if (response.statusCode == 200) {
+        await _initCache();
+        await _removePlayRecordFromCache(key);
         return ApiResponse.success(null, statusCode: response.statusCode);
       }
       return ApiResponse.error(
@@ -600,10 +753,75 @@ class LunaTVService {
     }
   }
 
+  /// 从本地缓存中移除单条播放记录。
+  static Future<void> _removePlayRecordFromCache(String key) async {
+    final cacheKey = _cacheService.generatePlayRecordsCacheKey();
+    final cached = await _cacheService.get<Map<String, PlayRecord>>(
+      cacheKey,
+      (raw) => (raw as Map<String, dynamic>).map(
+        (k, v) => MapEntry(k, PlayRecord.fromJson(k, v as Map<String, dynamic>)),
+      ),
+    );
+    if (cached == null) return;
+    if (!cached.containsKey(key)) return;
+    cached.remove(key);
+    await _cacheService.set(
+      cacheKey,
+      cached.map((k, v) => MapEntry(k, v.toJson())),
+      LunaTVConfig.playRecordsCacheTtl,
+    );
+  }
+
   // ================== 收藏接口 ==================
 
-  /// 获取当前用户的所有收藏
-  static Future<ApiResponse<List<Favorite>>> getFavorites() async {
+  /// 获取当前用户的所有收藏。
+  /// [forceRefresh] 为 true 时跳过本地缓存直接请求服务器；否则优先返回缓存。
+  static Future<ApiResponse<List<Favorite>>> getFavorites({
+    bool forceRefresh = false,
+  }) async {
+    await _initCache();
+    final cacheKey = _cacheService.generateFavoritesCacheKey();
+
+    if (!forceRefresh) {
+      final cached = await _cacheService.get<List<Favorite>>(
+        cacheKey,
+        (raw) => (raw as List<dynamic>)
+            .map((e) => Favorite.fromJson(
+                  (e as Map<String, dynamic>)['key'] as String,
+                  e,
+                ))
+            .toList(),
+      );
+      if (cached != null) {
+        final sorted = List<Favorite>.from(cached)
+          ..sort((a, b) => (b.saveTime ?? 0).compareTo(a.saveTime ?? 0));
+        return ApiResponse.success(sorted);
+      }
+    }
+
+    return _fetchAndCacheFavorites(cacheKey);
+  }
+
+  static Future<ApiResponse<List<Favorite>>> _fetchAndCacheFavorites(
+    String cacheKey,
+  ) async {
+    final result = await _fetchFavorites();
+    if (result.success && result.data != null) {
+      await _cacheService.set(
+        cacheKey,
+        result.data!
+            .map((f) => {
+                  'key': '${f.source}+${f.id}',
+                  ...f.toJson(),
+                })
+            .toList(),
+        LunaTVConfig.favoritesCacheTtl,
+      );
+    }
+    return result;
+  }
+
+  static Future<ApiResponse<List<Favorite>>> _fetchFavorites() async {
     try {
       final response = await _get(
         '/api/favorites',
@@ -633,10 +851,7 @@ class LunaTVService {
     required Favorite favorite,
   }) async {
     try {
-      final body = json.encode({
-        'key': key,
-        'favorite': favorite.toJson(),
-      });
+      final body = json.encode({'key': key, 'favorite': favorite.toJson()});
       final response = await _post(
         '/api/favorites',
         body: body,
@@ -644,6 +859,8 @@ class LunaTVService {
       );
 
       if (response.statusCode == 200) {
+        await _initCache();
+        await _updateFavoritesCache(key, favorite);
         return ApiResponse.success(null, statusCode: response.statusCode);
       }
       return ApiResponse.error(
@@ -653,6 +870,47 @@ class LunaTVService {
     } catch (e) {
       return ApiResponse.error('添加收藏异常: $e');
     }
+  }
+
+  /// 将单条收藏合并到本地缓存，避免写操作后下次读取必须重新请求远程。
+  static Future<void> _updateFavoritesCache(
+    String key,
+    Favorite favorite,
+  ) async {
+    final cacheKey = _cacheService.generateFavoritesCacheKey();
+    final cached = await _cacheService.get<List<Favorite>>(
+      cacheKey,
+      (raw) => (raw as List<dynamic>)
+          .map(
+            (e) => Favorite.fromJson(
+              (e as Map<String, dynamic>)['key'] as String,
+              e,
+            ),
+          )
+          .toList(),
+    );
+    if (cached == null) {
+      await _cacheService.delete(cacheKey);
+      return;
+    }
+    final index = cached.indexWhere(
+      (f) => '${f.source}+${f.id}' == key,
+    );
+    if (index >= 0) {
+      cached[index] = favorite;
+    } else {
+      cached.add(favorite);
+    }
+    await _cacheService.set(
+      cacheKey,
+      cached
+          .map((f) => {
+                'key': '${f.source}+${f.id}',
+                ...f.toJson(),
+              })
+          .toList(),
+      LunaTVConfig.favoritesCacheTtl,
+    );
   }
 
   /// 删除收藏
@@ -665,6 +923,8 @@ class LunaTVService {
       );
 
       if (response.statusCode == 200) {
+        await _initCache();
+        await _removeFavoriteFromCache(key);
         return ApiResponse.success(null, statusCode: response.statusCode);
       }
       return ApiResponse.error(
@@ -674,6 +934,38 @@ class LunaTVService {
     } catch (e) {
       return ApiResponse.error('删除收藏异常: $e');
     }
+  }
+
+  /// 从本地缓存中移除单条收藏。
+  static Future<void> _removeFavoriteFromCache(String key) async {
+    final cacheKey = _cacheService.generateFavoritesCacheKey();
+    final cached = await _cacheService.get<List<Favorite>>(
+      cacheKey,
+      (raw) => (raw as List<dynamic>)
+          .map(
+            (e) => Favorite.fromJson(
+              (e as Map<String, dynamic>)['key'] as String,
+              e,
+            ),
+          )
+          .toList(),
+    );
+    if (cached == null) return;
+    final index = cached.indexWhere(
+      (f) => '${f.source}+${f.id}' == key,
+    );
+    if (index < 0) return;
+    cached.removeAt(index);
+    await _cacheService.set(
+      cacheKey,
+      cached
+          .map((f) => {
+                'key': '${f.source}+${f.id}',
+                ...f.toJson(),
+              })
+          .toList(),
+      LunaTVConfig.favoritesCacheTtl,
+    );
   }
 
   /// 查询是否已收藏

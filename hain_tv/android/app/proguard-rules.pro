@@ -8,13 +8,6 @@
 -keep class com.google.firebase.** { *; }
 -dontwarn io.flutter.embedding.**
 
-# media_kit
--keep class com.alexmercerind.media_kit_video.** { *; }
--keep class media_kit.** { *; }
--keep class com.alexmercerind.** { *; }
--dontwarn media_kit.**
--dontwarn com.alexmercerind.**
-
 # video_player / ExoPlayer / AndroidX Media3
 -keep class io.flutter.plugins.videoplayer.** { *; }
 -keep class com.google.android.exoplayer2.** { *; }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:hain_tv/models/douban_movie.dart';
 import 'package:hain_tv/models/play_record.dart';
 import 'package:hain_tv/screens/mobile/category_screen.dart';
@@ -8,8 +9,10 @@ import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/screens/mobile/history_screen.dart';
 import 'package:hain_tv/services/connectivity_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/mobile_horizontal_list.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
@@ -66,9 +69,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
   void _viewHistory() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MobileHistoryScreen(
-          initialRecords: _allContinueWatching,
-        ),
+        builder: (_) =>
+            MobileHistoryScreen(initialRecords: _allContinueWatching),
       ),
     );
   }
@@ -76,17 +78,25 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
   Future<void> _loadData() async {
     const pageLimit = 18;
     try {
-      // 播放记录先读本地立即显示，避免远程请求阻塞首页渲染
-      await _loadContinueWatching(localOnly: true);
-      // 后台同步远程记录与豆瓣海报
-      unawaited(_loadContinueWatching(localOnly: false));
+      // 首次进入首页时强制从服务器全量刷新播放记录与收藏夹，并缓存到本地；
+      // 后续进入直接读取本地缓存，播放后的增量更新通过通知机制刷新。
+      final isFirstEntry = !(await UserDataService.isHomeFirstEntryCompleted());
+      final syncFuture = isFirstEntry ? _syncAllUserData() : Future.value();
 
-      final results = await Future.wait([
+      final resultsFuture = Future.wait([
         DoubanService.getHotMovies(pageLimit: pageLimit),
         DoubanService.getHotTvShows(pageLimit: pageLimit),
         DoubanService.getHotShows(pageLimit: pageLimit),
         DoubanService.getHotAnimes(pageLimit: pageLimit),
       ]);
+
+      final syncSucceeded = await syncFuture;
+      if (isFirstEntry && syncSucceeded) {
+        await UserDataService.markHomeFirstEntryCompleted();
+      }
+
+      await _loadContinueWatching(localOnly: true);
+      final results = await resultsFuture;
 
       if (mounted) {
         setState(() {
@@ -107,16 +117,35 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
     }
   }
 
-  Future<void> _loadContinueWatching({bool localOnly = false}) async {
+  /// 首次进入首页时强制同步服务器播放记录与收藏夹到本地缓存。
+  /// 返回是否两项均同步成功。
+  Future<bool> _syncAllUserData() async {
+    try {
+      final results = await Future.wait([
+        PlayRecordService.syncFromRemote(),
+        FavoriteService.syncFromRemote(),
+      ]);
+      return results.every((r) => r);
+    } catch (e) {
+      debugPrint('MobileHomeScreen: 首次全量同步失败: $e');
+      return false;
+    }
+  }
+
+  Future<void> _loadContinueWatching({bool localOnly = false, bool forceRefresh = false}) async {
     try {
       final records = localOnly
           ? await PlayRecordService.getAllLocal()
-          : await PlayRecordService.getAll();
+          : await PlayRecordService.getAll(forceRefresh: forceRefresh);
       if (mounted) {
         setState(() {
           _allContinueWatching = records;
           _continueWatching = records.take(12).toList();
         });
+      }
+      // 远程同步成功后立即刷新服务器连接状态，避免首页显示未连接但实际已可用
+      if (!localOnly) {
+        unawaited(ConnectivityService.instance.checkNow());
       }
     } catch (e) {
       // 获取失败忽略
@@ -129,7 +158,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
         builder: (_) => MobileDetailScreen.fromPlayRecord(record),
       ),
     );
-    if (mounted) await _loadContinueWatching();
+    // 从详情页返回后仅读取本地增量更新，避免再次请求远程。
+    if (mounted) await _loadContinueWatching(localOnly: true);
   }
 
   Future<void> _openDetail(BuildContext context, DoubanMovie movie) async {
@@ -138,10 +168,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
         builder: (_) => MobileDetailScreen.fromDoubanMovie(movie),
       ),
     );
-    if (mounted) await _loadContinueWatching();
+    // 从详情页返回后仅读取本地增量更新，避免再次请求远程。
+    if (mounted) await _loadContinueWatching(localOnly: true);
   }
 
-  List<PosterItem> _toPosterItems(List<DoubanMovie> movies, BuildContext context) {
+  List<PosterItem> _toPosterItems(
+    List<DoubanMovie> movies,
+    BuildContext context,
+  ) {
     return movies.map((movie) {
       return PosterItem(
         id: movie.id,
@@ -160,7 +194,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
         id: record.title,
         title: record.title,
         posterUrl: record.cover.isNotEmpty ? record.cover : null,
-        subtitle: record.sourceName.isNotEmpty ? record.sourceName : record.source,
+        subtitle: record.sourceName.isNotEmpty
+            ? record.sourceName
+            : record.source,
         onTap: () => _openHistory(record),
       );
     }).toList();
@@ -169,10 +205,18 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
-      backgroundColor: AppColors.bgApp,
-      body: SafeArea(
-        child: _buildBody(context),
+    return VisibilityDetector(
+      key: const Key('mobile_home_screen'),
+      onVisibilityChanged: (info) {
+        // 手机版 IndexedStack 切回首页时读取本地缓存即可；
+        // 播放后的增量更新已通过 PlayRecordRefreshNotifier 刷新。
+        if (info.visibleFraction > 0.5) {
+          _loadContinueWatching(localOnly: true);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.bgApp,
+        body: SafeArea(child: _buildBody(context)),
       ),
     );
   }
@@ -194,10 +238,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
               style: const TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: AppSpacing.md),
-            ElevatedButton(
-              onPressed: _loadData,
-              child: const Text('重试'),
-            ),
+            ElevatedButton(onPressed: _loadData, child: const Text('重试')),
           ],
         ),
       );
@@ -210,11 +251,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
               children: [
-                const Icon(
-                  Icons.movie,
-                  color: AppColors.primary,
-                  size: 28,
-                ),
+                const Icon(Icons.movie, color: AppColors.primary, size: 28),
                 const SizedBox(width: AppSpacing.sm),
                 const Text(
                   '海因影视',
@@ -227,7 +264,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 ValueListenableBuilder<bool>(
-                  valueListenable: ConnectivityService.instance.isServerConnected,
+                  valueListenable:
+                      ConnectivityService.instance.isServerConnected,
                   builder: (context, connected, child) {
                     return Container(
                       padding: const EdgeInsets.symmetric(
@@ -263,9 +301,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             ),
           ),
         if (_continueWatching.isNotEmpty)
-          const SliverToBoxAdapter(
-            child: SizedBox(height: AppSpacing.xl),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xl)),
         SliverToBoxAdapter(
           child: MobileHorizontalList(
             title: '热门电影',
@@ -273,9 +309,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             onViewMore: () => _viewMoreCategory('movie', '电影'),
           ),
         ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppSpacing.xl),
-        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xl)),
         SliverToBoxAdapter(
           child: MobileHorizontalList(
             title: '热门电视剧',
@@ -283,9 +317,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             onViewMore: () => _viewMoreCategory('tv', '电视剧'),
           ),
         ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppSpacing.xl),
-        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xl)),
         SliverToBoxAdapter(
           child: MobileHorizontalList(
             title: '热门综艺',
@@ -293,9 +325,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             onViewMore: () => _viewMoreCategory('show', '综艺'),
           ),
         ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppSpacing.xl),
-        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xl)),
         SliverToBoxAdapter(
           child: MobileHorizontalList(
             title: '热门动漫',
@@ -303,9 +333,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             onViewMore: () => _viewMoreCategory('anime', '动漫'),
           ),
         ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: AppSpacing.xxl),
-        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl)),
       ],
     );
   }

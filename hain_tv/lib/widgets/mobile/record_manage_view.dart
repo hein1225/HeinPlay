@@ -193,10 +193,7 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
     if (_selectionMode) {
       return Row(
         children: [
-          _buildToolbarButton(
-            label: '完成',
-            onTap: _toggleSelectionMode,
-          ),
+          _buildToolbarButton(label: '完成', onTap: _toggleSelectionMode),
           const SizedBox(width: AppSpacing.md),
           _buildToolbarButton(
             label: '删除(${_selectedKeys.length})',
@@ -204,25 +201,16 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
             primary: true,
           ),
           const SizedBox(width: AppSpacing.md),
-          _buildToolbarButton(
-            label: '清空',
-            onTap: _clearAll,
-          ),
+          _buildToolbarButton(label: '清空', onTap: _clearAll),
         ],
       );
     }
 
     return Row(
       children: [
-        _buildToolbarButton(
-          label: '批量选择',
-          onTap: _toggleSelectionMode,
-        ),
+        _buildToolbarButton(label: '批量选择', onTap: _toggleSelectionMode),
         const SizedBox(width: AppSpacing.md),
-        _buildToolbarButton(
-          label: '清空',
-          onTap: _clearAll,
-        ),
+        _buildToolbarButton(label: '清空', onTap: _clearAll),
       ],
     );
   }

@@ -10,6 +10,7 @@ import 'package:hain_tv/services/permission_service.dart';
 import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/back_interceptor.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 
 class _NavItem {
   final String label;
@@ -29,6 +30,7 @@ class _TvShellState extends State<TvShell> {
   int _selectedIndex = 2;
   final List<FocusNode> _navFocusNodes = [];
   bool _exitDialogShowing = false;
+  final _profileScreenKey = GlobalKey<ProfileScreenState>();
   final _searchScreenKey = GlobalKey<SearchScreenState>();
   final _homeScreenKey = GlobalKey<HomeScreenState>();
   final _movieScreenKey = GlobalKey<CategoryScreenState>();
@@ -62,6 +64,10 @@ class _TvShellState extends State<TvShell> {
   }
 
   Future<void> _checkFirstLaunch() async {
+    if (DeviceUtils.isDesktop) {
+      await PermissionService.markFirstLaunchCompleted();
+      return;
+    }
     final isFirst = await PermissionService.isFirstLaunch();
     if (isFirst && mounted) {
       await PermissionService.showStoragePermissionDialog(context);
@@ -70,15 +76,21 @@ class _TvShellState extends State<TvShell> {
   }
 
   Future<void> _checkUpdate() async {
+    final platform = DeviceUtils.isWindows ? 'windows' : 'tv';
     await UpdateService.checkAndPrompt(
       context,
       silent: true,
       channel: UpdateChannel.domestic,
+      platform: platform,
     );
   }
 
   void _onNavTap(int index) {
     setState(() => _selectedIndex = index);
+    // 切换到“我的”分页时刷新播放记录与收藏夹，避免 IndexedStack 保留旧数据。
+    if (index == 0) {
+      _profileScreenKey.currentState?.refresh();
+    }
   }
 
   void _moveNavFocus(int direction) {
@@ -105,6 +117,10 @@ class _TvShellState extends State<TvShell> {
       onFocusChange: (hasFocus) {
         if (hasFocus) {
           setState(() => _selectedIndex = index);
+          // 焦点切到“我的”时也刷新一次，确保遥控/键盘切页后数据最新。
+          if (index == 0) {
+            _profileScreenKey.currentState?.refresh();
+          }
         }
       },
       onKeyEvent: (node, event) {
@@ -180,7 +196,9 @@ class _TvShellState extends State<TvShell> {
                   Icon(
                     item.icon,
                     size: 18,
-                    color: isActive ? AppColors.primary : AppColors.textSecondary,
+                    color: isActive
+                        ? AppColors.primary
+                        : AppColors.textSecondary,
                   ),
                   const SizedBox(width: AppSpacing.xs),
                   Text(
@@ -189,7 +207,9 @@ class _TvShellState extends State<TvShell> {
                       fontFamily: 'NotoSansSC',
                       fontSize: 15,
                       fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                      color: isActive ? AppColors.textPrimary : AppColors.textSecondary,
+                      color: isActive
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
                     ),
                   ),
                 ],
@@ -329,7 +349,8 @@ class _TvShellState extends State<TvShell> {
           // 上键兜底：当页面内找不到上方焦点时，回到顶部导航栏
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
             final currentFocus = FocusManager.instance.primaryFocus;
-            if (currentFocus != null && !_navFocusNodes.contains(currentFocus)) {
+            if (currentFocus != null &&
+                !_navFocusNodes.contains(currentFocus)) {
               // 首页、搜索/我的页面、电影/电视剧/综艺/动漫分类页：按上直接回到当前顶部导航项，
               // 避免 ReadingOrderTraversalPolicy 按几何位置找到错误的导航项。
               if (_selectedIndex >= 0 && _selectedIndex <= 6) {
@@ -359,65 +380,65 @@ class _TvShellState extends State<TvShell> {
                 color: AppColors.bgSurface,
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                 child: Row(
-                children: [
-                  Text(
-                    '海因影视',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      color: AppColors.primary,
-                      letterSpacing: 1.2,
-                      shadows: [
-                        Shadow(
-                          color: AppColors.primary.withValues(alpha: 0.45),
-                          blurRadius: 10,
-                          offset: const Offset(0, 0),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: ConnectivityService.instance.isServerConnected,
-                    builder: (context, connected, child) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: connected ? AppColors.success : AppColors.error,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Text(
-                          connected ? '已连接服务器' : '服务器未连接',
-                          style: const TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
+                  children: [
+                    Text(
+                      '海因影视',
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        color: AppColors.primary,
+                        letterSpacing: 1.2,
+                        shadows: [
+                          Shadow(
+                            color: AppColors.primary.withValues(alpha: 0.45),
+                            blurRadius: 10,
+                            offset: const Offset(0, 0),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                  const Spacer(),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    ValueListenableBuilder<bool>(
+                      valueListenable:
+                          ConnectivityService.instance.isServerConnected,
+                      builder: (context, connected, child) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: connected
+                                ? AppColors.success
+                                : AppColors.error,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                          ),
+                          child: Text(
+                            connected ? '已连接服务器' : '服务器未连接',
+                            style: const TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const Spacer(),
                     ..._items.asMap().entries.map((entry) {
                       return _buildNavItem(entry.value, entry.key);
                     }).toList(),
                   ],
                 ),
               ),
-              Container(
-                height: 1,
-                color: AppColors.border,
-              ),
+              Container(height: 1, color: AppColors.border),
               Expanded(
                 child: IndexedStack(
                   index: _selectedIndex,
                   children: [
-                    const ProfileScreen(),
+                    ProfileScreen(key: _profileScreenKey),
                     SearchScreen(key: _searchScreenKey),
                     HomeScreen(key: _homeScreenKey),
                     CategoryScreen(
@@ -425,11 +446,7 @@ class _TvShellState extends State<TvShell> {
                       kind: 'movie',
                       title: '电影',
                     ),
-                    CategoryScreen(
-                      key: _tvScreenKey,
-                      kind: 'tv',
-                      title: '电视剧',
-                    ),
+                    CategoryScreen(key: _tvScreenKey, kind: 'tv', title: '电视剧'),
                     CategoryScreen(
                       key: _showScreenKey,
                       kind: 'show',

@@ -1,5 +1,6 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -19,11 +20,14 @@ import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
+import 'package:hain_tv/platform/device_utils.dart';
+import 'package:window_manager/window_manager.dart';
 
 class PlayerScreen extends StatefulWidget {
   final VideoDetail videoDetail;
   final int episodeIndex;
   final List<SourceOption>? sources;
+  final ValueNotifier<List<SourceOption>>? sourcesNotifier;
   final int initialSourceIndex;
   final PlayerBackendType playerBackend;
   final int initialPositionMs;
@@ -33,6 +37,7 @@ class PlayerScreen extends StatefulWidget {
     required this.videoDetail,
     this.episodeIndex = 0,
     this.sources,
+    this.sourcesNotifier,
     this.initialSourceIndex = 0,
     this.playerBackend = PlayerBackendType.exo,
     this.initialPositionMs = 0,
@@ -42,9 +47,13 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
   late VideoDetail _currentVideoDetail;
   late int _currentSourceIndex;
+  // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
+  // 仍能准确找回当前源，避免仅依赖 VideoDetail 的 source/id 匹配失败
+  // 导致播放源被重置到列表首位。
+  String? _initialSourceKey;
   VideoPlayerBackend? _backend;
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
@@ -56,6 +65,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
+
+  // Windows 桌面端当前是否处于窗口全屏状态。
+  bool _isFullScreen = false;
+  bool _togglingFullScreen = false;
 
   EpisodeSkipConfig? _skipConfig;
   bool _skipConfigLoading = false;
@@ -101,8 +114,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   static const double _verticalGestureSensitivity = 0.005;
   static const double _horizontalGestureSensitivity = 0.5;
 
-  List<SourceOption> get _sources => widget.sources ?? [];
-  bool get _canSwitchSource => _sources.length > 1;
+  /// 最近一次切换集数/源的时间，用于跳过片头片尾时避免初始化阶段位置抖动。
+  DateTime? _episodeSwitchAt;
+
+  List<SourceOption> get _sources =>
+      widget.sourcesNotifier?.value ?? widget.sources ?? [];
+  bool get _canSwitchSource => _sources.isNotEmpty;
 
   @override
   void initState() {
@@ -117,18 +134,47 @@ class _PlayerScreenState extends State<PlayerScreen> {
       0,
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
+    _initialSourceKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+        ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+        : '${_currentVideoDetail.source}+${_currentVideoDetail.id}';
     _currentPlayerBackend = widget.playerBackend;
+    // 若传入的后端在当前平台不可用，回退到平台默认。
+    if (!PlayerBackendFactory.availableBackends.contains(
+      _currentPlayerBackend,
+    )) {
+      _currentPlayerBackend = PlayerBackendFactory.platformDefault;
+    }
     _pendingInitialPositionMs = widget.initialPositionMs;
+    widget.sourcesNotifier?.addListener(_onSourcesChanged);
     _loadSkipConfig();
     _initBackend();
     _initWakelock();
-    _initBrightnessAndVolume();
+    if (!DeviceUtils.isDesktop) {
+      _initBrightnessAndVolume();
+    }
     _startClock();
+    _initFullScreenState();
+    if (DeviceUtils.isWindows) {
+      windowManager.addListener(this);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
       }
     });
+  }
+
+  /// 初始化 Windows 桌面端全屏状态，用于控制栏图标显示。
+  Future<void> _initFullScreenState() async {
+    if (!DeviceUtils.isWindows) return;
+    try {
+      final fullScreen = await windowManager.isFullScreen();
+      if (mounted) {
+        setState(() => _isFullScreen = fullScreen);
+      }
+    } catch (e) {
+      debugPrint('初始化全屏状态失败: $e');
+    }
   }
 
   Future<void> _initWakelock() async {
@@ -181,7 +227,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (source.isEmpty || id.isEmpty) return;
 
     setState(() => _skipConfigLoading = true);
-    final response = await LunaTVService.getSkipConfigs(source: source, id: id);
+    final response = await LunaTVService.getSkipConfigs(
+      source: source,
+      id: id,
+      title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
+      forceRefresh: true,
+    );
     if (mounted) {
       setState(() {
         _skipConfigLoading = false;
@@ -190,6 +243,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           debugPrint(
             '跳过配置加载成功: source=$source id=$id segments=${_skipConfig!.segments.length}',
           );
+          // 配置加载后立即检查当前位置是否处于片头片尾区间，
+          // 避免网络较慢时初始化阶段已经错过了 _openEpisode 的 startAt。
+          _checkSkipSegments(_position);
         } else {
           debugPrint(
             '跳过配置加载失败或为空: source=$source id=$id error=${response.message}',
@@ -208,6 +264,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       source: source,
       id: id,
       title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
       segments: segments,
     );
     if (mounted && response.success && response.data != null) {
@@ -224,7 +282,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _duration = duration);
     // 如果因超时导致界面显示了播放失败提示，但实际视频已初始化成功，
     // 则取消待执行的自动换源并清除错误。
-    final pendingAutoSwitch = _error == '播放失败，即将进行自动换源' ||
+    final pendingAutoSwitch =
+        _error == '播放失败，即将进行自动换源' ||
         _error == '播放失败，请手动更换播放源' ||
         _error == '播放失败，请尝试切换播放源';
     if (duration.inMilliseconds > 0 && pendingAutoSwitch && !_initialized) {
@@ -251,9 +310,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }
         }),
       )
-      ..add(
-        backend.durationStream.listen(_onDurationUpdate),
-      )
+      ..add(backend.durationStream.listen(_onDurationUpdate))
       ..add(
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
@@ -278,56 +335,91 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _checkSkipSegments(Duration position) {
     if (_skipConfig == null || _skipConfig!.segments.isEmpty) return;
+
+    // 刚切换集数/源的前 2 秒内不处理跳过，避免初始化阶段位置抖动导致误触发或 seek 失效。
+    final switchAt = _episodeSwitchAt;
+    if (switchAt != null &&
+        DateTime.now().difference(switchAt) < const Duration(seconds: 2)) {
+      return;
+    }
+
     final seconds = position.inMilliseconds / 1000.0;
     final totalSeconds = _duration.inMilliseconds / 1000.0;
+    if (totalSeconds <= 0) return;
 
     for (final segment in _skipConfig!.segments) {
       final key = '${segment.type}_${segment.start}_${segment.end}';
-      if (segment.autoSkip &&
-          !_skippedSegments.contains(key) &&
-          seconds >= segment.start &&
-          seconds <= segment.end) {
+      if (!segment.autoSkip) continue;
+
+      // 过滤时长异常/超出总时长的无效 segment
+      if (segment.end - segment.start < 1.0) continue;
+      if (segment.type == 'opening' && segment.end >= totalSeconds - 1.0) {
+        continue;
+      }
+      if (segment.type == 'ending' && segment.start <= 1.0) continue;
+
+      final inSegment = seconds >= segment.start && seconds <= segment.end;
+      final passedSegment = seconds > segment.end + 1.0;
+
+      if (inSegment) {
+        // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
+        if (!_skippedSegments.contains(key)) {
+          debugPrint(
+            '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+          );
+        }
+        // 跳到片段结束后 1 秒，确保越过片尾并给 ExoPlayer 留出缓冲余量。
+        _safeSeekToSeconds(segment.end + 1.0);
+        break;
+      } else if (passedSegment && !_skippedSegments.contains(key)) {
+        // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
         _skippedSegments.add(key);
         debugPrint(
-          '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+          '跳过片段已生效: type=${segment.type} end=${segment.end} current=$seconds',
         );
-        _safeSeekToSeconds(segment.end);
+      }
+    }
+
+    // 总时长过短（如 HLS 直播或解析异常）时不触发片尾下一集
+    if (totalSeconds <= 10) return;
+
+    for (final segment in _skipConfig!.segments) {
+      // 只有片尾类型的 segment 才允许触发自动下一集
+      if (segment.type != 'ending' ||
+          !segment.autoNextEpisode ||
+          _autoNextTriggered)
+        continue;
+      var remainingTime = segment.remainingTime;
+      if (remainingTime == null) {
+        remainingTime = totalSeconds - segment.start;
+      }
+      // 限制 remainingTime 不超过实际剩余时长，且不超过总时长一半，
+      // 避免播放器报告错误时长时误触发。
+      final actualRemaining = totalSeconds - segment.start;
+      if (remainingTime > actualRemaining) remainingTime = actualRemaining;
+      // 小于 1 秒视为无效，防止立即触发下一集导致卡死
+      if (remainingTime < 1.0) continue;
+      // 超过总时长一半视为异常配置，不触发
+      if (remainingTime > totalSeconds * 0.5) continue;
+      if (totalSeconds - seconds <= remainingTime) {
+        _autoNextTriggered = true;
+        debugPrint(
+          '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
+        );
+        _nextEpisode();
         break;
       }
     }
 
-    if (totalSeconds > 0) {
-      for (final segment in _skipConfig!.segments) {
-        // 只有片尾类型的 segment 才允许触发自动下一集
-        if (segment.type != 'ending' ||
-            !segment.autoNextEpisode ||
-            _autoNextTriggered) continue;
-        var remainingTime = segment.remainingTime;
-        if (remainingTime == null) {
-          remainingTime = totalSeconds - segment.start;
-        }
-        // 小于 1 秒视为无效，防止立即触发下一集导致卡死
-        if (remainingTime < 1.0) continue;
-        if (totalSeconds - seconds <= remainingTime) {
-          _autoNextTriggered = true;
-          debugPrint(
-            '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
-          );
-          _nextEpisode();
-          break;
-        }
-      }
-
-      const fallbackRemaining = 5.0;
-      if (!_autoNextTriggered && totalSeconds - seconds <= fallbackRemaining) {
-        final endingSegments = _skipConfig!.segments
-            .where((s) => s.type == 'ending' && s.autoNextEpisode)
-            .toList();
-        if (endingSegments.isNotEmpty) {
-          _autoNextTriggered = true;
-          debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
-          _nextEpisode();
-        }
+    const fallbackRemaining = 5.0;
+    if (!_autoNextTriggered && totalSeconds - seconds <= fallbackRemaining) {
+      final endingSegments = _skipConfig!.segments
+          .where((s) => s.type == 'ending' && s.autoNextEpisode)
+          .toList();
+      if (endingSegments.isNotEmpty) {
+        _autoNextTriggered = true;
+        debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
+        _nextEpisode();
       }
     }
   }
@@ -357,10 +449,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _autoNextTriggered = false;
     });
 
+    // 记录切换时间，用于跳过逻辑冷却。
+    _episodeSwitchAt = DateTime.now();
+
+    // 先加载跳过配置，确保打开播放器前已知片头片尾区间，
+    // 避免异步加载完成前错过 startAt 定位时机。
+    await _loadSkipConfig();
+
     final timeoutSeconds = await UserDataService.getAutoSwitchSourceTimeout();
     final openTimeout = Duration(seconds: timeoutSeconds);
 
-    Future<bool> tryOpen(String url) async {
+    Future<bool> tryOpen(String url, {int initialPositionMs = 0}) async {
       final startTime = DateTime.now();
       try {
         debugPrint('PlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
@@ -368,6 +467,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ?.open(
               url,
               proxyMode: _currentVideoDetail.proxyMode,
+              startAt: initialPositionMs > 0
+                  ? Duration(milliseconds: initialPositionMs)
+                  : null,
             )
             .timeout(openTimeout);
 
@@ -388,6 +490,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         debugPrint('PlayerScreen 播放失败 [$_currentPlayerBackend]: $url');
         debugPrint('错误: $e');
         debugPrint('$stackTrace');
+        if (e is StateError && e.message.isNotEmpty) {
+          _error = e.message;
+        }
         return false;
       }
     }
@@ -411,7 +516,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
       url = filteredUrl;
     }
 
-    bool success = await tryOpen(url);
+    // 若已配置自动跳过片头，且待恢复位置落在片头区间内，
+    // 则直接从片头结束处开始播放，避免初始化完成后再 seek 失效。
+    final openingSegment = _skipConfig?.segments
+        .where((s) => s.type == 'opening' && s.autoSkip)
+        .firstOrNull;
+    if (openingSegment != null) {
+      final startMs = (openingSegment.start * 1000).toInt();
+      final endMs = (openingSegment.end * 1000).toInt();
+      if (_pendingInitialPositionMs >= startMs &&
+          _pendingInitialPositionMs <= endMs) {
+        _pendingInitialPositionMs = endMs;
+        _skippedSegments.add(
+          '${openingSegment.type}_${openingSegment.start}_${openingSegment.end}',
+        );
+        debugPrint('PlayerScreen 片头起始定位: ${openingSegment.end}s');
+      }
+    }
+
+    bool success = await tryOpen(
+      url,
+      initialPositionMs: _pendingInitialPositionMs,
+    );
 
     if (!mounted) return;
 
@@ -435,20 +561,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _initialized = true;
         _error = null;
       });
-      // 恢复上次播放位置，并限制在新视频总时长范围内
+      // 恢复上次播放位置，并限制在新视频总时长范围内。
+      // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
       if (_pendingInitialPositionMs > 0) {
         final maxMs = _duration.inMilliseconds > 500
             ? _duration.inMilliseconds - 500
             : _duration.inMilliseconds;
         final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
-        _backend?.seek(Duration(milliseconds: clampedMs));
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (mounted) {
+          _backend?.seek(Duration(milliseconds: clampedMs));
+        }
         _pendingInitialPositionMs = 0;
       }
       _showControlsWithoutFocusShift();
     } else if (autoSwitchSource && _sources.length > 1) {
       // 自动换源开启且有其他源时，按设置时间延迟后尝试下一个源。
+      // 若已有具体错误信息，优先保留。
+      final hasSpecificError = _error != null && _error!.isNotEmpty;
       setState(() {
-        _error = '播放失败，即将进行自动换源';
+        if (!hasSpecificError) {
+          _error = '播放失败，即将进行自动换源';
+        }
         _initialized = true;
       });
       _autoSwitchTimer = Timer(Duration(seconds: timeoutSeconds), () async {
@@ -459,14 +593,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
         if (mounted && !switched) {
           setState(() {
-            _error = '播放失败，请手动更换播放源';
+            if (_error == null || _error!.isEmpty) {
+              _error = '播放失败，请手动更换播放源';
+            }
             _initialized = true;
           });
         }
       });
     } else {
       setState(() {
-        _error = '播放失败，请手动更换播放源';
+        if (_error == null || _error!.isEmpty) {
+          _error = '播放失败，请手动更换播放源';
+        }
         _initialized = true;
       });
     }
@@ -515,7 +653,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         continue;
       }
 
-      _backend?.dispose();
+      await _backend?.dispose();
       for (final sub in _subscriptions) {
         sub.cancel();
       }
@@ -547,9 +685,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             }
           }),
         )
-        ..add(
-          backend.durationStream.listen(_onDurationUpdate),
-        )
+        ..add(backend.durationStream.listen(_onDurationUpdate))
         ..add(
           backend.playingStream.listen((playing) {
             if (mounted) setState(() => _playing = playing);
@@ -572,6 +708,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ?.open(
               url,
               proxyMode: _currentVideoDetail.proxyMode,
+              startAt: previousPositionMs > 0
+                  ? Duration(milliseconds: previousPositionMs)
+                  : null,
             )
             .timeout(Duration(seconds: timeoutSeconds));
 
@@ -587,13 +726,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
         if (mounted) {
           setState(() => _initialized = true);
-          if (previousPositionMs > 0) {
-            final maxMs = _duration.inMilliseconds > 500
-                ? _duration.inMilliseconds - 500
-                : _duration.inMilliseconds;
-            final clampedMs = previousPositionMs.clamp(0, maxMs);
-            _backend?.seek(Duration(milliseconds: clampedMs));
-          }
           _showControlsWithoutFocusShift();
           return true;
         }
@@ -634,7 +766,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final previousEpisodeIndex = _currentEpisodeIndex;
     final previousPositionMs = _position.inMilliseconds;
 
-    _backend?.dispose();
+    await _backend?.dispose();
     for (final sub in _subscriptions) {
       sub.cancel();
     }
@@ -749,9 +881,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // 在下一帧把焦点移回根 Focus，保证隐藏控制栏后按键仍能进入 _handleKeyEvent
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      debugPrint(
-        '控制栏隐藏后焦点: ${FocusManager.instance.primaryFocus?.debugLabel}',
-      );
+      debugPrint('控制栏隐藏后焦点: ${FocusManager.instance.primaryFocus?.debugLabel}');
       _rootFocusNode.requestFocus();
     });
   }
@@ -834,21 +964,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
               width: 400,
               child: ListView.builder(
                 shrinkWrap: true,
-                itemCount: PlayerBackendType.values.length,
+                itemCount: PlayerBackendFactory.availableBackends.length,
                 itemBuilder: (context, index) {
-                  final type = PlayerBackendType.values[index];
+                  final type = PlayerBackendFactory.availableBackends[index];
                   final selected = type == _currentPlayerBackend;
                   final String label;
                   switch (type) {
-                    case PlayerBackendType.mediaKit:
-                      label = 'MediaKit';
-                      break;
                     case PlayerBackendType.exo:
                       label = 'ExoPlayer';
+                      break;
+                    case PlayerBackendType.flutterMpv:
+                      label = 'flutter_mpv';
+                      break;
+                    case PlayerBackendType.fvp:
+                      label = 'FVP';
                       break;
                   }
                   return FocusableWidget(
                     autofocus: selected,
+                    padding: EdgeInsets.zero,
                     onTap: () {
                       Navigator.of(context).pop();
                       _switchPlayerBackend(type);
@@ -911,7 +1045,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // 切换播放器前保存当前进度，初始化完成后恢复
     _pendingInitialPositionMs = _position.inMilliseconds;
 
-    _backend?.dispose();
+    // 必须先 await dispose 旧后端，否则 ExoPlayer 等平台播放器会在后台继续播放。
+    await _backend?.dispose();
+    _backend = null;
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
     _subscriptions.clear();
 
     setState(() {
@@ -965,24 +1104,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _longPressSeekTimer = Timer(const Duration(milliseconds: 400), () {
       _continuousSeekTimer?.cancel();
       final startTime = DateTime.now();
-      _continuousSeekTimer = Timer.periodic(
-        const Duration(milliseconds: 200),
-        (_) {
-          final elapsedMs =
-              DateTime.now().difference(startTime).inMilliseconds;
-          int step;
-          if (elapsedMs < 1000) {
-            step = _seekStep;
-          } else if (elapsedMs < 3000) {
-            step = _seekStep * 2;
-          } else if (elapsedMs < 6000) {
-            step = _seekStep * 4;
-          } else {
-            step = _seekStep * 8;
-          }
-          _seekBy(Duration(seconds: direction == 'left' ? -step : step));
-        },
-      );
+      _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
+        _,
+      ) {
+        final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+        int step;
+        if (elapsedMs < 1000) {
+          step = _seekStep;
+        } else if (elapsedMs < 3000) {
+          step = _seekStep * 2;
+        } else if (elapsedMs < 6000) {
+          step = _seekStep * 4;
+        } else {
+          step = _seekStep * 8;
+        }
+        _seekBy(Duration(seconds: direction == 'left' ? -step : step));
+      });
     });
   }
 
@@ -1141,8 +1278,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
 
-    // 控制栏显示时交给焦点系统处理按钮选择，但下键始终用于激活控制栏焦点
-    if (_controlsVisible && event.logicalKey != LogicalKeyboardKey.arrowDown) {
+    // 控制栏显示时交给焦点系统处理按钮选择，但下键与返回/ESC 键始终兜底处理。
+    if (_controlsVisible &&
+        event.logicalKey != LogicalKeyboardKey.arrowDown &&
+        event.logicalKey != LogicalKeyboardKey.goBack &&
+        event.logicalKey != LogicalKeyboardKey.escape) {
       return false;
     }
 
@@ -1185,6 +1325,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       case LogicalKeyboardKey.mediaRewind:
         _toggleControls();
         return true;
+      case LogicalKeyboardKey.goBack:
+      case LogicalKeyboardKey.escape:
+        // Windows：全屏时 ESC 先退出全屏，再按一次返回详情页。
+        if (DeviceUtils.isWindows && _isFullScreen) {
+          _toggleFullScreen();
+        } else if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+        return true;
       default:
         return false;
     }
@@ -1210,11 +1359,51 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onDoubleTapScreen() {
-    _togglePlay();
-    _showGestureIndicator(
-      _playing ? '播放' : '暂停',
-      _playing ? Icons.play_arrow : Icons.pause,
-    );
+    if (DeviceUtils.isWindows) {
+      _toggleFullScreen();
+    } else {
+      _togglePlay();
+      _showGestureIndicator(
+        _playing ? '播放' : '暂停',
+        _playing ? Icons.play_arrow : Icons.pause,
+      );
+    }
+  }
+
+  /// Windows 桌面端切换窗口全屏/取消全屏。
+  Future<void> _toggleFullScreen() async {
+    if (!DeviceUtils.isWindows || _togglingFullScreen) return;
+    _togglingFullScreen = true;
+    try {
+      final next = !_isFullScreen;
+      await windowManager.setFullScreen(next);
+    } catch (e) {
+      debugPrint('切换全屏失败: $e');
+    } finally {
+      _togglingFullScreen = false;
+    }
+  }
+
+  /// 窗口进入全屏时由 [windowManager] 通知更新状态。
+  @override
+  void onWindowEnterFullScreen() {
+    if (mounted) {
+      setState(() {
+        _isFullScreen = true;
+      });
+      _showGestureIndicator('全屏', Icons.fullscreen);
+    }
+  }
+
+  /// 窗口退出全屏时由 [windowManager] 通知更新状态。
+  @override
+  void onWindowLeaveFullScreen() {
+    if (mounted) {
+      setState(() {
+        _isFullScreen = false;
+      });
+      _showGestureIndicator('退出全屏', Icons.fullscreen_exit);
+    }
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
@@ -1238,15 +1427,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _start3xSeek() {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
-    _continuousSeekTimer = Timer.periodic(
-      const Duration(milliseconds: 200),
-      (_) {
-        if (!_isLongPressSeeking || _backend == null) return;
-        final step = _longPressDirection == 'right' ? _seekStep * 3 : -_seekStep * 3;
-        final target = _position + Duration(seconds: step);
-        _backend?.seek(_clampDuration(target));
-      },
-    );
+    _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
+      _,
+    ) {
+      if (!_isLongPressSeeking || _backend == null) return;
+      final step = _longPressDirection == 'right'
+          ? _seekStep * 3
+          : -_seekStep * 3;
+      final target = _position + Duration(seconds: step);
+      _backend?.seek(_clampDuration(target));
+    });
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
@@ -1385,15 +1575,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   String _playerBackendLabel(PlayerBackendType type) {
     switch (type) {
-      case PlayerBackendType.mediaKit:
-        return 'MediaKit';
       case PlayerBackendType.exo:
         return 'ExoPlayer';
+      case PlayerBackendType.flutterMpv:
+        return 'flutter_mpv';
+      case PlayerBackendType.fvp:
+        return 'FVP';
     }
   }
 
   @override
   void dispose() {
+    if (DeviceUtils.isWindows) {
+      windowManager.removeListener(this);
+    }
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
@@ -1422,8 +1617,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _playPauseFocusNode.dispose();
     _skipFocusNode.dispose();
     _rootFocusNode.dispose();
+    widget.sourcesNotifier?.removeListener(_onSourcesChanged);
 
     super.dispose();
+  }
+
+  /// 详情页在后台搜索/测速到新源或重排后，通过 [sourcesNotifier] 同步到播放页。
+  /// 保持当前正在播放的源仍处于选中状态，确保换源列表实时刷新且不会跳到其他源。
+  void _onSourcesChanged() {
+    if (!mounted) return;
+    setState(() {
+      final candidates = [
+        '${_currentVideoDetail.source}+${_currentVideoDetail.id}',
+        if (_initialSourceKey != null && _initialSourceKey!.isNotEmpty)
+          _initialSourceKey!,
+      ];
+      final currentKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+          ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+          : null;
+      if (currentKey != null && currentKey.isNotEmpty && !candidates.contains(currentKey)) {
+        candidates.add(currentKey);
+      }
+
+      var newIndex = -1;
+      for (final key in candidates) {
+        if (key.isEmpty || key == '+') continue;
+        final index = _sources.indexWhere(
+          (s) => '${s.source}+${s.id}' == key,
+        );
+        if (index >= 0) {
+          newIndex = index;
+          break;
+        }
+      }
+
+      if (newIndex >= 0) {
+        _currentSourceIndex = newIndex;
+      } else {
+        _currentSourceIndex = _currentSourceIndex.clamp(
+          0,
+          _sources.isEmpty ? 0 : _sources.length - 1,
+        );
+      }
+    });
   }
 
   /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
@@ -1458,10 +1694,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: CircularProgressIndicator(color: AppColors.primary),
       );
     }
-    return Container(
-      color: Colors.black,
-      child: _backend!.buildVideoWidget(),
-    );
+    return Container(color: Colors.black, child: _backend!.buildVideoWidget());
   }
 
   Widget _buildError() {
@@ -1502,11 +1735,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              _gestureIndicatorIcon,
-              color: AppColors.textPrimary,
-              size: 32,
-            ),
+            Icon(_gestureIndicatorIcon, color: AppColors.textPrimary, size: 32),
             const SizedBox(height: AppSpacing.sm),
             Text(
               _gestureIndicatorText,
@@ -1528,11 +1757,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         behavior: HitTestBehavior.translucent,
         onTap: _onTapScreen,
         onDoubleTap: _onDoubleTapScreen,
-        onLongPressStart: _onLongPressStart,
-        onLongPressEnd: _onLongPressEnd,
-        onVerticalDragStart: _onVerticalDragStart,
-        onVerticalDragUpdate: _onVerticalDragUpdate,
-        onVerticalDragEnd: _onVerticalDragEnd,
+        onLongPressStart: DeviceUtils.isDesktop ? null : _onLongPressStart,
+        onLongPressEnd: DeviceUtils.isDesktop ? null : _onLongPressEnd,
+        onVerticalDragStart: DeviceUtils.isDesktop
+            ? null
+            : _onVerticalDragStart,
+        onVerticalDragUpdate: DeviceUtils.isDesktop
+            ? null
+            : _onVerticalDragUpdate,
+        onVerticalDragEnd: DeviceUtils.isDesktop ? null : _onVerticalDragEnd,
         onHorizontalDragStart: _onHorizontalDragStart,
         onHorizontalDragUpdate: _onHorizontalDragUpdate,
         onHorizontalDragEnd: _onHorizontalDragEnd,
@@ -1560,7 +1793,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
             children: [
               IconButton(
                 onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: AppColors.textPrimary,
+                ),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -1622,276 +1858,312 @@ class _PlayerScreenState extends State<PlayerScreen> {
       node: _bottomControlsFocusNode,
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.lg),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [AppColors.bgOverlay, Colors.transparent],
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTapUp: (details) {
-                    final box = context.findRenderObject() as RenderBox?;
-                    if (box == null) return;
-                    final width = box.size.width;
-                    final percent = details.localPosition.dx / width;
-                    _seekToPercent(percent.clamp(0.0, 1.0));
-                  },
-                  child: Container(
-                    height: 12,
-                    color: Colors.transparent,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: LinearProgressIndicator(
-                        value: _duration.inMilliseconds > 0
-                            ? _position.inMilliseconds /
-                                  _duration.inMilliseconds
-                            : 0.0,
-                        backgroundColor: AppColors.border,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          AppColors.primary,
-                        ),
-                      ),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [AppColors.bgOverlay, Colors.transparent],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTapUp: (details) {
+                final box = context.findRenderObject() as RenderBox?;
+                if (box == null) return;
+                final width = box.size.width;
+                final percent = details.localPosition.dx / width;
+                _seekToPercent(percent.clamp(0.0, 1.0));
+              },
+              child: Container(
+                height: 12,
+                color: Colors.transparent,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: LinearProgressIndicator(
+                    value: _duration.inMilliseconds > 0
+                        ? _position.inMilliseconds / _duration.inMilliseconds
+                        : 0.0,
+                    backgroundColor: AppColors.border,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      AppColors.primary,
                     ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: [
-                    _buildControlIconButton(
-                      focusNode: _playPauseFocusNode,
-                      onTap: _togglePlay,
-                      icon: _playing ? Icons.pause : Icons.play_arrow,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _buildControlIconButton(
-                      onTap: _previousEpisode,
-                      icon: Icons.skip_previous,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _buildControlIconButton(
-                      onTap: _nextEpisode,
-                      icon: Icons.skip_next,
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Text(
-                      '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                      style: const TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 14,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (_currentVideoDetail.source.isNotEmpty &&
-                        _currentVideoDetail.id.isNotEmpty)
-                      FocusableWidget(
-                        focusNode: _skipFocusNode,
-                        onTap: _showSkipConfigDialog,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.xs,
-                          ),
-                          decoration: BoxDecoration(
-                            color:
-                                _skipConfig != null &&
-                                    _skipConfig!.segments.isNotEmpty
-                                ? AppColors.primaryTint
-                                : AppColors.bgElevated,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_skipConfigLoading)
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.primary,
-                                  ),
-                                )
-                              else
-                                Icon(
-                                  Icons.skip_next,
-                                  color:
-                                      _skipConfig != null &&
-                                          _skipConfig!.segments.isNotEmpty
-                                      ? AppColors.primary
-                                      : AppColors.textPrimary,
-                                  size: 18,
-                                ),
-                              const SizedBox(width: AppSpacing.xs),
-                              Text(
-                                '跳过',
-                                style: TextStyle(
-                                  fontFamily: 'NotoSansSC',
-                                  fontSize: 13,
-                                  color:
-                                      _skipConfig != null &&
-                                          _skipConfig!.segments.isNotEmpty
-                                      ? AppColors.primary
-                                      : AppColors.textPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: AppSpacing.md),
-                    FocusableWidget(
-                      onTap: _cycleVideoFit,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md,
-                          vertical: AppSpacing.xs,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.bgElevated,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.aspect_ratio,
-                              color: AppColors.textPrimary,
-                              size: 18,
-                            ),
-                            const SizedBox(width: AppSpacing.xs),
-                            Text(
-                              _videoFitLabel(_videoFit),
-                              style: const TextStyle(
-                                fontFamily: 'NotoSansSC',
-                                fontSize: 13,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    FocusableWidget(
-                      onTap: _showPlayerBackendSelectorDialog,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md,
-                          vertical: AppSpacing.xs,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.bgElevated,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.settings_applications,
-                              color: AppColors.textPrimary,
-                              size: 18,
-                            ),
-                            const SizedBox(width: AppSpacing.xs),
-                            Text(
-                              _playerBackendLabel(_currentPlayerBackend),
-                              style: const TextStyle(
-                                fontFamily: 'NotoSansSC',
-                                fontSize: 13,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    if (_canSwitchSource)
-                      FocusableWidget(
-                        onTap: _showSourceSelectorDialog,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.xs,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.bgElevated,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.swap_horiz,
-                                color: AppColors.textPrimary,
-                                size: 18,
-                              ),
-                              SizedBox(width: AppSpacing.xs),
-                              Text(
-                                '换源',
-                                style: TextStyle(
-                                  fontFamily: 'NotoSansSC',
-                                  fontSize: 13,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_canSwitchSource) const SizedBox(width: AppSpacing.md),
-                    if (_currentVideoDetail.episodes.length > 1)
-                      FocusableWidget(
-                        onTap: _showEpisodeSelectorDialog,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.xs,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.bgElevated,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.list,
-                                color: AppColors.textPrimary,
-                                size: 18,
-                              ),
-                              SizedBox(width: AppSpacing.xs),
-                              Text(
-                                '选集',
-                                style: TextStyle(
-                                  fontFamily: 'NotoSansSC',
-                                  fontSize: 13,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_currentVideoDetail.episodes.length > 1)
-                      const SizedBox(width: AppSpacing.md),
-                  ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                _buildControlIconButton(
+                  focusNode: _playPauseFocusNode,
+                  onTap: _togglePlay,
+                  icon: _playing ? Icons.pause : Icons.play_arrow,
                 ),
+                const SizedBox(width: AppSpacing.sm),
+                _buildControlIconButton(
+                  onTap: _previousEpisode,
+                  icon: Icons.skip_previous,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                _buildControlIconButton(
+                  onTap: _nextEpisode,
+                  icon: Icons.skip_next,
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Text(
+                  '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+                  style: const TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 14,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const Spacer(),
+                if (DeviceUtils.isWindows)
+                  FocusableWidget(
+                    onTap: _toggleFullScreen,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isFullScreen
+                                ? Icons.fullscreen_exit
+                                : Icons.fullscreen,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            _isFullScreen ? '退出全屏' : '全屏',
+                            style: const TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (_currentVideoDetail.source.isNotEmpty &&
+                    _currentVideoDetail.id.isNotEmpty)
+                  FocusableWidget(
+                    focusNode: _skipFocusNode,
+                    onTap: _showSkipConfigDialog,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            _skipConfig != null &&
+                                _skipConfig!.segments.isNotEmpty
+                            ? AppColors.primaryTint
+                            : AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_skipConfigLoading)
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primary,
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.skip_next,
+                              color:
+                                  _skipConfig != null &&
+                                      _skipConfig!.segments.isNotEmpty
+                                  ? AppColors.primary
+                                  : AppColors.textPrimary,
+                              size: 18,
+                            ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '跳过',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color:
+                                  _skipConfig != null &&
+                                      _skipConfig!.segments.isNotEmpty
+                                  ? AppColors.primary
+                                  : AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _cycleVideoFit,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.aspect_ratio,
+                          color: AppColors.textPrimary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _videoFitLabel(_videoFit),
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _showPlayerBackendSelectorDialog,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.settings_applications,
+                          color: AppColors.textPrimary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _playerBackendLabel(_currentPlayerBackend),
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                if (_canSwitchSource)
+                  FocusableWidget(
+                    onTap: _showSourceSelectorDialog,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.swap_horiz,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '换源',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (_canSwitchSource) const SizedBox(width: AppSpacing.md),
+                if (_currentVideoDetail.episodes.length > 1)
+                  FocusableWidget(
+                    onTap: _showEpisodeSelectorDialog,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.list,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '选集',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (_currentVideoDetail.episodes.length > 1)
+                  const SizedBox(width: AppSpacing.md),
               ],
             ),
-          ),
-      );
-    }
+          ],
+        ),
+      ),
+    );
+  }
 
   /// 构建控制栏图标按钮，使用 FocusableWidget 以获得明显的焦点边框。
   Widget _buildControlIconButton({
@@ -1904,11 +2176,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       focusNode: focusNode,
       autofocus: autofocus,
       onTap: onTap,
-      child: Icon(
-        icon,
-        color: AppColors.textPrimary,
-        size: 28,
-      ),
+      child: Icon(icon, color: AppColors.textPrimary, size: 28),
     );
   }
 
@@ -2088,30 +2356,46 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
           child: SizedBox(
             width: 640,
             height: 240,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              controller: _scrollController,
-              child: Row(
-                children: [
-                  for (var index = 0; index < widget.sources.length; index++)
-                    Padding(
-                      padding: EdgeInsets.only(
-                        right: index < widget.sources.length - 1
-                            ? AppSpacing.md
-                            : 0,
+            child: Listener(
+              onPointerSignal: (event) {
+                if (!DeviceUtils.isWindows) return;
+                if (event is PointerScrollEvent) {
+                  if (!_scrollController.hasClients) return;
+                  final delta = event.scrollDelta.dy;
+                  if (delta == 0) return;
+                  final newOffset = (_scrollController.offset + delta).clamp(
+                    _scrollController.position.minScrollExtent,
+                    _scrollController.position.maxScrollExtent,
+                  );
+                  _scrollController.jumpTo(newOffset);
+                }
+              },
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                controller: _scrollController,
+                child: Row(
+                  children: [
+                    for (var index = 0; index < widget.sources.length; index++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          right: index < widget.sources.length - 1
+                              ? AppSpacing.md
+                              : 0,
+                        ),
+                        child: _SourceSelectorCard(
+                          key: _itemKeys[index],
+                          focusNode: _focusNodes[index],
+                          autofocus: index == widget.currentIndex,
+                          source: widget.sources[index],
+                          selected: index == widget.currentIndex,
+                          rank: index + 1,
+                          formatSpeed: widget.formatSpeed,
+                          speedColor: widget.speedColor,
+                          onTap: () => widget.onSelect(index),
+                        ),
                       ),
-                      child: _SourceSelectorCard(
-                        key: _itemKeys[index],
-                        focusNode: _focusNodes[index],
-                        autofocus: index == widget.currentIndex,
-                        source: widget.sources[index],
-                        selected: index == widget.currentIndex,
-                        formatSpeed: widget.formatSpeed,
-                        speedColor: widget.speedColor,
-                        onTap: () => widget.onSelect(index),
-                      ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -2124,6 +2408,7 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
 class _SourceSelectorCard extends StatelessWidget {
   final SourceOption source;
   final bool selected;
+  final int rank;
   final String Function(double?) formatSpeed;
   final Color Function(double?) speedColor;
   final VoidCallback onTap;
@@ -2134,6 +2419,7 @@ class _SourceSelectorCard extends StatelessWidget {
     super.key,
     required this.source,
     required this.selected,
+    required this.rank,
     required this.formatSpeed,
     required this.speedColor,
     required this.onTap,
@@ -2167,9 +2453,7 @@ class _SourceSelectorCard extends StatelessWidget {
                   cacheManager: HainTvCacheManager(),
                   memCacheWidth: 300,
                   memCacheHeight: 450,
-                  placeholder: (_, __) => Container(
-                    color: AppColors.bgSurface,
-                  ),
+                  placeholder: (_, __) => Container(color: AppColors.bgSurface),
                   errorWidget: (_, __, ___) => Container(
                     color: AppColors.bgSurface,
                     child: Center(
@@ -2245,6 +2529,30 @@ class _SourceSelectorCard extends StatelessWidget {
                   ),
                 ),
               ),
+              // 排名标识
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgElevated.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    'No.$rank',
+                    style: const TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ),
               if (speedText.isNotEmpty)
                 Positioned(
                   top: 6,
@@ -2295,7 +2603,7 @@ class _SourceSelectorCard extends StatelessWidget {
                 ),
               if (selected)
                 const Positioned(
-                  top: 6,
+                  top: 28,
                   left: 6,
                   child: Icon(
                     Icons.check_circle,

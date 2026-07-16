@@ -43,25 +43,37 @@ class PlayRecord {
       id: id,
       source: source,
       title: json['title']?.toString() ?? '',
-      sourceName: json['source_name']?.toString() ?? json['source']?.toString() ?? '',
+      sourceName:
+          json['source_name']?.toString() ?? json['source']?.toString() ?? '',
       cover: json['cover']?.toString() ?? json['posterUrl']?.toString() ?? '',
       year: json['year']?.toString() ?? '',
       index: json['index'] is int
           ? json['index']
-          : int.tryParse(json['index']?.toString() ?? json['episodeIndex']?.toString() ?? '1') ?? 1,
+          : int.tryParse(
+                  json['index']?.toString() ??
+                      json['episodeIndex']?.toString() ??
+                      '1',
+                ) ??
+                1,
       totalEpisodes: json['total_episodes'] is int
           ? json['total_episodes']
           : int.tryParse(json['total_episodes']?.toString() ?? '1') ?? 1,
       playTime: json['play_time'] is int
           ? json['play_time']
-          : int.tryParse(json['play_time']?.toString() ?? json['progress']?.toString() ?? '0') ?? 0,
+          : int.tryParse(
+                  json['play_time']?.toString() ??
+                      json['progress']?.toString() ??
+                      '0',
+                ) ??
+                0,
       totalTime: json['total_time'] is int
           ? json['total_time']
           : int.tryParse(json['total_time']?.toString() ?? '0') ?? 0,
       saveTime: json['save_time'] is int
           ? json['save_time']
           : int.tryParse(json['save_time']?.toString() ?? '0') ?? 0,
-      searchTitle: json['search_title']?.toString() ?? json['title']?.toString() ?? '',
+      searchTitle:
+          json['search_title']?.toString() ?? json['title']?.toString() ?? '',
       remarks: json['remarks']?.toString(),
       doubanId: json['douban_id']?.toString(),
       type: json['type']?.toString(),

@@ -1,4 +1,8 @@
-$ErrorActionPreference = "Stop"
+﻿chcp 65001 | Out-Null
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+# 不将 stderr 输出直接视为终止错误，避免 Flutter 输出到 stderr 的提示性信息被误判为构建失败。
+$ErrorActionPreference = "Continue"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $projectDir = Resolve-Path (Join-Path $scriptDir "..")
@@ -18,11 +22,13 @@ $version = $versionFull.Split('+')[0]
 Push-Location $projectDir
 try {
     flutter build apk --target lib/main_mobile.dart --flavor mobile --release
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "flutter build apk (mobile) 失败"
-        exit 1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        Write-Error "flutter build apk (mobile) 失败 (exit code: $exitCode)"
+        exit $exitCode
     }
-} finally {
+}
+finally {
     Pop-Location
 }
 

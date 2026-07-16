@@ -23,7 +23,8 @@ class BangumiCalendarItem {
     String? pickPoster() {
       final images = json['images'] as Map<String, dynamic>?;
       if (images == null) return null;
-      final url = images['large']?.toString() ??
+      final url =
+          images['large']?.toString() ??
           images['common']?.toString() ??
           images['medium']?.toString() ??
           images['small']?.toString() ??
@@ -53,7 +54,9 @@ class BangumiCalendarItem {
     }
 
     return BangumiCalendarItem(
-      id: json['id'] is int ? json['id'] : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      id: json['id'] is int
+          ? json['id']
+          : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
       title: json['name_cn']?.toString() ?? json['name']?.toString() ?? '',
       poster: pickPoster(),
       year: pickYear(),

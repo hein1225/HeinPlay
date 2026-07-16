@@ -1,9 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/search_result.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/search_service.dart';
@@ -36,6 +37,8 @@ class SearchScreenState extends State<SearchScreen> {
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
 
+  // Windows 电脑版使用键盘输入，不需要手机扫码输入。
+  final bool _hasQrInput = !DeviceUtils.isWindows;
   final _remoteInputService = RemoteInputService();
   StreamSubscription<String>? _remoteInputSub;
   bool _qrDialogShowing = false;
@@ -47,7 +50,9 @@ class SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    _setupRemoteInput();
+    if (_hasQrInput) {
+      _setupRemoteInput();
+    }
     _loadSearchHistory();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -154,9 +159,7 @@ class SearchScreenState extends State<SearchScreen> {
     _loadSearchHistory();
     if (!mounted) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailScreen.fromSearchResult(result),
-      ),
+      MaterialPageRoute(builder: (_) => DetailScreen.fromSearchResult(result)),
     );
   }
 
@@ -313,14 +316,11 @@ class SearchScreenState extends State<SearchScreen> {
   }
 
   bool get _focusInSearchBox => _focusNode.hasFocus;
-  bool get _focusInQr => _qrFocusNode.hasFocus;
+  bool get _focusInQr => _hasQrInput && _qrFocusNode.hasFocus;
   bool get _focusInHistory => _currentHistoryIndex != null;
   bool get _focusInResults => _currentResultIndex != null;
   bool get _focusInSearchPage =>
-      _focusInSearchBox ||
-      _focusInQr ||
-      _focusInHistory ||
-      _focusInResults;
+      _focusInSearchBox || _focusInQr || _focusInHistory || _focusInResults;
 
   /// 全局硬件按键兜底处理。
   ///
@@ -339,11 +339,18 @@ class SearchScreenState extends State<SearchScreen> {
     final resultCrossAxisCount = _effectiveResultCrossAxisCount;
     final historyCols = _historyCrossAxisCount;
 
-    // 按右：搜索框→二维码；二维码/历史→搜索结果第一项
+    // 按右：搜索框→二维码（TV 版）；搜索框/历史→搜索结果第一项
     if (key == LogicalKeyboardKey.arrowRight) {
       if (_focusInSearchBox) {
-        _qrFocusNode.requestFocus();
-        return _KeyAction.handled;
+        if (_hasQrInput) {
+          _qrFocusNode.requestFocus();
+          return _KeyAction.handled;
+        }
+        if (_resultFocusNodes.isNotEmpty) {
+          _resultFocusNodes.first.requestFocus();
+          return _KeyAction.handled;
+        }
+        return _KeyAction.ignored;
       }
       if (_focusInQr || _focusInHistory) {
         if (_resultFocusNodes.isNotEmpty) {
@@ -362,7 +369,7 @@ class SearchScreenState extends State<SearchScreen> {
       return _KeyAction.ignored;
     }
 
-    // 按左：二维码→搜索框；结果/历史网格内横向移动（首个海报左键不再回到搜索框）
+    // 按左：二维码→搜索框（TV 版）；结果/历史网格内横向移动（首个海报左键不再回到搜索框）
     if (key == LogicalKeyboardKey.arrowLeft) {
       if (_focusInQr) {
         _focusNode.requestFocus();
@@ -390,6 +397,10 @@ class SearchScreenState extends State<SearchScreen> {
       if (_focusInSearchBox || _focusInQr) {
         if (_historyFocusNodes.isNotEmpty) {
           _historyFocusNodes.first.requestFocus();
+          return _KeyAction.handled;
+        }
+        if (_resultFocusNodes.isNotEmpty) {
+          _resultFocusNodes.first.requestFocus();
           return _KeyAction.handled;
         }
         return _KeyAction.ignored;
@@ -420,6 +431,15 @@ class SearchScreenState extends State<SearchScreen> {
       if (_focusInSearchBox || _focusInQr) {
         // 将焦点交回顶部导航栏（TvShell 的搜索项）
         return _KeyAction.ignored;
+      }
+      if (_focusInResults) {
+        final idx = _currentResultIndex!;
+        if (idx >= resultCrossAxisCount) {
+          _resultFocusNodes[idx - resultCrossAxisCount].requestFocus();
+        } else {
+          _focusNode.requestFocus();
+        }
+        return _KeyAction.handled;
       }
       if (_focusInHistory) {
         final idx = _currentHistoryIndex!;
@@ -468,22 +488,27 @@ class SearchScreenState extends State<SearchScreen> {
         padding: const EdgeInsets.all(AppSpacing.md),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final historyCols = _computeHistoryCrossAxisCount(constraints.maxWidth);
+            final historyCols = _computeHistoryCrossAxisCount(
+              constraints.maxWidth,
+            );
             if (historyCols != _historyCrossAxisCount) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) setState(() => _historyCrossAxisCount = historyCols);
+                if (mounted)
+                  setState(() => _historyCrossAxisCount = historyCols);
               });
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 第一行：搜索框 + 手机扫码
+                // 第一行：搜索框 + 手机扫码（TV 版）
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(child: _buildSearchBox()),
-                    const SizedBox(width: AppSpacing.md),
-                    _buildQrButton(),
+                    if (_hasQrInput) ...[
+                      const SizedBox(width: AppSpacing.md),
+                      _buildQrButton(),
+                    ],
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -550,7 +575,10 @@ class SearchScreenState extends State<SearchScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(AppRadius.md),
-                  borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                  borderSide: const BorderSide(
+                    color: AppColors.primary,
+                    width: 2,
+                  ),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                   vertical: AppSpacing.xs,
@@ -584,11 +612,7 @@ class SearchScreenState extends State<SearchScreen> {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.qr_code_scanner,
-              color: AppColors.primary,
-              size: 24,
-            ),
+            Icon(Icons.qr_code_scanner, color: AppColors.primary, size: 24),
             SizedBox(height: AppSpacing.xs),
             Text(
               '手机输入',
@@ -611,11 +635,10 @@ class SearchScreenState extends State<SearchScreen> {
     const padding = AppSpacing.sm;
     const targetItemHeight = 40.0;
     const titleWidth = 90.0;
-    final availableForItems =
-        width - padding * 2 - titleWidth - AppSpacing.sm;
+    final availableForItems = width - padding * 2 - titleWidth - AppSpacing.sm;
     final itemWidth =
         (availableForItems - (crossAxisCount - 1) * crossSpacing) /
-            crossAxisCount;
+        crossAxisCount;
     final sectionHeight = padding * 2 + 2 * targetItemHeight + mainSpacing;
 
     return Container(
@@ -737,11 +760,7 @@ class SearchScreenState extends State<SearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.search,
-              size: 64,
-              color: AppColors.textMuted,
-            ),
+            const Icon(Icons.search, size: 64, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
             const Text(
               '输入关键词开始搜索',
@@ -752,14 +771,15 @@ class SearchScreenState extends State<SearchScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            const Text(
-              '或使用手机扫码输入',
-              style: TextStyle(
-                fontFamily: 'NotoSansSC',
-                fontSize: 14,
-                color: AppColors.textMuted,
+            if (_hasQrInput)
+              const Text(
+                '或使用手机扫码输入',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 14,
+                  color: AppColors.textMuted,
+                ),
               ),
-            ),
           ],
         ),
       );
@@ -797,7 +817,9 @@ class SearchScreenState extends State<SearchScreen> {
           controller: _resultScrollController,
           items: items,
           crossAxisCount: count,
-          itemFocusNodes: _resultFocusNodes.isNotEmpty ? _resultFocusNodes : null,
+          itemFocusNodes: _resultFocusNodes.isNotEmpty
+              ? _resultFocusNodes
+              : null,
           autofocusFirstItem: false,
           onKeyEvent: _handleKeyEvent,
         );
@@ -821,8 +843,8 @@ class SearchScreenState extends State<SearchScreen> {
     const titleWidth = 90.0;
     const titleSpacing = AppSpacing.sm;
     final available = width - padding - titleWidth - titleSpacing;
-    int count =
-        ((available + crossSpacing) / (minItemWidth + crossSpacing)).floor();
+    int count = ((available + crossSpacing) / (minItemWidth + crossSpacing))
+        .floor();
     // 保证 6 条历史能在两行内完整显示，避免第三行被截断
     return count.clamp(3, 6);
   }

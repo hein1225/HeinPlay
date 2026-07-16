@@ -1,7 +1,7 @@
 name: hain_tv
 description: "海因影视 TV 版"
 publish_to: 'none'
-version: 1.1.3+8
+version: 1.1.4+9
 
 environment:
   sdk: ^3.12.0
@@ -13,12 +13,14 @@ dependencies:
   http: ^1.5.0
   shared_preferences: ^2.5.3
   cached_network_image: ^3.4.1
-  media_kit: ^1.2.6
-  media_kit_video: ^2.0.1
-  media_kit_libs_video: ^1.0.7
   video_player: ^2.11.1
+  flutter_mpv: ^1.2.12
+  flutter_mpv_video: ^2.0.4
+  flutter_mpv_libs_video: ^1.0.11
   video_player_android: ^2.11.0
   path_provider: ^2.1.5
+  path_provider_platform_interface: ^2.1.2
+  shared_preferences_platform_interface: ^2.4.1
   permission_handler: ^12.0.3
   dio: ^5.4.0
   open_filex: ^4.4.0
@@ -29,6 +31,26 @@ dependencies:
   screen_brightness: ^2.1.1
   volume_controller: ^3.3.2
   flutter_js: ^0.8.2
+  window_manager: ^0.4.0
+  fvp: ^0.37.3
+
+dependency_overrides:
+  # flutter_mpv_libs_windows_video 1.0.13 的 ANGLE.7z 下载 URL 存在 typo
+  # （github.com.mohammed），使用本地修正副本。
+  flutter_mpv_libs_windows_video:
+    path: deps/flutter_mpv_libs_windows_video
+  # flutter_mpv_video 2.0.4 的 windows/CMakeLists.txt 引用的源文件名与包内实际
+  # 文件名不一致（media_kit_* vs flutter_mpv_video_*），使用本地修正副本。
+  flutter_mpv_video:
+    path: deps/flutter_mpv_video
+  # flutter_mpv 1.2.12 默认设置的若干 mpv 属性在精简版 mpv 库中不存在，
+  # 会产生大量 property not found 日志，使用本地修正副本移除这些属性。
+  flutter_mpv:
+    path: deps/flutter_mpv
+  # permission_handler_windows 0.2.1 使用已废弃的 /await 与
+  # <experimental/coroutine>，在新版 MSVC 中构建失败，使用本地修正副本。
+  permission_handler_windows:
+    path: deps/permission_handler_windows
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.3

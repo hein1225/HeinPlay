@@ -1,0 +1,7 @@
+﻿
+=== Windows 版 构建开始 2026-07-14 22:22:56 ===
+Building Windows application...                                 
+Nuget.exe not found, trying to download or use cached version.
+Building Windows application...                                    38.4s
+√ Built build\windows\x64\runner\Release\hain_tv.exe
+已生成: E:\code\HeinPlay\hain_tv\dist\heinplay-1.1.4-windows-portable.zip

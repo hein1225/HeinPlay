@@ -1,0 +1,38 @@
+﻿
+=== 手机版 构建开始 2026-07-15 15:00:38 ===
+Resolving dependencies...
+Downloading packages...
+  cli_util 0.4.2 (0.5.1 available)
+! flutter_mpv 1.2.12 from path deps\flutter_mpv (overridden)
+! flutter_mpv_libs_windows_video 1.0.13 from path deps\flutter_mpv_libs_windows_video (overridden)
+! flutter_mpv_video 2.0.4 from path deps\flutter_mpv_video (overridden)
+  hooks 2.0.2 (2.1.0 available)
+  image 4.8.0 (4.9.1 available)
+  meta 1.18.0 (1.19.0 available)
+  package_config 2.2.0 (3.0.0 available)
+  package_info_plus 9.0.1 (10.2.0 available)
+  package_info_plus_platform_interface 3.2.1 (4.1.0 available)
+! permission_handler_windows 0.2.1 from path deps\permission_handler_windows (overridden)
+  qr 3.0.2 (4.0.0 available)
+  record_use 0.6.0 (1.0.0 available)
+  shared_preferences_android 2.4.26 (2.4.27 available)
+  vector_math 2.2.0 (2.4.0 available)
+  video_player 2.11.1 (2.13.0 available)
+  wakelock_plus 1.5.2 (1.6.1 available)
+  win32 5.15.0 (6.3.0 available)
+  window_manager 0.4.3 (0.5.2 available)
+  xml 6.6.1 (7.0.1 available)
+Got dependencies!
+16 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Running Gradle task 'assembleMobileRelease'...                  
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by net.rubygrapefruit.platform.internal.NativeLibraryLoader in an unnamed module (file:/D:/AndroidSDK/.gradle/wrapper/dists/gradle-9.1.0-all/7wzd0jkjit61aq2p43wpjgij9/gradle-9.1.0/lib/native-platform-0.22-milestone-28.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+System.Management.Automation.RemoteException
+Using cached file: C:\Users\hyc50\.flutter_mpv_cache\android_video\v1.1.7\default-arm64-v8a.jar
+Using cached file: C:\Users\hyc50\.flutter_mpv_cache\android_video\v1.1.7\default-armeabi-v7a.jar
+Using cached file: C:\Users\hyc50\.flutter_mpv_cache\android_video\v1.1.7\default-x86_64.jar
+Using cached file: C:\Users\hyc50\.flutter_mpv_cache\android_video\v1.1.7\default-x86.jar
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 7116 bytes (99.6% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.

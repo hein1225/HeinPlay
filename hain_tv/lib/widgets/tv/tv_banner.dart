@@ -1,4 +1,4 @@
-﻿import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
@@ -46,7 +46,8 @@ class TvBanner extends StatelessWidget {
       memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       },
       placeholder: (_, __) => Container(color: AppColors.bgSurface),

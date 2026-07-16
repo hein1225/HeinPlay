@@ -1,6 +1,34 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.1.4</h2></summary>
+
+## 1.1.4
+
+### 变更
+
+- **Windows 版本播放器统一**
+  - Windows 端只保留 `flutter_mpv` 一个播放器后端，不再提供其他后端切换，避免多后端兼容性问题。
+  - 清理了与外部播放器相关的实验性代码和依赖。
+
+### 构建产物与适用设备
+
+| 文件名 | 适用设备 | 系统要求 | 说明 |
+| --- | --- | --- | --- |
+| `heinplay-1.1.4-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
+| `heinplay-1.1.4-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
+| `heinplay-1.1.4-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，使用 `flutter_mpv` 播放。 |
+
+### 播放器后端现状
+
+- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，可在设置中切换为 **flutter_mpv**。
+- **Windows**：仅使用 **flutter_mpv**，不支持切换其他后端。
+
+> 当前 Android 构建配置：`minSdk 24`（Android 7.0），`targetSdk 36`。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.1.3</h2></summary>
 
 ## 1.1.3

@@ -11,7 +11,8 @@ class BangumiService {
   static bool _cacheInitialized = false;
 
   static const String _cmliussssBase = 'https://img.doubanio.cmliussss.net';
-  static const String _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+  static const String _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
   static Future<void> _initCache() async {
@@ -56,10 +57,7 @@ class BangumiService {
       final response = await http
           .get(
             Uri.parse('$baseUrl/calendar'),
-            headers: {
-              'User-Agent': _userAgent,
-              'Accept': 'application/json',
-            },
+            headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 15));
 
@@ -88,7 +86,10 @@ class BangumiService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return ApiResponse.error('获取 Bangumi 数据失败: ${response.statusCode}', statusCode: response.statusCode);
+      return ApiResponse.error(
+        '获取 Bangumi 数据失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error('Bangumi 数据请求异常: $e');
     }
@@ -127,6 +128,48 @@ class BangumiService {
     {'en': 'Sun', 'cn': '周日'},
   ];
 
+  /// 解析 Bangumi infobox 条目的 value，支持字符串或 {v}/[v] 列表。
+  static List<String> _infoboxValues(Map<String, dynamic> item) {
+    final value = item['value'];
+    if (value is String) {
+      return value.isNotEmpty ? [value] : [];
+    }
+    if (value is List) {
+      return value
+          .map((v) {
+            if (v is Map<String, dynamic>) {
+              return v['v']?.toString() ??
+                  v['name']?.toString() ??
+                  v['name_cn']?.toString() ??
+                  '';
+            }
+            return v?.toString() ?? '';
+          })
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
+    return [];
+  }
+
+  /// 从 Bangumi staff 列表中按角色关键词提取人名。
+  static List<String> _staffByRole(
+    List<dynamic>? staff,
+    List<String> roleKeys,
+  ) {
+    if (staff == null) return [];
+    final names = <String>[];
+    for (final person in staff) {
+      if (person is! Map<String, dynamic>) continue;
+      final role = person['role']?.toString() ?? '';
+      if (roleKeys.any((key) => role.contains(key))) {
+        final name =
+            person['name_cn']?.toString() ?? person['name']?.toString() ?? '';
+        if (name.isNotEmpty) names.add(name);
+      }
+    }
+    return names;
+  }
+
   /// 获取 Bangumi 条目详情，并转成详情页可用的 DoubanMovieDetails。
   static Future<ApiResponse<DoubanMovieDetails>> fetchSubject(int id) async {
     await _initCache();
@@ -143,10 +186,7 @@ class BangumiService {
       final response = await http
           .get(
             Uri.parse('$baseUrl/v0/subjects/$id'),
-            headers: {
-              'User-Agent': _userAgent,
-              'Accept': 'application/json',
-            },
+            headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 15));
 
@@ -173,7 +213,8 @@ class BangumiService {
         String poster = '';
         final images = data['images'] as Map<String, dynamic>?;
         if (images != null) {
-          poster = images['large']?.toString() ??
+          poster =
+              images['large']?.toString() ??
               images['common']?.toString() ??
               images['medium']?.toString() ??
               images['small']?.toString() ??
@@ -183,11 +224,67 @@ class BangumiService {
 
         final summary = data['summary']?.toString();
         final tags = data['tags'] as List<dynamic>? ?? [];
-        final genres = tags
+        final infobox = data['infobox'] as List<dynamic>? ?? [];
+        final staff = data['staff'] as List<dynamic>? ?? [];
+
+        var genres = tags
             .take(5)
             .map((t) => t['name']?.toString() ?? '')
             .where((s) => s.isNotEmpty)
             .toList();
+
+        final directors = <String>[];
+        final screenwriters = <String>[];
+        final actors = <String>[];
+        String? releaseDate;
+        String? totalEpisodesText;
+
+        for (final item in infobox) {
+          if (item is! Map<String, dynamic>) continue;
+          final key = item['key']?.toString() ?? '';
+          final values = _infoboxValues(item);
+          if (values.isEmpty) continue;
+          if (key.contains('导演') || key.contains('监督')) {
+            directors.addAll(values);
+          } else if (key.contains('脚本') ||
+              key.contains('系列构成') ||
+              key.contains('编剧')) {
+            screenwriters.addAll(values);
+          } else if (key.contains('声优') ||
+              key.contains('演员') ||
+              key.contains('主演')) {
+            actors.addAll(values);
+          } else if (key.contains('放送开始') ||
+              key.contains('上映日') ||
+              key.contains('首播') ||
+              key.contains('播放开始')) {
+            releaseDate ??= values.first;
+          } else if (key.contains('话数') || key.contains('集数')) {
+            totalEpisodesText ??= values.first;
+          } else if (key.contains('类型') || key.contains('形式')) {
+            genres = [...genres, ...values];
+          }
+        }
+
+        if (directors.isEmpty) {
+          directors.addAll(_staffByRole(staff, ['导演', '监督']));
+        }
+        if (screenwriters.isEmpty) {
+          screenwriters.addAll(_staffByRole(staff, ['脚本', '系列构成', '编剧']));
+        }
+        if (actors.isEmpty) {
+          actors.addAll(_staffByRole(staff, ['主演', '声优', '演员']));
+        }
+
+        if (date.isNotEmpty) {
+          releaseDate = date;
+        }
+        if (releaseDate == '0000-00-00') releaseDate = null;
+
+        int? totalEpisodes;
+        if (totalEpisodesText != null) {
+          totalEpisodes = int.tryParse(totalEpisodesText);
+        }
 
         final details = DoubanMovieDetails(
           id: id.toString(),
@@ -196,7 +293,13 @@ class BangumiService {
           year: year,
           rate: rate,
           summary: summary,
-          genres: genres,
+          genres: genres.toSet().toList(),
+          directors: directors,
+          screenwriters: screenwriters,
+          actors: actors,
+          releaseDate: releaseDate,
+          totalEpisodes: totalEpisodes,
+          originalTitle: name.isNotEmpty && name != title ? name : null,
         );
 
         await _cacheService.set(
@@ -227,7 +330,8 @@ class BangumiService {
     if (originalUrl.isEmpty) return originalUrl;
     if (!isBangumiImageUrl(originalUrl)) return originalUrl;
 
-    final type = UserDataService.cachedBangumiImageProxyType ??
+    final type =
+        UserDataService.cachedBangumiImageProxyType ??
         BangumiImageProxyType.cmliussss;
     final customUrl = UserDataService.cachedBangumiImageProxyUrl ?? '';
 

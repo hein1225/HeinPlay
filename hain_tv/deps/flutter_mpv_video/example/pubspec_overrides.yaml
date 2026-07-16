@@ -1,0 +1,6 @@
+# melos_managed_dependency_overrides: flutter_mpv,flutter_mpv_video
+dependency_overrides:
+  flutter_mpv:
+    path: ../../flutter_mpv
+  flutter_mpv_video:
+    path: ..

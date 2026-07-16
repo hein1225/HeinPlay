@@ -14,7 +14,17 @@ import 'play_record_refresh_notifier.dart';
 /// 读取时合并本地与远程记录，以更新时间最晚者为准。
 class PlayRecordService {
   /// 保存播放记录：先本地、后异步上传。
+  /// 标题、源或 ID 为空时不保存，避免产生无法删除、无法进入详情的脏记录。
   static Future<void> save(models.PlayRecord record) async {
+    if (record.title.trim().isEmpty ||
+        record.source.trim().isEmpty ||
+        record.id.trim().isEmpty) {
+      debugPrint(
+        'PlayRecordService: 跳过保存无效播放记录 title="${record.title}" source="${record.source}" id="${record.id}"',
+      );
+      return;
+    }
+
     await local.LocalStorageService.savePlayRecord(
       local.PlayRecord(
         source: record.source,
@@ -91,29 +101,55 @@ class PlayRecordService {
 
     final merged = <String, models.PlayRecord>{};
     for (final group in groups) {
-      final key = _mergeKey(group.representative.title, group.representative.year);
+      final key = _mergeKey(
+        group.representative.title,
+        group.representative.year,
+      );
       merged[key] = group.representative;
     }
     return merged;
   }
 
+  /// 清理本地播放记录中的脏数据（空标题、空源、空 ID）。
+  static Future<List<local.PlayRecord>> _cleanInvalidLocalRecords(
+    List<local.PlayRecord> records,
+  ) async {
+    final cleaned = records.where((r) {
+      return r.title.trim().isNotEmpty &&
+          r.source.trim().isNotEmpty &&
+          r.id.trim().isNotEmpty;
+    }).toList();
+    if (cleaned.length != records.length) {
+      await local.LocalStorageService.setPlayHistory(cleaned);
+      debugPrint(
+        'PlayRecordService: 已清理 ${records.length - cleaned.length} 条无效本地播放记录',
+      );
+    }
+    return cleaned;
+  }
+
   /// 仅获取本地播放记录列表，按保存时间降序。
   /// 不请求远程服务器，不 enrich 豆瓣海报，用于快速刷新 UI。
+  /// 会自动清理无效记录。
   static Future<List<models.PlayRecord>> getAllLocal() async {
     final localRecords = await local.LocalStorageService.getPlayHistory();
-    final merged = _mergeByTitle(localRecords.map(_localToModel));
+    final cleaned = await _cleanInvalidLocalRecords(localRecords);
+    final merged = _mergeByTitle(cleaned.map(_localToModel));
     return merged.values.toList()
       ..sort((a, b) => b.saveTime.compareTo(a.saveTime));
   }
 
   /// 获取合并后的播放记录列表（本地 + 远程），按保存时间降序。
   /// 同一影视的不同播放源记录会合并为一条，保留最近一次的播放源。
-  static Future<List<models.PlayRecord>> getAll() async {
+  /// 会自动清理本地无效记录。
+  /// [forceRefresh] 为 true 时跳过远程缓存直接请求服务器，并将合并结果写回本地缓存。
+  static Future<List<models.PlayRecord>> getAll({bool forceRefresh = false}) async {
     final localRecords = await local.LocalStorageService.getPlayHistory();
-    final merged = _mergeByTitle(localRecords.map(_localToModel));
+    final cleaned = await _cleanInvalidLocalRecords(localRecords);
+    final merged = _mergeByTitle(cleaned.map(_localToModel));
 
     try {
-      final response = await LunaTVService.getPlayRecords();
+      final response = await LunaTVService.getPlayRecords(forceRefresh: forceRefresh);
       if (response.success && response.data != null) {
         final remoteMerged = _mergeByTitle(response.data!.values);
         for (final entry in remoteMerged.entries) {
@@ -132,24 +168,94 @@ class PlayRecordService {
       ..sort((a, b) => b.saveTime.compareTo(a.saveTime));
 
     // 并发匹配豆瓣海报，原播放源海报失效时仍可使用豆瓣海报
-    return await _enrichAllWithDoubanPosters(result);
+    final enriched = await _enrichAllWithDoubanPosters(result);
+
+    // 强制刷新时把合并后的结果（含豆瓣海报）写回本地缓存，供首页/我的离线读取。
+    if (forceRefresh) {
+      await _persistModelRecords(enriched);
+    }
+
+    return enriched;
+  }
+
+  /// 将统一模型列表持久化到本地 SharedPreferences。
+  static Future<void> _persistModelRecords(List<models.PlayRecord> records) async {
+    final localRecords = records.map(_modelToLocal).toList();
+    await local.LocalStorageService.setPlayHistory(localRecords);
   }
 
   /// 获取指定标题的最新播放记录。
   ///
   /// 当 [localOnly] 为 true 时只读取本地记录，不请求远程服务器，
   /// 用于播放退出后快速刷新详情页继续播放按钮。
+  /// 使用 [_isSameVideo] 进行语义匹配，避免 Bangumi/动漫条目因年份为空
+  /// 或标题带后缀而无法命中已保存的播放记录。
   static Future<models.PlayRecord?> getByTitle(
     String title, {
     String year = '',
     bool localOnly = false,
   }) async {
     final all = localOnly ? await getAllLocal() : await getAll();
-    final key = _mergeKey(title, year);
-    return all.cast<models.PlayRecord?>().firstWhere(
-          (r) => _mergeKey(r!.title, r.year) == key,
-          orElse: () => null,
+    final reference = models.PlayRecord(
+      id: '',
+      source: '',
+      title: title,
+      sourceName: '',
+      cover: '',
+      year: year,
+      index: 0,
+      totalEpisodes: 0,
+      playTime: 0,
+      totalTime: 0,
+      saveTime: 0,
+      searchTitle: title,
+    );
+    models.PlayRecord? best;
+    for (final r in all) {
+      if (_isSameVideo(r, reference)) {
+        if (best == null || r.saveTime > best.saveTime) {
+          best = r;
+        }
+      }
+    }
+    return best;
+  }
+
+  /// 根据多个候选标题查找最新播放记录。
+  /// 返回与任一候选标题匹配且时间最近的一条记录。
+  static Future<models.PlayRecord?> findByTitles(
+    List<String> titles, {
+    String year = '',
+    bool localOnly = false,
+  }) async {
+    if (titles.isEmpty) return null;
+    final all = localOnly ? await getAllLocal() : await getAll();
+    models.PlayRecord? best;
+    for (final r in all) {
+      for (final title in titles) {
+        final reference = models.PlayRecord(
+          id: '',
+          source: '',
+          title: title,
+          sourceName: '',
+          cover: '',
+          year: year,
+          index: 0,
+          totalEpisodes: 0,
+          playTime: 0,
+          totalTime: 0,
+          saveTime: 0,
+          searchTitle: title,
         );
+        if (_isSameVideo(r, reference)) {
+          if (best == null || r.saveTime > best.saveTime) {
+            best = r;
+          }
+          break;
+        }
+      }
+    }
+    return best;
   }
 
   /// 仅读取本地指定标题的最新播放记录，不请求远程服务器。
@@ -177,6 +283,39 @@ class PlayRecordService {
       searchTitle: r.title,
       doubanId: r.doubanId,
     );
+  }
+
+  /// 将统一模型转换为本地记录模型。
+  static local.PlayRecord _modelToLocal(models.PlayRecord r) {
+    return local.PlayRecord(
+      source: r.source,
+      id: r.id,
+      title: r.title,
+      posterUrl: r.cover.isNotEmpty ? r.cover : null,
+      episodeName: r.index > 1 ? '第${r.index}集' : null,
+      episodeIndex: r.index,
+      position: Duration(seconds: r.playTime),
+      duration: Duration(seconds: r.totalTime),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(r.saveTime),
+      doubanId: r.doubanId,
+      year: r.year.isNotEmpty ? r.year : null,
+    );
+  }
+
+  /// 强制从服务器全量同步播放记录并缓存到本地。
+  /// 返回是否成功完成同步。
+  static Future<bool> syncFromRemote() async {
+    try {
+      final records = await getAll(forceRefresh: true);
+      // getAll(forceRefresh: true) 内部已将合并结果写回本地缓存。
+      if (records.isNotEmpty) {
+        PlayRecordRefreshNotifier.instance.notify();
+      }
+      return true;
+    } catch (e) {
+      debugPrint('PlayRecordService.syncFromRemote 失败: $e');
+      return false;
+    }
   }
 
   static bool _isDoubanUrl(String url) {
@@ -212,8 +351,9 @@ class PlayRecordService {
     final doubanId = record.doubanId;
     if (doubanId != null && doubanId.isNotEmpty) {
       try {
-        final response = await DoubanService.getDetails(doubanId: doubanId)
-            .timeout(const Duration(seconds: 5));
+        final response = await DoubanService.getDetails(
+          doubanId: doubanId,
+        ).timeout(const Duration(seconds: 5));
         if (response.success &&
             response.data != null &&
             response.data!.poster.isNotEmpty) {
@@ -266,8 +406,9 @@ class PlayRecordService {
   ) async {
     final futures = records.map((record) async {
       try {
-        return await _enrichWithDoubanPoster(record)
-            .timeout(const Duration(seconds: 6));
+        return await _enrichWithDoubanPoster(
+          record,
+        ).timeout(const Duration(seconds: 6));
       } catch (e) {
         return record;
       }
@@ -277,18 +418,27 @@ class PlayRecordService {
 
   /// 删除多条播放记录（本地 + 远程）。
   /// [keys] 为影视标题（与 UI 中 [PlayRecord.title] 一致）。
+  /// 空标题 key 会匹配并删除本地所有无效（空标题/空源/空 ID）记录。
   static Future<void> deleteByKeys(List<String> keys) async {
     final localRecords = await local.LocalStorageService.getPlayHistory();
-    // 使用标题相似度匹配，确保删除合并记录时能清除所有来源的原始记录
+    // 使用标题相似度匹配，确保删除合并记录时能清除所有来源的原始记录。
+    // 如果 key 为空，则删除本地无效记录。
     final remaining = localRecords
         .where(
-          (r) => !keys.any((key) => _titleSimilarity(r.title, key) >= 0.9),
+          (r) => !keys.any((key) {
+            if (key.trim().isEmpty) {
+              return r.title.trim().isEmpty ||
+                  r.source.trim().isEmpty ||
+                  r.id.trim().isEmpty;
+            }
+            return _titleSimilarity(r.title, key) >= 0.9;
+          }),
         )
         .toList();
     await local.LocalStorageService.setPlayHistory(remaining);
 
     try {
-      final response = await LunaTVService.getPlayRecords();
+      final response = await LunaTVService.getPlayRecords(forceRefresh: true);
       if (response.success && response.data != null) {
         for (final entry in response.data!.entries) {
           final record = entry.value;
@@ -307,7 +457,7 @@ class PlayRecordService {
     await local.LocalStorageService.clearPlayHistory();
 
     try {
-      final response = await LunaTVService.getPlayRecords();
+      final response = await LunaTVService.getPlayRecords(forceRefresh: true);
       if (response.success && response.data != null) {
         for (final key in response.data!.keys) {
           unawaited(_deleteRemote(key));

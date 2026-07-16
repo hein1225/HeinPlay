@@ -6,11 +6,8 @@ import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/models/favorite.dart';
 import 'package:hain_tv/models/play_record.dart' as models;
-import 'package:hain_tv/models/source_option.dart';
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
 import 'package:hain_tv/services/favorite_service.dart';
-import 'package:hain_tv/services/local_storage_service.dart' as local;
-import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/profile_refresh_notifier.dart';
@@ -18,7 +15,6 @@ import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'package:hain_tv/widgets/tv/update_channel_dialog.dart';
-import 'player_screen.dart';
 import 'detail_screen.dart';
 import 'settings_screen.dart';
 
@@ -26,10 +22,10 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  State<ProfileScreen> createState() => ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class ProfileScreenState extends State<ProfileScreen> {
   List<Favorite> _favorites = [];
   List<models.PlayRecord> _history = [];
   final List<FocusNode> _menuFocusNodes = List.generate(4, (_) => FocusNode());
@@ -59,69 +55,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _onPlayRecordRefresh() {
-    if (mounted) _loadHistory(localOnly: true);
+    if (mounted) _loadHistory();
   }
 
   void _onFavoriteRefresh() {
-    if (mounted) _loadFavorites(localOnly: true);
+    if (mounted) _loadFavorites();
+  }
+
+  /// 切换到“我的”分页时由 TvShell 调用，读取本地缓存即可；
+  /// 首次进入首页时已强制全量同步服务器数据到本地。
+  Future<void> refresh() async {
+    await _loadData();
   }
 
   Future<void> _loadData() async {
-    // 收藏先读本地立即显示，再后台同步远程
-    await _loadFavorites(localOnly: true);
-    unawaited(_loadFavorites(localOnly: false));
-    // 播放记录先读本地立即显示，再后台同步远程记录与豆瓣海报
-    await _loadHistory(localOnly: true);
-    unawaited(_loadHistory(localOnly: false));
+    // 首次进入首页时已强制全量刷新并缓存，这里直接读取本地。
+    await _loadFavorites();
+    await _loadHistory();
   }
 
-  Future<void> _loadFavorites({bool localOnly = false}) async {
+  Future<void> _loadFavorites() async {
     List<Favorite> favorites = [];
     try {
-      if (localOnly) {
-        final localFavorites = await local.LocalStorageService.getFavorites();
-        favorites = localFavorites
-            .map(
-              (f) => Favorite(
-                source: f.source,
-                id: f.id,
-                title: f.title,
-                cover: f.posterUrl ?? '',
-                sourceName: '',
-                saveTime: f.createdAt.millisecondsSinceEpoch,
-              ),
-            )
-            .toList();
-      } else {
-        final response = await LunaTVService.getFavorites();
-        if (response.success && response.data != null) {
-          favorites = response.data!;
-          // 将远程收藏同步回本地
-          for (final f in favorites) {
-            await local.LocalStorageService.addFavorite(
-              local.FavoriteRecord(
-                source: f.source,
-                id: f.id,
-                title: f.title,
-                posterUrl: f.cover.isNotEmpty ? f.cover : null,
-                createdAt: DateTime.fromMillisecondsSinceEpoch(f.saveTime ?? DateTime.now().millisecondsSinceEpoch),
-              ),
-            );
-          }
-        }
-      }
+      favorites = await FavoriteService.getAll();
     } catch (e) {}
 
     if (!mounted) return;
     setState(() => _favorites = favorites);
   }
 
-  Future<void> _loadHistory({bool localOnly = false}) async {
+  Future<void> _loadHistory() async {
     List<models.PlayRecord> history = [];
     try {
-      history = localOnly
-          ? await PlayRecordService.getAllLocal()
-          : await PlayRecordService.getAll();
+      history = await PlayRecordService.getAllLocal();
     } catch (e) {}
 
     if (!mounted) return;
@@ -129,50 +95,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _openFavorite(Favorite favorite) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final response = await LunaTVService.getDetail(
-      source: favorite.source,
-      id: favorite.id,
-      title: favorite.title,
-    );
-    if (!response.success || response.data == null) {
-      messenger.showSnackBar(const SnackBar(content: Text('未找到播放资源')));
-      return;
-    }
-    final detail = response.data!;
-    final sourceOption = SourceOption(
-      source: detail.source,
-      sourceName: detail.sourceName,
-      id: detail.id,
-      title: detail.title,
-      poster: detail.poster.isNotEmpty ? detail.poster : null,
-      year: detail.year,
-      doubanId: detail.doubanId,
-    );
-    if (!mounted) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
-          videoDetail: detail,
-          episodeIndex: 0,
-          sources: [sourceOption],
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => DetailScreen.fromFavorite(favorite)),
     );
   }
 
   Future<void> _openHistory(models.PlayRecord record) async {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailScreen.fromPlayRecord(record),
-      ),
+      MaterialPageRoute(builder: (_) => DetailScreen.fromPlayRecord(record)),
     );
   }
 
   void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
   int? get _currentMenuIndex {
@@ -223,7 +160,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: _buildMenuCard(
                     icon: Icons.history,
                     title: '播放记录',
-                    subtitle: _history.isEmpty ? '暂无播放记录' : '${_history.length} 部',
+                    subtitle: _history.isEmpty
+                        ? '暂无播放记录'
+                        : '${_history.length} 部',
                     onTap: () => _showRecords(_history),
                     focusNode: _menuFocusNodes[0],
                     autofocus: true,
@@ -234,7 +173,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: _buildMenuCard(
                     icon: Icons.favorite_outline,
                     title: '收藏夹',
-                    subtitle: _favorites.isEmpty ? '暂无收藏' : '${_favorites.length} 部',
+                    subtitle: _favorites.isEmpty
+                        ? '暂无收藏'
+                        : '${_favorites.length} 部',
                     onTap: () => _showFavorites(_favorites),
                     focusNode: _menuFocusNodes[1],
                   ),
@@ -262,6 +203,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context,
                           force: true,
                           channel: channel,
+                          platform: 'tv',
                         );
                       }
                     },
@@ -327,10 +269,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right,
-              color: AppColors.textSecondary,
-            ),
+            const Icon(Icons.chevron_right, color: AppColors.textSecondary),
           ],
         ),
       ),
@@ -395,11 +334,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.code,
-              color: AppColors.primary,
-              size: 16,
-            ),
+            const Icon(Icons.code, color: AppColors.primary, size: 16),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$label：',
@@ -411,10 +346,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: Text(
                 url,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.primary,
-                ),
+                style: const TextStyle(fontSize: 13, color: AppColors.primary),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
               ),
@@ -549,8 +481,10 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
 
   final ScrollController _scrollController = ScrollController();
   final List<FocusNode> _itemFocusNodes = [];
-  final List<FocusNode> _toolbarFocusNodes =
-      List.generate(3, (_) => FocusNode());
+  final List<FocusNode> _toolbarFocusNodes = List.generate(
+    3,
+    (_) => FocusNode(),
+  );
   BoxConstraints? _gridConstraints;
 
   @override
@@ -943,8 +877,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
                   ? Center(
                       child: Text(
                         widget.emptyMessage,
-                        style:
-                            const TextStyle(color: AppColors.textSecondary),
+                        style: const TextStyle(color: AppColors.textSecondary),
                       ),
                     )
                   : Focus(
@@ -967,12 +900,17 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
                             autofocusFirstItem: false,
                             selectedPredicate: (index) =>
                                 _selectionMode &&
-                                _selectedKeys
-                                    .contains(widget.toKey(_items[index])),
-                            onItemKeyEvent: (index, crossAxisCount, node,
-                                    event) =>
-                                _handleRecordGridKeyEvent(
-                                    index, crossAxisCount, node, event),
+                                _selectedKeys.contains(
+                                  widget.toKey(_items[index]),
+                                ),
+                            onItemKeyEvent:
+                                (index, crossAxisCount, node, event) =>
+                                    _handleRecordGridKeyEvent(
+                                      index,
+                                      crossAxisCount,
+                                      node,
+                                      event,
+                                    ),
                           );
                         },
                       ),

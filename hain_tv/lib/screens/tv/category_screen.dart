@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -127,11 +127,7 @@ class CategoryScreen extends StatefulWidget {
   final String kind;
   final String title;
 
-  const CategoryScreen({
-    super.key,
-    required this.kind,
-    required this.title,
-  });
+  const CategoryScreen({super.key, required this.kind, required this.title});
 
   @override
   State<CategoryScreen> createState() => CategoryScreenState();
@@ -259,52 +255,187 @@ class CategoryScreenState extends State<CategoryScreen> {
   // ===================== 筛选维度选项（与 LunaTV MultiLevelSelector 一致） =====================
 
   static const _typeOptionsMovie = [
-    '全部', '喜剧', '爱情', '动作', '科幻', '悬疑', '犯罪', '惊悚', '冒险', '音乐',
-    '历史', '奇幻', '恐怖', '战争', '传记', '歌舞', '武侠', '情色', '灾难', '西部',
-    '纪录片', '短片',
+    '全部',
+    '喜剧',
+    '爱情',
+    '动作',
+    '科幻',
+    '悬疑',
+    '犯罪',
+    '惊悚',
+    '冒险',
+    '音乐',
+    '历史',
+    '奇幻',
+    '恐怖',
+    '战争',
+    '传记',
+    '歌舞',
+    '武侠',
+    '情色',
+    '灾难',
+    '西部',
+    '纪录片',
+    '短片',
   ];
 
   static const _typeOptionsTv = [
-    '全部', '喜剧', '爱情', '悬疑', '武侠', '古装', '家庭', '犯罪', '科幻', '恐怖',
-    '历史', '战争', '动作', '冒险', '传记', '剧情', '奇幻', '惊悚', '灾难', '歌舞',
+    '全部',
+    '喜剧',
+    '爱情',
+    '悬疑',
+    '武侠',
+    '古装',
+    '家庭',
+    '犯罪',
+    '科幻',
+    '恐怖',
+    '历史',
+    '战争',
+    '动作',
+    '冒险',
+    '传记',
+    '剧情',
+    '奇幻',
+    '惊悚',
+    '灾难',
+    '歌舞',
     '音乐',
   ];
 
-  static const _typeOptionsShow = [
-    '全部', '真人秀', '脱口秀', '音乐', '歌舞',
-  ];
+  static const _typeOptionsShow = ['全部', '真人秀', '脱口秀', '音乐', '歌舞'];
 
   static const _labelOptionsAnimeTv = [
-    '全部', '黑色幽默', '历史', '歌舞', '励志', '恶搞', '治愈', '运动', '后宫', '情色',
-    '国漫', '人性', '悬疑', '恋爱', '魔幻', '科幻',
+    '全部',
+    '黑色幽默',
+    '历史',
+    '歌舞',
+    '励志',
+    '恶搞',
+    '治愈',
+    '运动',
+    '后宫',
+    '情色',
+    '国漫',
+    '人性',
+    '悬疑',
+    '恋爱',
+    '魔幻',
+    '科幻',
   ];
 
   static const _labelOptionsAnimeMovie = [
-    '全部', '定格动画', '传记', '美国动画', '爱情', '黑色幽默', '歌舞', '儿童', '二次元',
-    '动物', '青春', '历史', '励志', '恶搞', '治愈', '运动', '后宫', '情色', '人性', '悬疑',
-    '恋爱', '魔幻', '科幻',
+    '全部',
+    '定格动画',
+    '传记',
+    '美国动画',
+    '爱情',
+    '黑色幽默',
+    '歌舞',
+    '儿童',
+    '二次元',
+    '动物',
+    '青春',
+    '历史',
+    '励志',
+    '恶搞',
+    '治愈',
+    '运动',
+    '后宫',
+    '情色',
+    '人性',
+    '悬疑',
+    '恋爱',
+    '魔幻',
+    '科幻',
   ];
 
   static const _regionOptionsMovie = [
-    '全部', '华语', '欧美', '韩国', '日本', '中国大陆', '美国', '中国香港', '中国台湾',
-    '英国', '法国', '德国', '意大利', '西班牙', '印度', '泰国', '俄罗斯', '加拿大',
-    '澳大利亚', '爱尔兰', '瑞典', '巴西', '丹麦',
+    '全部',
+    '华语',
+    '欧美',
+    '韩国',
+    '日本',
+    '中国大陆',
+    '美国',
+    '中国香港',
+    '中国台湾',
+    '英国',
+    '法国',
+    '德国',
+    '意大利',
+    '西班牙',
+    '印度',
+    '泰国',
+    '俄罗斯',
+    '加拿大',
+    '澳大利亚',
+    '爱尔兰',
+    '瑞典',
+    '巴西',
+    '丹麦',
   ];
 
   static const _regionOptionsTvShowAnime = [
-    '全部', '华语', '欧美', '国外', '韩国', '日本', '中国大陆', '中国香港', '美国', '英国',
-    '泰国', '中国台湾', '意大利', '法国', '德国', '西班牙', '俄罗斯', '瑞典', '巴西', '丹麦',
-    '印度', '加拿大', '爱尔兰', '澳大利亚',
+    '全部',
+    '华语',
+    '欧美',
+    '国外',
+    '韩国',
+    '日本',
+    '中国大陆',
+    '中国香港',
+    '美国',
+    '英国',
+    '泰国',
+    '中国台湾',
+    '意大利',
+    '法国',
+    '德国',
+    '西班牙',
+    '俄罗斯',
+    '瑞典',
+    '巴西',
+    '丹麦',
+    '印度',
+    '加拿大',
+    '爱尔兰',
+    '澳大利亚',
   ];
 
   static const _platformOptions = [
-    '全部', '腾讯视频', '爱奇艺', '优酷', '湖南卫视', 'Netflix', 'HBO', 'BBC', 'NHK', 'CBS',
-    'NBC', 'tvN',
+    '全部',
+    '腾讯视频',
+    '爱奇艺',
+    '优酷',
+    '湖南卫视',
+    'Netflix',
+    'HBO',
+    'BBC',
+    'NHK',
+    'CBS',
+    'NBC',
+    'tvN',
   ];
 
   static const _yearOptions = [
-    '全部', '2020年代', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019',
-    '2010年代', '2000年代', '90年代', '80年代', '70年代', '60年代', '更早',
+    '全部',
+    '2020年代',
+    '2026',
+    '2025',
+    '2024',
+    '2023',
+    '2022',
+    '2021',
+    '2020',
+    '2019',
+    '2010年代',
+    '2000年代',
+    '90年代',
+    '80年代',
+    '70年代',
+    '60年代',
+    '更早',
   ];
 
   static const _sortLabelsMovie = ['近期热度', '首映时间', '高分优先'];
@@ -412,8 +543,9 @@ class CategoryScreenState extends State<CategoryScreen> {
   void _focusSecondRowFirst() {
     _scrollPosterGridToTop();
     if (_selectedPrimary == '每日放送') {
-      final selectedIndex = BangumiService.weekdays
-          .indexWhere((d) => d['en'] == _selectedWeekday);
+      final selectedIndex = BangumiService.weekdays.indexWhere(
+        (d) => d['en'] == _selectedWeekday,
+      );
       if (selectedIndex >= 0 && selectedIndex < _weekdayFocusNodes.length) {
         _weekdayFocusNodes[selectedIndex].requestFocus();
       } else if (_weekdayFocusNodes.isNotEmpty) {
@@ -502,7 +634,9 @@ class CategoryScreenState extends State<CategoryScreen> {
     final row = index ~/ count;
     final totalRows = (_movies.length + count - 1) ~/ count;
     if (totalRows >= 2 && row >= totalRows - 2) {
-      debugPrint('CategoryScreen[${widget.kind}] 焦点预加载: index=$index row=$row totalRows=$totalRows');
+      debugPrint(
+        'CategoryScreen[${widget.kind}] 焦点预加载: index=$index row=$row totalRows=$totalRows',
+      );
       _loadMore();
     }
   }
@@ -523,7 +657,8 @@ class CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
     if (crossAxisCount > 0) _posterCrossAxisCount = crossAxisCount;
 
     void focusPreviousRow() {
@@ -593,10 +728,14 @@ class CategoryScreenState extends State<CategoryScreen> {
   Future<ApiResponse<List<DoubanMovie>>> _loadBangumiDailyBroadcast() async {
     if (_bangumiCalendarItems.isEmpty) {
       final res = await BangumiService.getCalendar();
-      if (!res.success) return ApiResponse.error(res.message ?? '获取 Bangumi 数据失败');
+      if (!res.success)
+        return ApiResponse.error(res.message ?? '获取 Bangumi 数据失败');
       _bangumiCalendarItems = res.data ?? [];
     }
-    final items = BangumiService.filterByWeekday(_bangumiCalendarItems, _selectedWeekday);
+    final items = BangumiService.filterByWeekday(
+      _bangumiCalendarItems,
+      _selectedWeekday,
+    );
     return ApiResponse.success(items.map(_bangumiToDoubanMovie).toList());
   }
 
@@ -623,7 +762,9 @@ class CategoryScreenState extends State<CategoryScreen> {
     try {
       final params = refresh ? _params.copyWith(page: 0) : _params;
 
-      debugPrint('CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, primary=$_selectedPrimary, secondary=$_selectedSecondary, token=$token');
+      debugPrint(
+        'CategoryScreen[${widget.kind}] 加载数据: page=${params.page}, primary=$_selectedPrimary, secondary=$_selectedSecondary, token=$token',
+      );
 
       late ApiResponse<List<DoubanMovie>> response;
 
@@ -667,11 +808,15 @@ class CategoryScreenState extends State<CategoryScreen> {
         response = await DoubanService.fetchRecommends(params: params);
       }
 
-      debugPrint('CategoryScreen[${widget.kind}] 响应: success=${response.success}, dataCount=${response.data?.length ?? 0}, token=$token');
+      debugPrint(
+        'CategoryScreen[${widget.kind}] 响应: success=${response.success}, dataCount=${response.data?.length ?? 0}, token=$token',
+      );
 
       // 若切换分类导致 token 变化，或页面已卸载，则丢弃此次结果。
       if (token != _loadToken || !mounted) {
-        debugPrint('CategoryScreen[${widget.kind}] 加载结果已过期，放弃更新 (token=$token)');
+        debugPrint(
+          'CategoryScreen[${widget.kind}] 加载结果已过期，放弃更新 (token=$token)',
+        );
         return;
       }
 
@@ -686,7 +831,8 @@ class CategoryScreenState extends State<CategoryScreen> {
               _movies.addAll(response.data!);
             }
           }
-          _hasMore = response.success &&
+          _hasMore =
+              response.success &&
               response.data != null &&
               response.data!.length >= params.pageLimit;
           if (widget.kind == 'anime' && _selectedPrimary == '每日放送') {
@@ -694,13 +840,17 @@ class CategoryScreenState extends State<CategoryScreen> {
           }
           _loadingMore = false;
 
-          debugPrint('CategoryScreen[${widget.kind}] 状态更新: movies=${_movies.length}, hasMore=$_hasMore');
+          debugPrint(
+            'CategoryScreen[${widget.kind}] 状态更新: movies=${_movies.length}, hasMore=$_hasMore',
+          );
         });
         // 刷新后把海报墙滚回顶部，避免旧分类的滚动偏移残留
         if (refresh) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+              _scrollController.jumpTo(
+                _scrollController.position.minScrollExtent,
+              );
             }
           });
         }
@@ -710,7 +860,9 @@ class CategoryScreenState extends State<CategoryScreen> {
       debugPrint('$stackTrace');
       // 切换分类后旧请求报错，不应覆盖当前状态。
       if (token != _loadToken || !mounted) {
-        debugPrint('CategoryScreen[${widget.kind}] 加载失败结果已过期，放弃更新 (token=$token)');
+        debugPrint(
+          'CategoryScreen[${widget.kind}] 加载失败结果已过期，放弃更新 (token=$token)',
+        );
         return;
       }
       if (mounted) {
@@ -725,7 +877,9 @@ class CategoryScreenState extends State<CategoryScreen> {
 
   Future<void> _loadMore() async {
     if (_loadingMore || !_hasMore) {
-      debugPrint('CategoryScreen[${widget.kind}] 跳过加载: loadingMore=$_loadingMore, hasMore=$_hasMore');
+      debugPrint(
+        'CategoryScreen[${widget.kind}] 跳过加载: loadingMore=$_loadingMore, hasMore=$_hasMore',
+      );
       return;
     }
     setState(() => _loadingMore = true);
@@ -966,21 +1120,27 @@ class CategoryScreenState extends State<CategoryScreen> {
                           final selected = currentValue == option;
                           return FocusableWidget(
                             focusNode: _dropdownOptionFocusNodes[i],
-                            onTap: () => _applyDimensionValue(_activeDimension!, option),
-                            onKeyEvent: (node, event) => _handleDropdownOptionKeyEvent(
-                              i,
-                              options.length,
-                              option,
-                              node,
-                              event,
-                            ),
+                            onTap: () =>
+                                _applyDimensionValue(_activeDimension!, option),
+                            onKeyEvent: (node, event) =>
+                                _handleDropdownOptionKeyEvent(
+                                  i,
+                                  options.length,
+                                  option,
+                                  node,
+                                  event,
+                                ),
                             onFocusChange: (focused) {
                               if (focused) {
-                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                WidgetsBinding.instance.addPostFrameCallback((
+                                  _,
+                                ) {
                                   if (context.mounted) {
                                     Scrollable.ensureVisible(
                                       context,
-                                      duration: const Duration(milliseconds: 200),
+                                      duration: const Duration(
+                                        milliseconds: 200,
+                                      ),
                                       curve: Curves.easeOut,
                                       alignment: 0.5,
                                     );
@@ -995,10 +1155,16 @@ class CategoryScreenState extends State<CategoryScreen> {
                                 vertical: AppSpacing.sm,
                               ),
                               decoration: BoxDecoration(
-                                color: selected ? AppColors.primary : AppColors.bgElevated,
-                                borderRadius: BorderRadius.circular(AppRadius.sm),
+                                color: selected
+                                    ? AppColors.primary
+                                    : AppColors.bgElevated,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.sm,
+                                ),
                                 border: Border.all(
-                                  color: selected ? AppColors.primary : AppColors.border,
+                                  color: selected
+                                      ? AppColors.primary
+                                      : AppColors.border,
                                 ),
                               ),
                               child: Text(
@@ -1009,7 +1175,9 @@ class CategoryScreenState extends State<CategoryScreen> {
                                   fontFamily: 'NotoSansSC',
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: selected ? Colors.white : AppColors.textPrimary,
+                                  color: selected
+                                      ? Colors.white
+                                      : AppColors.textPrimary,
                                 ),
                               ),
                             ),
@@ -1033,7 +1201,8 @@ class CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
 
     final crossAxisCount = _dropdownCrossAxisCount;
     final row = index ~/ crossAxisCount;
@@ -1051,7 +1220,9 @@ class CategoryScreenState extends State<CategoryScreen> {
           _focusDropdownOption(index - 1);
         } else if (row > 0) {
           final prevRowColumns = columnsInRow(row - 1);
-          _focusDropdownOption((row - 1) * crossAxisCount + (prevRowColumns - 1));
+          _focusDropdownOption(
+            (row - 1) * crossAxisCount + (prevRowColumns - 1),
+          );
         }
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowRight:
@@ -1092,7 +1263,8 @@ class CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowLeft:
@@ -1145,9 +1317,11 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
 
-    if (event.logicalKey == LogicalKeyboardKey.escape && _activeDimension != null) {
+    if (event.logicalKey == LogicalKeyboardKey.escape &&
+        _activeDimension != null) {
       _closeDimensionDropdown();
       return KeyEventResult.handled;
     }
@@ -1170,9 +1344,7 @@ class CategoryScreenState extends State<CategoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildTopFilterBar(),
-                Expanded(
-                  child: _buildBody(context),
-                ),
+                Expanded(child: _buildBody(context)),
               ],
             ),
             if (_activeDimension != null) _buildDimensionDropdown(),
@@ -1223,9 +1395,7 @@ class CategoryScreenState extends State<CategoryScreen> {
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       decoration: const BoxDecoration(
         color: AppColors.bgSurface,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border),
-        ),
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1251,7 +1421,8 @@ class CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
     debugPrint('[CategoryTag] key=${event.logicalKey} index=$index');
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       if (index > 0) {
@@ -1279,7 +1450,11 @@ class CategoryScreenState extends State<CategoryScreen> {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          for (int index = 0; index < _config.primaryOptions.length; index++) ...[
+          for (
+            int index = 0;
+            index < _config.primaryOptions.length;
+            index++
+          ) ...[
             Builder(
               builder: (context) {
                 final option = _config.primaryOptions[index];
@@ -1315,7 +1490,9 @@ class CategoryScreenState extends State<CategoryScreen> {
                             : AppColors.bgElevated,
                         borderRadius: BorderRadius.circular(AppRadius.full),
                         border: Border.all(
-                          color: selected ? AppColors.primary : AppColors.border,
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.border,
                         ),
                       ),
                       child: Text(
@@ -1343,7 +1520,9 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   Widget _buildSecondRow() {
-    debugPrint('[SecondRow] selectedPrimary=$_selectedPrimary showSecondary=$_showSecondaryRow showDim=$_showDimensionButtons');
+    debugPrint(
+      '[SecondRow] selectedPrimary=$_selectedPrimary showSecondary=$_showSecondaryRow showDim=$_showDimensionButtons',
+    );
     if (_selectedPrimary == '每日放送') {
       return _buildWeekdayRow();
     }
@@ -1398,7 +1577,9 @@ class CategoryScreenState extends State<CategoryScreen> {
                             : AppColors.bgElevated,
                         borderRadius: BorderRadius.circular(AppRadius.full),
                         border: Border.all(
-                          color: selected ? AppColors.primary : AppColors.border,
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.border,
                         ),
                       ),
                       child: Text(
@@ -1430,7 +1611,8 @@ class CategoryScreenState extends State<CategoryScreen> {
     FocusNode node,
     KeyEvent event,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowLeft:
@@ -1487,43 +1669,55 @@ class CategoryScreenState extends State<CategoryScreen> {
                         });
                       }
                     },
-                    onKeyEvent: (node, event) => _handleWeekdayKeyEvent(i, node, event),
+                    onKeyEvent: (node, event) =>
+                        _handleWeekdayKeyEvent(i, node, event),
                     child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected ? AppColors.primary : AppColors.bgElevated,
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                      border: Border.all(
-                        color: selected ? AppColors.primary : AppColors.border,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        border: Border.all(
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.border,
+                        ),
+                      ),
+                      child: Text(
+                        day['cn']!,
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: selected
+                              ? Colors.white
+                              : AppColors.textSecondary,
+                        ),
                       ),
                     ),
-                    child: Text(
-                      day['cn']!,
-                      style: TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: selected ? Colors.white : AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            if (i < BangumiService.weekdays.length - 1)
-              const SizedBox(width: AppSpacing.sm),
+                  );
+                },
+              ),
+              if (i < BangumiService.weekdays.length - 1)
+                const SizedBox(width: AppSpacing.sm),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-  );
+    );
   }
 
-  KeyEventResult _handleWeekdayKeyEvent(int index, FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+  KeyEventResult _handleWeekdayKeyEvent(
+    int index,
+    FocusNode node,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
     debugPrint('[Weekday] key=${event.logicalKey} index=$index node=$node');
 
     switch (event.logicalKey) {
@@ -1560,9 +1754,12 @@ class CategoryScreenState extends State<CategoryScreen> {
                   final dimension = _dimensions[i];
                   final node = _dimensionButtonFocusNodes[dimension.key]!;
                   if (i == 0) {
-                    debugPrint('[DimButton] build i=$i key=${dimension.key} node=$node context=${node.context}');
+                    debugPrint(
+                      '[DimButton] build i=$i key=${dimension.key} node=$node context=${node.context}',
+                    );
                   }
-                  final label = '${dimension.label}：${_currentValueForDimension(dimension.key)}';
+                  final label =
+                      '${dimension.label}：${_currentValueForDimension(dimension.key)}';
                   final active = _activeDimension == dimension.key;
                   return _DimensionButton(
                     focusNode: node,
@@ -1594,7 +1791,9 @@ class CategoryScreenState extends State<CategoryScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: active ? AppColors.primary : AppColors.bgElevated,
+                        color: active
+                            ? AppColors.primary
+                            : AppColors.bgElevated,
                         borderRadius: BorderRadius.circular(AppRadius.sm),
                         border: Border.all(
                           color: active ? AppColors.primary : AppColors.border,
@@ -1611,19 +1810,21 @@ class CategoryScreenState extends State<CategoryScreen> {
                       ),
                     ),
                   );
-              },
-            ),
-            if (i < _dimensions.length - 1) const SizedBox(width: AppSpacing.md),
+                },
+              ),
+              if (i < _dimensions.length - 1)
+                const SizedBox(width: AppSpacing.md),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-  );
+    );
   }
 
   void _onVisibilityChanged(VisibilityInfo info) {
     if (info.visibleFraction > 0.5) {
-      if (!_hasEverBeenVisible || (_movies.isEmpty && !_loading && _error == null)) {
+      if (!_hasEverBeenVisible ||
+          (_movies.isEmpty && !_loading && _error == null)) {
         _hasEverBeenVisible = true;
         _loadData(refresh: true);
       }
@@ -1648,10 +1849,7 @@ class CategoryScreenState extends State<CategoryScreen> {
 
     if (_movies.isEmpty) {
       return const Center(
-        child: Text(
-          '暂无数据',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
+        child: Text('暂无数据', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
 

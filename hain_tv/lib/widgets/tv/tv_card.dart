@@ -1,4 +1,4 @@
-﻿import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
@@ -72,7 +72,8 @@ class TvPosterCard extends StatelessWidget {
       memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       },
       placeholder: (context, url) => placeholder,
@@ -222,11 +223,7 @@ class TvPosterCard extends StatelessWidget {
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.check,
-                color: Colors.white,
-                size: 14,
-              ),
+              child: const Icon(Icons.check, color: Colors.white, size: 14),
             ),
           ),
         ],

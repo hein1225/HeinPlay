@@ -1,0 +1,61 @@
+name: flutter_mpv
+description: A cross-platform video player & audio player for Flutter & Dart with advanced performance controls. Fork of flutter_mpv.
+homepage: https://github.com/mohammedbakri123/MPx-Player
+repository: https://github.com/mohammedbakri123/MPx-Player
+version: 1.2.12
+
+screenshots:
+  - description: "flutter_mpv running on Android (visible controls)"
+    path: screenshots/android_0.jpg
+  - description: "flutter_mpv running on Android"
+    path: screenshots/android_1.jpg
+  - description: "flutter_mpv running on iOS (visible controls)"
+    path: screenshots/ios_0.jpg
+  - description: "flutter_mpv running on iOS"
+    path: screenshots/ios_1.jpg
+  - description: "flutter_mpv running on macOS"
+    path: screenshots/macos.jpg
+  - description: "flutter_mpv running on Microsoft Windows"
+    path: screenshots/windows.jpg
+  - description: "flutter_mpv running on GNU/Linux"
+    path: screenshots/linux.jpg
+  - description: "flutter_mpv running on web"
+    path: screenshots/web.jpg
+topics:
+  - video
+  - video-player
+  - audio
+  - audio-player
+  - cross-platform
+
+environment:
+  sdk: ">=3.1.0 <4.0.0"
+
+dependencies:
+  collection: ^1.17.0
+  http: ">=0.13.0 <2.0.0"
+  image: ^4.0.17
+  meta: ^1.8.0
+  path: ^1.8.0
+  safe_local_storage: ^2.0.1
+  synchronized: ^3.1.0
+  universal_platform: ^1.0.0+1
+  web: ^1.1.0
+  uri_parser: ^3.0.2
+  uuid: ">=2.0.0 <5.0.0"
+
+dev_dependencies:
+  test: ^1.24.1
+  lints: ^5.0.0
+
+ffigen:
+  name: MPV
+  output: bin/generated/libmpv/bindings.dart
+  headers:
+    entry-points:
+      - headers/client.h
+  dart-bool: true
+
+flutter:
+  assets:
+    - assets/web/

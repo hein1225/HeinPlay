@@ -1,0 +1,48 @@
+name: flutter_mpv_video
+description: Native implementation for video playback in flutter_mpv.
+homepage: https://github.com/mohammedbakri123/MPx-Player
+repository: https://github.com/mohammedbakri123/MPx-Player
+version: 2.0.4
+topics:
+  - video
+  - video-player
+  - audio
+  - audio-player
+  - cross-platform
+
+environment:
+  sdk: ">=2.17.0 <4.0.0"
+  flutter: ">=3.7.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  flutter_mpv: ^1.2.12
+
+  synchronized: ^3.1.0
+  wakelock_plus: ^1.1.6
+  universal_platform: ^1.0.0+1
+  plugin_platform_interface: ^2.0.2
+  web: ^1.1.0
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+
+
+
+flutter:
+  plugin:
+    platforms:
+      windows:
+        pluginClass: FlutterMpvVideoPluginCApi
+      linux:
+        pluginClass: FlutterMpvVideoPlugin
+      macos:
+        pluginClass: FlutterMpvVideoPlugin
+      ios:
+        pluginClass: FlutterMpvVideoPlugin
+      android:
+        package: com.mohammed.flutter_mpv_video
+        pluginClass: FlutterMpvVideoPlugin
+      web:

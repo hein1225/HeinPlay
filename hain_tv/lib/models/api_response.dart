@@ -12,11 +12,7 @@ class ApiResponse<T> {
   });
 
   factory ApiResponse.success(T data, {int? statusCode}) {
-    return ApiResponse<T>(
-      success: true,
-      data: data,
-      statusCode: statusCode,
-    );
+    return ApiResponse<T>(success: true, data: data, statusCode: statusCode);
   }
 
   factory ApiResponse.error(String message, {int? statusCode}) {

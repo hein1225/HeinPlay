@@ -1,7 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
+import 'package:flutter_mpv/flutter_mpv.dart';
+import 'package:flutter_mpv_video/flutter_mpv_video.dart';
 import '../services/user_data_service.dart';
 import 'video_player_backend.dart';
 
@@ -14,10 +15,7 @@ Map<String, String> _refererFor(String url) {
     final uri = Uri.parse(url);
     if (uri.scheme.startsWith('http')) {
       final referer = '${uri.scheme}://${uri.host}/';
-      return {
-        'Referer': referer,
-        'Origin': '${uri.scheme}://${uri.host}',
-      };
+      return {'Referer': referer, 'Origin': '${uri.scheme}://${uri.host}'};
     }
   } catch (_) {
     // 忽略无效 URL
@@ -35,20 +33,23 @@ bool _isLocalProxyUrl(String url) {
   }
 }
 
-class MediaKitBackend implements VideoPlayerBackend {
+/// 基于 flutter_mpv 的播放器后端。
+///
+/// Android / TV 端作为 ExoPlayer 的备选，Windows 端作为默认播放器。
+class FlutterMpvBackend implements VideoPlayerBackend {
   late final Player _player;
   late final VideoController _controller;
   Video? _video;
   BoxFit _fit = BoxFit.contain;
 
-  MediaKitBackend() {
+  FlutterMpvBackend() {
     _player = Player();
     _controller = VideoController(_player);
     _player.stream.error.listen((error) {
-      debugPrint('MediaKitBackend 播放错误: $error');
+      debugPrint('FlutterMpvBackend 播放错误: $error');
     });
     _player.stream.log.listen((log) {
-      debugPrint('MediaKitBackend log: $log');
+      debugPrint('FlutterMpvBackend log: $log');
     });
   }
 
@@ -77,19 +78,39 @@ class MediaKitBackend implements VideoPlayerBackend {
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
     final lowerUrl = url.toLowerCase();
     final isLocalProxy = _isLocalProxyUrl(url);
-    final needsProxy = !isLocalProxy &&
-        (proxyMode ||
-            lowerUrl.contains('.m3u8') ||
-            lowerUrl.contains('/hls/'));
+    final needsProxy =
+        !isLocalProxy &&
+        (proxyMode || lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/'));
     if (proxyUrl.isNotEmpty && needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
-    debugPrint('MediaKitBackend open: $finalUrl');
+    debugPrint('FlutterMpvBackend open: $finalUrl');
 
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
+    // Android 端 flutter_mpv 直接渲染到 Surface 的机制不完善，
+    // 使用 mediacodec-copy 在保持硬件解码的同时避免 surface/native_window 为空错误。
+    final hwdecValue = hardwareDecoding
+        ? (Platform.isAndroid ? 'mediacodec-copy' : 'auto')
+        : 'no';
+    debugPrint('FlutterMpvBackend hwdec: $hwdecValue');
+    final isHls = lowerUrl.contains('.m3u8') ||
+        lowerUrl.contains('/hls/') ||
+        finalUrl.contains('.m3u8') ||
+        finalUrl.contains('/hls/');
     if (_player.platform is NativePlayer) {
-      await (_player.platform as NativePlayer)
-          .setProperty('hwdec', hardwareDecoding ? 'auto' : 'no');
+      final native = _player.platform as NativePlayer;
+      await native.setProperty('hwdec', hwdecValue);
+      // 部分 HTTPS 源使用非标准端口或自签证书，关闭 TLS 严格验证避免被服务器拒绝。
+      await native.setProperty('tls-verify', 'no');
+      // HLS/M3U8 经本地代理后 mpv 可能无法自动识别为可 seek，
+      // 强制标记为可 seek，避免只能加载开头几十秒/进度条异常。
+      if (isHls) {
+        await native.setProperty('force-seekable', 'yes');
+        // 本地代理后的 HLS 不应使用本地文件优化（demuxer-readahead-secs=0），
+        // 恢复合理的预读时长，避免只缓冲开头几十秒就停止。
+        await native.setProperty('demuxer-readahead-secs', '60');
+        await native.setProperty('cache-secs', '120');
+      }
     }
 
     final effectiveHeaders = <String, String>{
@@ -102,18 +123,18 @@ class MediaKitBackend implements VideoPlayerBackend {
 
     try {
       await _player.open(
-        Media(finalUrl, httpHeaders: effectiveHeaders),
+        Media(
+          finalUrl,
+          httpHeaders: effectiveHeaders,
+          start: (startAt != null && startAt > Duration.zero) ? startAt : null,
+        ),
         play: true,
       );
     } catch (e, stackTrace) {
-      debugPrint('MediaKitBackend 打开失败: $finalUrl');
+      debugPrint('FlutterMpvBackend 打开失败: $finalUrl');
       debugPrint('错误: $e');
       debugPrint('$stackTrace');
       rethrow;
-    }
-
-    if (startAt != null && startAt > Duration.zero) {
-      await seek(startAt);
     }
   }
 

@@ -1,4 +1,4 @@
-﻿import 'dart:math';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
@@ -42,10 +42,13 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
       if (type == 'opening') {
         // 片头结束时间不能超过片尾开始时间，避免一跳就进片尾导致直接下一集
         final ending = _segments.cast<SkipSegment?>().firstWhere(
-              (s) => s?.type == 'ending',
-              orElse: () => null,
-            );
-        var endSeconds = min(seconds, totalSeconds);
+          (s) => s?.type == 'ending',
+          orElse: () => null,
+        );
+        // 未拖动到片头结束位置时（当前进度接近 0），使用默认片头长度，
+        // 避免生成 start=0/end=0 的无效片段导致跳过不生效。
+        var endSeconds = seconds < 1.0 ? 90.0 : seconds;
+        endSeconds = min(endSeconds, totalSeconds);
         if (ending != null) {
           endSeconds = min(endSeconds, max(0.0, ending.start - 1.0));
         }
@@ -65,9 +68,9 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
       } else {
         // 片尾开始时间不能早于片头结束时间
         final opening = _segments.cast<SkipSegment?>().firstWhere(
-              (s) => s?.type == 'opening',
-              orElse: () => null,
-            );
+          (s) => s?.type == 'opening',
+          orElse: () => null,
+        );
         var startSeconds = max(0.0, seconds);
         if (opening != null) {
           startSeconds = max(startSeconds, opening.end + 1.0);
@@ -137,128 +140,128 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                 children: [
                   FocusableWidget(
                     onTap: () => _addSegment('opening'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryTint,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.add, color: AppColors.primary, size: 18),
-                        SizedBox(width: AppSpacing.xs),
-                        Text(
-                          '片头',
-                          style: TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            color: AppColors.primary,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryTint,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, color: AppColors.primary, size: 18),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '片头',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              color: AppColors.primary,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                FocusableWidget(
-                  onTap: () => _addSegment('ending'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryTint,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.add, color: AppColors.primary, size: 18),
-                        SizedBox(width: AppSpacing.xs),
-                        Text(
-                          '片尾',
-                          style: TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            if (_segments.isEmpty)
-              const Text(
-                '暂无跳过配置，点击上方按钮添加片头或片尾。',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  color: AppColors.textSecondary,
-                ),
-              )
-            else
-              ..._segments.asMap().entries.map((entry) {
-                final index = entry.key;
-                final segment = entry.value;
-                return _buildSegmentEditor(index, segment);
-              }),
-            const SizedBox(height: AppSpacing.lg),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FocusableWidget(
-                  onTap: () => Navigator.of(context).pop(),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.bgElevated,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: const Text(
-                      '取消',
-                      style: TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        color: AppColors.textPrimary,
+                        ],
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                FocusableWidget(
-                  onTap: () {
-                    widget.onSave?.call(_segments);
-                    Navigator.of(context).pop();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: const Text(
-                      '保存',
-                      style: TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        color: Colors.white,
+                  const SizedBox(width: AppSpacing.md),
+                  FocusableWidget(
+                    onTap: () => _addSegment('ending'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryTint,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, color: AppColors.primary, size: 18),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '片尾',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              if (_segments.isEmpty)
+                const Text(
+                  '暂无跳过配置，点击上方按钮添加片头或片尾。',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    color: AppColors.textSecondary,
+                  ),
+                )
+              else
+                ..._segments.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final segment = entry.value;
+                  return _buildSegmentEditor(index, segment);
+                }),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  FocusableWidget(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Text(
+                        '取消',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  FocusableWidget(
+                    onTap: () {
+                      widget.onSave?.call(_segments);
+                      Navigator.of(context).pop();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Text(
+                        '保存',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -313,10 +316,8 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                 _buildToggle(
                   label: '自动跳过',
                   value: segment.autoSkip,
-                  onChanged: (value) => _updateSegment(
-                    index,
-                    segment.copyWith(autoSkip: value),
-                  ),
+                  onChanged: (value) =>
+                      _updateSegment(index, segment.copyWith(autoSkip: value)),
                 ),
                 if (segment.type == 'ending') ...[
                   const SizedBox(width: AppSpacing.md),

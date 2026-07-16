@@ -63,13 +63,15 @@ class ConnectivityService {
       final cookies = await UserDataService.getCookies();
       final response = await http
           .get(
-            Uri.parse('$base/api/playrecords').replace(queryParameters: {
-              'limit': '1',
-              '_t': DateTime.now().millisecondsSinceEpoch.toString(),
-            }),
+            Uri.parse('$base/api/playrecords').replace(
+              queryParameters: {
+                'limit': '1',
+                '_t': DateTime.now().millisecondsSinceEpoch.toString(),
+              },
+            ),
             headers: {
               'Accept': 'application/json, text/plain, */*',
-              'User-Agent': 'HainTV/1.1.3 Flutter',
+              'User-Agent': 'HainTV/1.1.4 Flutter',
               if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
             },
           )

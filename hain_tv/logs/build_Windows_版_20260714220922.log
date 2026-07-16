@@ -1,0 +1,4 @@
+﻿
+=== Windows 版 构建开始 2026-07-14 22:09:22 ===
+Building Windows application...                                 
+2026-07-14 22:09:53 EXCEPTION: Nuget.exe not found, trying to download or use cached version.

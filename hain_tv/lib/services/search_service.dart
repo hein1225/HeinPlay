@@ -11,19 +11,40 @@ import 'lunatv_service.dart';
 
 class SearchService {
   static const double _similarityThreshold = 0.6;
+
   /// 搜索结果高相关性阈值（完全/开头/包含匹配）。
   static const double _highRelevanceThreshold = 60.0;
+
   /// 搜索结果中等相关性阈值（普通模糊匹配）。
   static const double _mediumRelevanceThreshold = 40.0;
+
   /// 手动模糊搜索阈值，比自动过滤更宽松，允许部分字符顺序匹配命中。
   static const double _fuzzyRelevanceThreshold = 25.0;
 
   static const Map<String, String> _chineseToArabic = {
-    '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
-    '六': '6', '七': '7', '八': '8', '九': '9', '十': '10',
+    '一': '1',
+    '二': '2',
+    '三': '3',
+    '四': '4',
+    '五': '5',
+    '六': '6',
+    '七': '7',
+    '八': '8',
+    '九': '9',
+    '十': '10',
   };
   static const List<String> _arabicToChinese = [
-    '', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十',
+    '',
+    '一',
+    '二',
+    '三',
+    '四',
+    '五',
+    '六',
+    '七',
+    '八',
+    '九',
+    '十',
   ];
 
   static String _normalize(String text) {
@@ -98,7 +119,10 @@ class SearchService {
 
   /// 计算搜索结果基础相关性分数（0-100），不包含年份/豆瓣等加分。
   /// 完全匹配 100 分，开头匹配 80 分，包含匹配 60 分，模糊匹配 0-40 分。
-  static double _calculateBaseRelevanceScore(SearchResult result, String query) {
+  static double _calculateBaseRelevanceScore(
+    SearchResult result,
+    String query,
+  ) {
     final title = (result.title).trim();
     final keyword = query.trim();
 
@@ -170,20 +194,23 @@ class SearchService {
     List<String>? variants,
   }) {
     final queries = [query, ...(variants ?? [])];
-    return queries.any((q) => _calculateBaseRelevanceScore(
-          SearchResult(
-            id: '',
-            title: title,
-            poster: '',
-            episodes: [],
-            episodesTitles: [],
-            source: '',
-            sourceName: '',
-            year: '',
-          ),
-          q,
-        ) >=
-        100);
+    return queries.any(
+      (q) =>
+          _calculateBaseRelevanceScore(
+            SearchResult(
+              id: '',
+              title: title,
+              poster: '',
+              episodes: [],
+              episodesTitles: [],
+              source: '',
+              sourceName: '',
+              year: '',
+            ),
+            q,
+          ) >=
+          100,
+    );
   }
 
   /// 根据相关性过滤并排序搜索结果。
@@ -272,7 +299,9 @@ class SearchService {
         if (a[i - 1] == b[j - 1]) {
           current[j] = previous[j - 1] + 1;
         } else {
-          current[j] = current[j - 1] > previous[j] ? current[j - 1] : previous[j];
+          current[j] = current[j - 1] > previous[j]
+              ? current[j - 1]
+              : previous[j];
         }
       }
       final temp = previous;
@@ -307,7 +336,10 @@ class SearchService {
       final suffix = arabicMatch.group(2)!;
       if (num != null && num >= 1 && num <= 10) {
         final chineseNum = _arabicToChinese[num];
-        return query.replaceFirst(arabicMatch.group(0)!, '第${chineseNum}$suffix');
+        return query.replaceFirst(
+          arabicMatch.group(0)!,
+          '第${chineseNum}$suffix',
+        );
       }
     }
 
@@ -717,9 +749,7 @@ class SearchService {
       );
       final grouped = groupBySource(filtered);
       final others = grouped
-          .where(
-            (s) => s.source != current.source || s.id != current.id,
-          )
+          .where((s) => s.source != current.source || s.id != current.id)
           .toList();
       return [current, ...others];
     } catch (e) {

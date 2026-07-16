@@ -48,11 +48,7 @@ class MobileCategoryScreen extends StatefulWidget {
   final String? kind;
   final String? title;
 
-  const MobileCategoryScreen({
-    super.key,
-    this.kind,
-    this.title,
-  });
+  const MobileCategoryScreen({super.key, this.kind, this.title});
 
   @override
   State<MobileCategoryScreen> createState() => _MobileCategoryScreenState();
@@ -173,52 +169,187 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   };
 
   static const _typeOptionsMovie = [
-    '全部', '喜剧', '爱情', '动作', '科幻', '悬疑', '犯罪', '惊悚', '冒险', '音乐',
-    '历史', '奇幻', '恐怖', '战争', '传记', '歌舞', '武侠', '情色', '灾难', '西部',
-    '纪录片', '短片',
+    '全部',
+    '喜剧',
+    '爱情',
+    '动作',
+    '科幻',
+    '悬疑',
+    '犯罪',
+    '惊悚',
+    '冒险',
+    '音乐',
+    '历史',
+    '奇幻',
+    '恐怖',
+    '战争',
+    '传记',
+    '歌舞',
+    '武侠',
+    '情色',
+    '灾难',
+    '西部',
+    '纪录片',
+    '短片',
   ];
 
   static const _typeOptionsTv = [
-    '全部', '喜剧', '爱情', '悬疑', '武侠', '古装', '家庭', '犯罪', '科幻', '恐怖',
-    '历史', '战争', '动作', '冒险', '传记', '剧情', '奇幻', '惊悚', '灾难', '歌舞',
+    '全部',
+    '喜剧',
+    '爱情',
+    '悬疑',
+    '武侠',
+    '古装',
+    '家庭',
+    '犯罪',
+    '科幻',
+    '恐怖',
+    '历史',
+    '战争',
+    '动作',
+    '冒险',
+    '传记',
+    '剧情',
+    '奇幻',
+    '惊悚',
+    '灾难',
+    '歌舞',
     '音乐',
   ];
 
-  static const _typeOptionsShow = [
-    '全部', '真人秀', '脱口秀', '音乐', '歌舞',
-  ];
+  static const _typeOptionsShow = ['全部', '真人秀', '脱口秀', '音乐', '歌舞'];
 
   static const _labelOptionsAnimeTv = [
-    '全部', '黑色幽默', '历史', '歌舞', '励志', '恶搞', '治愈', '运动', '后宫', '情色',
-    '国漫', '人性', '悬疑', '恋爱', '魔幻', '科幻',
+    '全部',
+    '黑色幽默',
+    '历史',
+    '歌舞',
+    '励志',
+    '恶搞',
+    '治愈',
+    '运动',
+    '后宫',
+    '情色',
+    '国漫',
+    '人性',
+    '悬疑',
+    '恋爱',
+    '魔幻',
+    '科幻',
   ];
 
   static const _labelOptionsAnimeMovie = [
-    '全部', '定格动画', '传记', '美国动画', '爱情', '黑色幽默', '歌舞', '儿童', '二次元',
-    '动物', '青春', '历史', '励志', '恶搞', '治愈', '运动', '后宫', '情色', '人性', '悬疑',
-    '恋爱', '魔幻', '科幻',
+    '全部',
+    '定格动画',
+    '传记',
+    '美国动画',
+    '爱情',
+    '黑色幽默',
+    '歌舞',
+    '儿童',
+    '二次元',
+    '动物',
+    '青春',
+    '历史',
+    '励志',
+    '恶搞',
+    '治愈',
+    '运动',
+    '后宫',
+    '情色',
+    '人性',
+    '悬疑',
+    '恋爱',
+    '魔幻',
+    '科幻',
   ];
 
   static const _regionOptionsMovie = [
-    '全部', '华语', '欧美', '韩国', '日本', '中国大陆', '美国', '中国香港', '中国台湾',
-    '英国', '法国', '德国', '意大利', '西班牙', '印度', '泰国', '俄罗斯', '加拿大',
-    '澳大利亚', '爱尔兰', '瑞典', '巴西', '丹麦',
+    '全部',
+    '华语',
+    '欧美',
+    '韩国',
+    '日本',
+    '中国大陆',
+    '美国',
+    '中国香港',
+    '中国台湾',
+    '英国',
+    '法国',
+    '德国',
+    '意大利',
+    '西班牙',
+    '印度',
+    '泰国',
+    '俄罗斯',
+    '加拿大',
+    '澳大利亚',
+    '爱尔兰',
+    '瑞典',
+    '巴西',
+    '丹麦',
   ];
 
   static const _regionOptionsTvShowAnime = [
-    '全部', '华语', '欧美', '国外', '韩国', '日本', '中国大陆', '中国香港', '美国', '英国',
-    '泰国', '中国台湾', '意大利', '法国', '德国', '西班牙', '俄罗斯', '瑞典', '巴西', '丹麦',
-    '印度', '加拿大', '爱尔兰', '澳大利亚',
+    '全部',
+    '华语',
+    '欧美',
+    '国外',
+    '韩国',
+    '日本',
+    '中国大陆',
+    '中国香港',
+    '美国',
+    '英国',
+    '泰国',
+    '中国台湾',
+    '意大利',
+    '法国',
+    '德国',
+    '西班牙',
+    '俄罗斯',
+    '瑞典',
+    '巴西',
+    '丹麦',
+    '印度',
+    '加拿大',
+    '爱尔兰',
+    '澳大利亚',
   ];
 
   static const _platformOptions = [
-    '全部', '腾讯视频', '爱奇艺', '优酷', '湖南卫视', 'Netflix', 'HBO', 'BBC', 'NHK', 'CBS',
-    'NBC', 'tvN',
+    '全部',
+    '腾讯视频',
+    '爱奇艺',
+    '优酷',
+    '湖南卫视',
+    'Netflix',
+    'HBO',
+    'BBC',
+    'NHK',
+    'CBS',
+    'NBC',
+    'tvN',
   ];
 
   static const _yearOptions = [
-    '全部', '2020年代', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019',
-    '2010年代', '2000年代', '90年代', '80年代', '70年代', '60年代', '更早',
+    '全部',
+    '2020年代',
+    '2026',
+    '2025',
+    '2024',
+    '2023',
+    '2022',
+    '2021',
+    '2020',
+    '2019',
+    '2010年代',
+    '2000年代',
+    '90年代',
+    '80年代',
+    '70年代',
+    '60年代',
+    '更早',
   ];
 
   static const _sortLabelsMovie = ['近期热度', '首映时间', '高分优先'];
@@ -309,10 +440,14 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   Future<ApiResponse<List<DoubanMovie>>> _loadBangumiDailyBroadcast() async {
     if (_bangumiCalendarItems.isEmpty) {
       final res = await BangumiService.getCalendar();
-      if (!res.success) return ApiResponse.error(res.message ?? '获取 Bangumi 数据失败');
+      if (!res.success)
+        return ApiResponse.error(res.message ?? '获取 Bangumi 数据失败');
       _bangumiCalendarItems = res.data ?? [];
     }
-    final items = BangumiService.filterByWeekday(_bangumiCalendarItems, _selectedWeekday);
+    final items = BangumiService.filterByWeekday(
+      _bangumiCalendarItems,
+      _selectedWeekday,
+    );
     return ApiResponse.success(items.map(_bangumiToDoubanMovie).toList());
   }
 
@@ -394,7 +529,8 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
               _movies.addAll(response.data!);
             }
           }
-          _hasMore = response.success &&
+          _hasMore =
+              response.success &&
               response.data != null &&
               response.data!.length >= params.pageLimit;
           if (_currentKind == 'anime' && _selectedPrimary == '每日放送') {
@@ -406,7 +542,9 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
         if (refresh) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+              _scrollController.jumpTo(
+                _scrollController.position.minScrollExtent,
+              );
             }
           });
         }
@@ -678,11 +816,16 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          for (int index = 0; index < _config.primaryOptions.length; index++) ...[
+          for (
+            int index = 0;
+            index < _config.primaryOptions.length;
+            index++
+          ) ...[
             _buildTag(
               label: _config.primaryOptions[index].label,
               selected: _selectedPrimary == _config.primaryOptions[index].value,
-              onTap: () => _onPrimaryChanged(_config.primaryOptions[index].value),
+              onTap: () =>
+                  _onPrimaryChanged(_config.primaryOptions[index].value),
             ),
             if (index < _config.primaryOptions.length - 1)
               const SizedBox(width: AppSpacing.sm),
@@ -722,7 +865,9 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
               label: BangumiService.weekdays[i]['cn']!,
               selected: _selectedWeekday == BangumiService.weekdays[i]['en']!,
               onTap: () {
-                setState(() => _selectedWeekday = BangumiService.weekdays[i]['en']!);
+                setState(
+                  () => _selectedWeekday = BangumiService.weekdays[i]['en']!,
+                );
                 _loadData(refresh: true);
               },
             ),
@@ -741,7 +886,8 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
         children: [
           for (int i = 0; i < _dimensions.length; i++) ...[
             _buildDimensionButton(_dimensions[i]),
-            if (i < _dimensions.length - 1) const SizedBox(width: AppSpacing.md),
+            if (i < _dimensions.length - 1)
+              const SizedBox(width: AppSpacing.md),
           ],
         ],
       ),
@@ -807,7 +953,10 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.close, color: AppColors.textSecondary),
+                      icon: const Icon(
+                        Icons.close,
+                        color: AppColors.textSecondary,
+                      ),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
@@ -828,12 +977,20 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 14,
-                          color: selected ? AppColors.primary : AppColors.textPrimary,
-                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.textPrimary,
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                       ),
                       trailing: selected
-                          ? const Icon(Icons.check, color: AppColors.primary, size: 20)
+                          ? const Icon(
+                              Icons.check,
+                              color: AppColors.primary,
+                              size: 20,
+                            )
                           : null,
                       onTap: () {
                         Navigator.of(context).pop();
@@ -871,36 +1028,22 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
       ),
       decoration: const BoxDecoration(
         color: AppColors.bgSurface,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border),
-        ),
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildLabeledRow(
-            label: '大类',
-            child: _buildKindTags(),
-          ),
+          _buildLabeledRow(label: '大类', child: _buildKindTags()),
           const SizedBox(height: AppSpacing.sm),
-          _buildLabeledRow(
-            label: '分类',
-            child: _buildCategoryTags(),
-          ),
+          _buildLabeledRow(label: '分类', child: _buildCategoryTags()),
           const SizedBox(height: AppSpacing.sm),
-          _buildLabeledRow(
-            label: _secondRowLabel,
-            child: _buildSecondRow(),
-          ),
+          _buildLabeledRow(label: _secondRowLabel, child: _buildSecondRow()),
         ],
       ),
     );
   }
 
-  Widget _buildLabeledRow({
-    required String label,
-    required Widget child,
-  }) {
+  Widget _buildLabeledRow({required String label, required Widget child}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -950,14 +1093,12 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
 
     if (_movies.isEmpty) {
       return const Center(
-        child: Text(
-          '暂无数据',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
+        child: Text('暂无数据', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
 
-    final isBangumiDaily = _currentKind == 'anime' && _selectedPrimary == '每日放送';
+    final isBangumiDaily =
+        _currentKind == 'anime' && _selectedPrimary == '每日放送';
     final items = _movies.map((movie) {
       return PosterItem(
         id: movie.id,
@@ -1009,9 +1150,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
         child: Column(
           children: [
             _buildTopFilterBar(),
-            Expanded(
-              child: _buildBody(context),
-            ),
+            Expanded(child: _buildBody(context)),
           ],
         ),
       ),

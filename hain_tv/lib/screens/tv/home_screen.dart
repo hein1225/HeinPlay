@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:hain_tv/models/douban_movie.dart';
 import 'package:hain_tv/models/play_record.dart';
+import 'package:hain_tv/services/connectivity_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
@@ -72,17 +75,25 @@ class HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     const pageLimit = 18;
     try {
-      // 播放记录先读本地立即显示，避免远程请求阻塞首页渲染
-      await _loadContinueWatching(localOnly: true);
-      // 后台同步远程记录与豆瓣海报
-      unawaited(_loadContinueWatching(localOnly: false));
+      // 首次进入首页时强制从服务器全量刷新播放记录与收藏夹，并缓存到本地；
+      // 后续进入直接读取本地缓存，播放后的增量更新通过通知机制刷新。
+      final isFirstEntry = !(await UserDataService.isHomeFirstEntryCompleted());
+      final syncFuture = isFirstEntry ? _syncAllUserData() : Future.value();
 
-      final results = await Future.wait([
+      final resultsFuture = Future.wait([
         DoubanService.getHotMovies(pageLimit: pageLimit),
         DoubanService.getHotTvShows(pageLimit: pageLimit),
         DoubanService.getHotShows(pageLimit: pageLimit),
         DoubanService.getHotAnimes(pageLimit: pageLimit),
       ]);
+
+      final syncSucceeded = await syncFuture;
+      if (isFirstEntry && syncSucceeded) {
+        await UserDataService.markHomeFirstEntryCompleted();
+      }
+
+      await _loadContinueWatching(localOnly: true);
+      final results = await resultsFuture;
 
       if (mounted) {
         setState(() {
@@ -103,15 +114,34 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadContinueWatching({bool localOnly = false}) async {
+  /// 首次进入首页时强制同步服务器播放记录与收藏夹到本地缓存。
+  /// 返回是否两项均同步成功。
+  Future<bool> _syncAllUserData() async {
+    try {
+      final results = await Future.wait([
+        PlayRecordService.syncFromRemote(),
+        FavoriteService.syncFromRemote(),
+      ]);
+      return results.every((r) => r);
+    } catch (e) {
+      debugPrint('HomeScreen: 首次全量同步失败: $e');
+      return false;
+    }
+  }
+
+  Future<void> _loadContinueWatching({bool localOnly = false, bool forceRefresh = false}) async {
     try {
       final records = localOnly
           ? await PlayRecordService.getAllLocal()
-          : await PlayRecordService.getAll();
+          : await PlayRecordService.getAll(forceRefresh: forceRefresh);
       if (mounted) {
         setState(() {
           _continueWatching = records.take(12).toList();
         });
+      }
+      // 远程同步成功后立即刷新服务器连接状态，避免首页显示未连接但实际已可用
+      if (!localOnly) {
+        unawaited(ConnectivityService.instance.checkNow());
       }
     } catch (e) {
       // 获取失败忽略
@@ -120,21 +150,20 @@ class HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openHistory(PlayRecord record) async {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailScreen.fromPlayRecord(record),
-      ),
+      MaterialPageRoute(builder: (_) => DetailScreen.fromPlayRecord(record)),
     );
   }
 
   Future<void> _openDetail(BuildContext context, DoubanMovie movie) async {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailScreen.fromDoubanMovie(movie),
-      ),
+      MaterialPageRoute(builder: (_) => DetailScreen.fromDoubanMovie(movie)),
     );
   }
 
-  List<PosterItem> _toPosterItems(List<DoubanMovie> movies, BuildContext context) {
+  List<PosterItem> _toPosterItems(
+    List<DoubanMovie> movies,
+    BuildContext context,
+  ) {
     return movies.map((movie) {
       return PosterItem(
         id: movie.id,
@@ -153,7 +182,9 @@ class HomeScreenState extends State<HomeScreen> {
         id: record.title,
         title: record.title,
         posterUrl: record.cover.isNotEmpty ? record.cover : null,
-        subtitle: record.sourceName.isNotEmpty ? record.sourceName : record.source,
+        subtitle: record.sourceName.isNotEmpty
+            ? record.sourceName
+            : record.source,
         onTap: () => _openHistory(record),
       );
     }).toList();
@@ -179,9 +210,10 @@ class HomeScreenState extends State<HomeScreen> {
     return VisibilityDetector(
       key: const Key('home_screen'),
       onVisibilityChanged: (info) {
-        // IndexedStack 中切回首页时刷新继续播放记录
+        // IndexedStack 中切回首页时读取本地缓存即可；
+        // 播放后的增量更新已通过 PlayRecordRefreshNotifier 刷新。
         if (info.visibleFraction > 0.5) {
-          _loadContinueWatching();
+          _loadContinueWatching(localOnly: true);
         }
       },
       child: SingleChildScrollView(
@@ -196,7 +228,8 @@ class HomeScreenState extends State<HomeScreen> {
                 firstItemFocusNode: _continueFirstFocusNode,
                 onMoveDown: () => _hotMoviesFirstFocusNode.requestFocus(),
               ),
-            if (_continueWatching.isNotEmpty) const SizedBox(height: AppSpacing.xl),
+            if (_continueWatching.isNotEmpty)
+              const SizedBox(height: AppSpacing.xl),
             TvHorizontalPosterList(
               title: '热门电影',
               items: _toPosterItems(_hotMovies, context),

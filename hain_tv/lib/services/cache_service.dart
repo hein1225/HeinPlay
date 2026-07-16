@@ -19,7 +19,8 @@ class CacheService {
     try {
       final decoded = json.decode(raw) as Map<String, dynamic>;
       final expiresAt = decoded['expiresAt'] as int?;
-      if (expiresAt != null && DateTime.now().millisecondsSinceEpoch > expiresAt) {
+      if (expiresAt != null &&
+          DateTime.now().millisecondsSinceEpoch > expiresAt) {
         await _prefs!.remove(key);
         return null;
       }
@@ -135,4 +136,8 @@ class CacheService {
   }) {
     return 'lunatv_skipconfigs_${source}_$id';
   }
+
+  String generatePlayRecordsCacheKey() => 'lunatv_playrecords';
+
+  String generateFavoritesCacheKey() => 'lunatv_favorites';
 }

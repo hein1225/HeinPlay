@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/bangumi_calendar_item.dart';
 import 'package:hain_tv/models/douban_movie.dart';
@@ -9,6 +11,7 @@ import 'package:hain_tv/models/play_record.dart' as models;
 import 'package:hain_tv/models/search_result.dart';
 import 'package:hain_tv/models/source_option.dart';
 import 'package:hain_tv/models/video_detail.dart';
+import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/player/video_player_backend.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
@@ -20,6 +23,7 @@ import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'player_screen.dart';
 
 class DetailScreen extends StatefulWidget {
@@ -111,13 +115,35 @@ class DetailScreen extends StatefulWidget {
     );
   }
 
+  factory DetailScreen.fromFavorite(Favorite favorite) {
+    return DetailScreen(
+      sources: [
+        SourceOption(
+          source: favorite.source,
+          sourceName: favorite.sourceName.isNotEmpty
+              ? favorite.sourceName
+              : favorite.source,
+          id: favorite.id,
+          title: favorite.title,
+          poster: favorite.cover.isNotEmpty ? favorite.cover : null,
+          year: '',
+        ),
+      ],
+      title: favorite.title,
+      poster: favorite.cover.isNotEmpty ? favorite.cover : null,
+      year: '',
+      searchOnLoad: true,
+    );
+  }
+
   factory DetailScreen.fromPlayRecord(models.PlayRecord record) {
     return DetailScreen(
       sources: [
         SourceOption(
           source: record.source,
-          sourceName:
-              record.sourceName.isNotEmpty ? record.sourceName : record.source,
+          sourceName: record.sourceName.isNotEmpty
+              ? record.sourceName
+              : record.source,
           id: record.id,
           title: record.title,
           poster: record.cover.isNotEmpty ? record.cover : null,
@@ -130,9 +156,7 @@ class DetailScreen extends StatefulWidget {
       title: record.title,
       poster: record.cover.isNotEmpty ? record.cover : null,
       year: record.year,
-      doubanId: record.doubanId != null
-          ? int.tryParse(record.doubanId!)
-          : null,
+      doubanId: record.doubanId != null ? int.tryParse(record.doubanId!) : null,
       initialEpisodeIndex: record.index > 0 ? record.index - 1 : 0,
       initialPlayTime: record.playTime,
       playRecord: record,
@@ -170,31 +194,38 @@ class _DetailScreenState extends State<DetailScreen> {
   String? _error;
   VideoDetail? _videoDetail;
   DoubanMovieDetails? _doubanDetails;
+
+  /// 视频详情请求序号，用于在用户手动切换源后丢弃旧源的异步响应，
+  /// 避免界面仍显示已放弃源的数据。
+  int _videoDetailRequestId = 0;
+
   int _selectedEpisodeIndex = 0;
   bool _episodeSortAscending = true;
   int _selectedSourceIndex = 0;
 
-  // 用户手动选择了播放源，或存在播放记录时，禁止自动测速后调回优选源。
-  bool _userSelectedSource = false;
+  // 仅当用户主动手动切换源时为 true，用于区分“自动选中记录源”和“用户手动切源”。
+  bool _sourceSwitchedByUser = false;
 
   bool _isFavorite = false;
   bool _fuzzySearchEnabled = false;
-  PlayerBackendType _playerBackend = PlayerBackendType.mediaKit;
+  PlayerBackendType _playerBackend = PlayerBackendFactory.platformDefault;
   late List<SourceOption> _sources;
   models.PlayRecord? _playRecord;
 
   VideoPlayerBackend? _previewBackend;
   final List<StreamSubscription> _previewSubscriptions = [];
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _episodesScrollController = ScrollController();
+  final ScrollController _sourcesScrollController = ScrollController();
+  final Map<int, GlobalKey> _episodeKeys = {};
+
+  /// 与播放页共享源列表，进入全屏播放后搜索/测速仍会继续，
+  /// 新源可实时同步到播放页的换源列表。
+  final ValueNotifier<List<SourceOption>> _sourcesNotifier = ValueNotifier([]);
 
   SourceOption get _currentSource {
     if (_sources.isEmpty) {
-      return const SourceOption(
-        source: '',
-        sourceName: '',
-        id: '',
-        title: '',
-      );
+      return const SourceOption(source: '', sourceName: '', id: '', title: '');
     }
     return _sources[_selectedSourceIndex];
   }
@@ -202,25 +233,53 @@ class _DetailScreenState extends State<DetailScreen> {
   @override
   void initState() {
     super.initState();
-    // 海报墙进入时只保留与影片标题精确匹配的源，避免传入的模糊结果污染列表
-    _sources = widget.sources
-        .where(
-          (s) => SearchService.isExactTitleMatch(
-            s.title,
-            widget.title,
-            variants: SearchService.generateSearchVariants(widget.title),
-          ),
-        )
-        .toList();
+    // 先直接展示传入的源，避免在路由转场期间做繁重的同步过滤导致灰屏/卡顿。
+    _sources = widget.sources;
+    _sourcesNotifier.value = List.unmodifiable(_sources);
     _selectedEpisodeIndex = widget.initialEpisodeIndex;
     _selectedSourceIndex = widget.initialSourceIndex.clamp(
       0,
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
     _playRecord = widget.playRecord;
-    // 若传入播放记录，优先选中记录里的源，避免被自动测速调走。
-    _applyPlayRecordSourceSelection();
-    _loadData();
+    // 首帧渲染后再过滤源并加载数据，让详情页先显示出来。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _filterSources();
+      if (!mounted) return;
+      if (_playRecord != null) {
+        setState(() => _applyPlayRecordSelection());
+        _scrollToSelectedEpisode();
+      }
+      _loadData();
+      if (mounted) {
+        HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      }
+    });
+  }
+
+  /// 过滤掉与影片标题不精确匹配的源，避免传入的模糊结果污染列表。
+  void _filterSources() {
+    if (widget.sources.isEmpty || widget.title.isEmpty) return;
+    final variants = SearchService.generateSearchVariants(widget.title);
+    final filtered = widget.sources
+        .where(
+          (s) => SearchService.isExactTitleMatch(
+            s.title,
+            widget.title,
+            variants: variants,
+          ),
+        )
+        .toList();
+    if (!mounted) return;
+    setState(() {
+      _sources = filtered;
+      _sourcesNotifier.value = List.unmodifiable(_sources);
+      _selectedSourceIndex = _selectedSourceIndex.clamp(
+        0,
+        _sources.isEmpty ? 0 : _sources.length - 1,
+      );
+    });
   }
 
   /// 按标题查询是否有播放记录。
@@ -233,9 +292,21 @@ class _DetailScreenState extends State<DetailScreen> {
     bool localOnly = false,
   }) async {
     if (_playRecord != null && !force) return;
+    // 收集可能的标题：Bangumi 标题、源标题、视频详情标题可能不一致，
+    // 播放记录保存的是视频源标题，所以要用多个候选标题去匹配。
+    final candidateTitles = <String>{widget.title};
+    if (_videoDetail != null && _videoDetail!.title.isNotEmpty) {
+      candidateTitles.add(_videoDetail!.title);
+    }
+    if (_currentSource.title.isNotEmpty) {
+      candidateTitles.add(_currentSource.title);
+    }
+    if (_doubanDetails != null && _doubanDetails!.title.isNotEmpty) {
+      candidateTitles.add(_doubanDetails!.title);
+    }
     try {
-      final record = await PlayRecordService.getByTitle(
-        widget.title,
+      final record = await PlayRecordService.findByTitles(
+        candidateTitles.toList(),
         year: widget.year,
         localOnly: localOnly,
       );
@@ -243,32 +314,66 @@ class _DetailScreenState extends State<DetailScreen> {
         setState(() {
           _playRecord = record;
           if (applySelection && record != null) {
-            _applyPlayRecordSourceSelection();
+            _applyPlayRecordSelection();
           }
         });
+        if (applySelection && record != null) {
+          _scrollToSelectedEpisode();
+        }
       }
     } catch (e) {
       debugPrint('查询播放记录失败: $e');
     }
   }
 
-  /// 根据当前 [_playRecord] 选中对应源，并标记为用户已选择，防止自动测速调走。
-  void _applyPlayRecordSourceSelection() {
+  /// 根据当前 [_playRecord] 选中对应源与集数。
+  /// 若用户已手动切换源，则不再覆盖当前源，仅同步集数。
+  void _applyPlayRecordSelection() {
     final record = _playRecord;
     if (record == null || _sources.isEmpty) return;
-    final index = _sources.indexWhere(
-      (s) => s.source == record.source && s.id == record.id,
-    );
-    if (index >= 0) {
-      _selectedSourceIndex = index;
-      _userSelectedSource = true;
+    if (!_sourceSwitchedByUser) {
+      final index = _sources.indexWhere(
+        (s) => s.source == record.source && s.id == record.id,
+      );
+      if (index >= 0) {
+        _selectedSourceIndex = index;
+      }
     }
+    // 同步播放记录中的集数（转换为 0-based 索引）
+    final episodeIndex = record.index > 0 ? record.index - 1 : 0;
+    final detail = _videoDetail;
+    if (detail != null && episodeIndex < detail.episodes.length) {
+      _selectedEpisodeIndex = episodeIndex;
+    } else if (detail == null) {
+      // 详情尚未加载完成时先暂存，后续加载后再应用
+      _selectedEpisodeIndex = episodeIndex;
+    }
+  }
+
+  /// 将当前选中的集数滚动到可视区域。
+  void _scrollToSelectedEpisode() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = _episodeKeys[_selectedEpisodeIndex];
+      final ctx = key?.currentContext;
+      if (ctx != null && ctx.mounted) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _disposePreviewPlayer();
     _scrollController.dispose();
+    _episodesScrollController.dispose();
+    _sourcesScrollController.dispose();
+    _sourcesNotifier.dispose();
     super.dispose();
   }
 
@@ -281,6 +386,48 @@ class _DetailScreenState extends State<DetailScreen> {
         curve: Curves.easeOut,
       );
     }
+  }
+
+  /// 全局硬件按键兜底处理，确保 Windows 下 ESC 可返回上一页。
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+    if (event is! KeyDownEvent) return false;
+
+    if (event.logicalKey == LogicalKeyboardKey.goBack ||
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// Windows 下将垂直鼠标滚轮事件映射到水平滚动，便于用滚轮浏览选集/播放源。
+  /// 通过 [PointerSignalResolver] 注册处理，避免事件同时被外层垂直滚动消费导致页面跳动。
+  Widget _wrapHorizontalScrollForMouse({
+    required ScrollController controller,
+    required Widget child,
+  }) {
+    if (!DeviceUtils.isWindows) return child;
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          if (!controller.hasClients) return;
+          final delta = event.scrollDelta.dy;
+          if (delta == 0) return;
+          final newOffset = (controller.offset + delta).clamp(
+            controller.position.minScrollExtent,
+            controller.position.maxScrollExtent,
+          );
+          GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+            controller.jumpTo(newOffset);
+          });
+        }
+      },
+      child: child,
+    );
   }
 
   /// 从年份字符串中提取 4 位数字年份，与 LunaTV 的 normalizeYearForMatch 对齐。
@@ -355,10 +502,15 @@ class _DetailScreenState extends State<DetailScreen> {
     }
 
     // 如果没有源或明确要求搜索，提前进入搜索状态，避免先显示"精确匹配无结果"
-    final needsSourceSearch = widget.title.isNotEmpty &&
-        (_sources.isEmpty || widget.searchOnLoad);
+    final needsSourceSearch =
+        widget.title.isNotEmpty && (_sources.isEmpty || widget.searchOnLoad);
     if (needsSourceSearch && mounted) {
       setState(() => _searchingSources = true);
+    }
+
+    // 进入详情页立即在后台搜索更多源并触发测速，搜索与下面的播放记录/收藏/详情加载并发执行。
+    if (needsSourceSearch) {
+      unawaited(_searchSourcesInBackground());
     }
 
     // 先查询本地播放记录；若存在记录则优先使用记录中的源。
@@ -371,10 +523,8 @@ class _DetailScreenState extends State<DetailScreen> {
     unawaited(_loadFavoriteStatus(localOnly: false));
     await _loadPlayerBackend();
 
-    // 在后台异步搜索更多源，不阻塞页面内容展示
-    if (needsSourceSearch) {
-      unawaited(_searchSourcesInBackground());
-    }
+    // 源数量>=2 时立即后台测速，不等详情加载完成。
+    _maybeStartSpeedTest();
 
     final futures = <Future<void>>[];
 
@@ -407,13 +557,13 @@ class _DetailScreenState extends State<DetailScreen> {
 
     await Future.wait(futures);
 
-    // 源已直接传入且未要求后台搜索、用户未手动选源且无播放记录时，
-    // 首次进入执行一次自动测速择优。
-    if (!widget.searchOnLoad &&
-        _sources.length >= 2 &&
-        !_hasSpeedTested &&
-        !_speedTesting &&
-        !_userSelectedSource) {
+    // 详情加载完成后再次尝试测速（若源在详情加载期间才达到 2 个且尚未测速）。
+    _maybeStartSpeedTest();
+  }
+
+  /// 满足条件时在后台启动测速，避免重复启动。
+  void _maybeStartSpeedTest() {
+    if (_sources.length >= 2 && !_speedTesting && !_hasSpeedTested) {
       unawaited(_runSpeedTest());
     }
   }
@@ -439,7 +589,9 @@ class _DetailScreenState extends State<DetailScreen> {
     // 的源标题（如"名侦探柯南（1996）"）过滤掉，与 LunaTV 行为对齐。
     final initialExactMatch = widget.bangumiId != null ? false : !fuzzy;
     // 手动模糊搜索时使用影视名基准名（首个空格/标点前），提升命中率
-    final searchKeyword = fuzzy ? _extractSearchBaseName(widget.title) : widget.title;
+    final searchKeyword = fuzzy
+        ? _extractSearchBaseName(widget.title)
+        : widget.title;
     debugPrint(
       '[SourceSearch] 开始搜索: title=${widget.title}, keyword=$searchKeyword, year=${widget.year}, '
       'bangumiId=${widget.bangumiId}, exactMatch=$initialExactMatch, fuzzy=$fuzzy',
@@ -459,7 +611,9 @@ class _DetailScreenState extends State<DetailScreen> {
     );
 
     // 若原始标题无结果，尝试用基准名（首个空格/标点前）重试
-    if ((!response.success || response.data == null || response.data!.isEmpty) &&
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
         !fuzzy) {
       final simplified = _extractSearchBaseName(widget.title);
       if (simplified.isNotEmpty && simplified != widget.title) {
@@ -479,7 +633,9 @@ class _DetailScreenState extends State<DetailScreen> {
     // Bangumi 每日放送条目：精确匹配无结果时自动降级到严格模糊匹配
     //（仅保留包含/高相似结果），避免 LunaTV 式宽泛匹配引入大量不相关源。
     // 若仍无结果，用户可手动点击“尝试模糊搜索”使用更宽松的阈值。
-    if ((!response.success || response.data == null || response.data!.isEmpty) &&
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
         !fuzzy &&
         widget.bangumiId != null) {
       debugPrint('[SourceSearch] Bangumi 首轮无结果，降级严格模糊匹配');
@@ -511,14 +667,14 @@ class _DetailScreenState extends State<DetailScreen> {
     required bool isFinal,
   }) {
     if (!mounted || searchedSources.isEmpty) {
-      if (isFinal) setState(() => _searchingSources = false);
+      if (isFinal && mounted) setState(() => _searchingSources = false);
       return;
     }
 
     final exactYear = widget.year.isNotEmpty
         ? searchedSources
-            .where((s) => _yearMatches(s.year, widget.year))
-            .toList()
+              .where((s) => _yearMatches(s.year, widget.year))
+              .toList()
         : <SourceOption>[];
     final sourcesToUse = exactYear.isNotEmpty ? exactYear : searchedSources;
 
@@ -560,19 +716,28 @@ class _DetailScreenState extends State<DetailScreen> {
     }
 
     // 若用户已手动选源，尽量保留当前选中的源；否则优先使用播放记录源。
-    final currentSourceKey = _sources.isNotEmpty &&
-            _selectedSourceIndex < _sources.length
+    final currentSourceKey =
+        _sources.isNotEmpty && _selectedSourceIndex < _sources.length
         ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
         : null;
-    final preservedIndex = currentSourceKey != null
+    var preservedIndex = currentSourceKey != null
         ? mergedSources.indexWhere(
             (s) => '${s.source}+${s.id}' == currentSourceKey,
           )
         : -1;
 
+    // 用户手动选择的源若不在搜索结果中，仍予以保留，避免自动切回记录源。
+    if (_sourceSwitchedByUser &&
+        currentSourceKey != null &&
+        preservedIndex < 0) {
+      mergedSources.add(_sources[_selectedSourceIndex]);
+      preservedIndex = mergedSources.length - 1;
+    }
+
     setState(() {
       _sources = mergedSources;
-      if (_userSelectedSource && preservedIndex >= 0) {
+      _sourcesNotifier.value = List.unmodifiable(_sources);
+      if (_sourceSwitchedByUser && preservedIndex >= 0) {
         _selectedSourceIndex = preservedIndex;
       } else if (originalSource != null) {
         final originalIndex = mergedSources.indexWhere(
@@ -580,7 +745,7 @@ class _DetailScreenState extends State<DetailScreen> {
         );
         if (originalIndex >= 0) {
           _selectedSourceIndex = originalIndex;
-          _userSelectedSource = true;
+    
         } else {
           _selectedSourceIndex = 0;
         }
@@ -588,21 +753,33 @@ class _DetailScreenState extends State<DetailScreen> {
         _selectedSourceIndex = 0;
       }
       if (isFinal) _searchingSources = false;
+      if (isFinal && _playRecord != null) {
+        _applyPlayRecordSelection();
+      }
     });
+    if (isFinal && _playRecord != null) {
+      _scrollToSelectedEpisode();
+    }
+
+    // 源列表发生变化时，后台触发测速；若正在测速中则自动跳过，
+    // 避免与当前测速任务冲突。
+    if (_sources.length >= 2 && !_speedTesting) {
+      unawaited(_runSpeedTest(force: true));
+    }
 
     // 视频详情尚未加载时，自动加载当前选中源
-    if (isFinal &&
-        _videoDetail == null &&
-        _currentSource.source.isNotEmpty) {
+    if (isFinal && _videoDetail == null && _currentSource.source.isNotEmpty) {
       unawaited(_loadVideoDetail());
     }
 
-    // 首次搜索完成后，若存在多个源、未测速且用户未手动选源/无播放记录，执行一次自动测速择优
-    if (isFinal &&
-        _sources.length >= 2 &&
-        !_hasSpeedTested &&
-        !_speedTesting &&
-        !_userSelectedSource) {
+    // 搜索到源后，用源标题再次尝试匹配播放记录（Bangumi 标题与源标题可能不同）。
+    if (isFinal && _playRecord == null) {
+      unawaited(_loadPlayRecord(force: true, applySelection: true));
+    }
+
+    // 首次搜索完成后，若存在多个源且未测速，执行一次自动测速择优。
+    // 有播放记录时也会测速，但不会改变当前选中的源。
+    if (isFinal && _sources.length >= 2 && !_hasSpeedTested && !_speedTesting) {
       unawaited(_runSpeedTest());
     }
   }
@@ -613,20 +790,40 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _loadVideoDetail() async {
+    final requestId = ++_videoDetailRequestId;
+    final reqSource = _currentSource.source;
+    final reqId = _currentSource.id;
+    final reqTitle = _currentSource.title;
+
     final response = await LunaTVService.getDetail(
-      source: _currentSource.source,
-      id: _currentSource.id,
-      title: _currentSource.title,
+      source: reqSource,
+      id: reqId,
+      title: reqTitle,
     );
 
     if (!mounted) return;
+    // 若切换源后已有新请求发出，或当前源已变更，则丢弃本次旧响应。
+    if (requestId != _videoDetailRequestId) return;
+    if (reqSource != _currentSource.source || reqId != _currentSource.id) {
+      return;
+    }
 
     if (response.success && response.data != null) {
-        setState(() {
-          _videoDetail = response.data;
-          _detailLoading = false;
-        });
-      } else {
+      setState(() {
+        _videoDetail = response.data;
+        _detailLoading = false;
+        if (_playRecord != null) {
+          _applyPlayRecordSelection();
+        }
+      });
+      if (_playRecord != null) {
+        _scrollToSelectedEpisode();
+      }
+      // 视频标题已确定后，用源标题/视频标题再次尝试匹配播放记录。
+      if (_playRecord == null) {
+        unawaited(_loadPlayRecord(force: true, applySelection: true));
+      }
+    } else {
       setState(() {
         _error = response.message ?? '获取视频详情失败';
         _detailLoading = false;
@@ -733,7 +930,8 @@ class _DetailScreenState extends State<DetailScreen> {
 
     setState(() {
       _selectedSourceIndex = index;
-      _userSelectedSource = true;
+
+      _sourceSwitchedByUser = true;
       _videoDetail = null;
       _error = null;
       _selectedEpisodeIndex = 0;
@@ -745,18 +943,63 @@ class _DetailScreenState extends State<DetailScreen> {
     await _loadVideoDetail();
   }
 
+  /// 按测速结果对播放源进行排序。
+  /// - 无播放记录：全部按速度降序排列，最快的源放在第一位。
+  /// - 有播放记录：记录原始源置顶；测速最快的源（若与记录源不同）放在第二位，
+  ///   其余源按速度降序排在后面。
+  List<SourceOption> _sortSourcesBySpeed(List<SourceOption> sources) {
+    if (sources.length <= 1) return List<SourceOption>.from(sources);
+
+    final record = _playRecord;
+    SourceOption? recordSource;
+    if (record != null) {
+      recordSource = sources.firstWhere(
+        (s) => s.source == record.source && s.id == record.id,
+        orElse: () =>
+            const SourceOption(source: '', sourceName: '', id: '', title: ''),
+      );
+      if (recordSource.source.isEmpty) recordSource = null;
+    }
+
+    final others = sources.where((s) => s != recordSource).toList();
+    others.sort((a, b) {
+      final aOk = (a.speed ?? 0) > 0;
+      final bOk = (b.speed ?? 0) > 0;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return (b.speed ?? 0).compareTo(a.speed ?? 0);
+    });
+
+    if (recordSource != null) {
+      return [recordSource, ...others];
+    }
+    return others;
+  }
+
   Future<void> _runSpeedTest({bool force = false}) async {
     if (_sources.length < 2 || _speedTesting) return;
     if (!force && _hasSpeedTested) return;
 
     setState(() => _speedTesting = true);
 
+    // 记录当前选中的源标识，测速排序后优先保持不变。
+    final previousSourceIndex = _selectedSourceIndex;
+    final previousSource = previousSourceIndex >= 0 &&
+            previousSourceIndex < _sources.length
+        ? _sources[previousSourceIndex]
+        : null;
+    final previousSourceKey = previousSource != null
+        ? '${previousSource.source}+${previousSource.id}'
+        : null;
+
     final tested = await SearchService.speedTestSources(
       _sources,
       onProgress: (index, updated) {
         if (mounted) {
           setState(() {
-            _sources[index] = updated;
+            if (index >= 0 && index < _sources.length) {
+              _sources[index] = updated;
+            }
           });
         }
       },
@@ -764,28 +1007,78 @@ class _DetailScreenState extends State<DetailScreen> {
 
     if (!mounted) return;
 
+    // 将测速结果合并到当前源列表（避免测速期间源列表被后台搜索更新后，
+    // 这里用旧的 sorted 列表覆盖导致新增源丢失或用户手动选择被重置）。
+    final speedMap = {
+      for (final s in tested) '${s.source}+${s.id}': s.speed,
+    };
+
     setState(() {
-      for (var i = 0; i < tested.length; i++) {
-        _sources[i] = tested[i];
+      // 排序前先记录当前选中的源标识，避免排序后索引错位。
+      final currentSourceKey = _selectedSourceIndex >= 0 &&
+              _selectedSourceIndex < _sources.length
+          ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+          : previousSourceKey;
+
+      for (var i = 0; i < _sources.length; i++) {
+        final key = '${_sources[i].source}+${_sources[i].id}';
+        if (speedMap.containsKey(key)) {
+          _sources[i] = _sources[i].copyWith(speed: speedMap[key]);
+        }
       }
+      _sources = _sortSourcesBySpeed(_sources);
+      _sourcesNotifier.value = List.unmodifiable(_sources);
       _speedTesting = false;
       _hasSpeedTested = true;
+
+      final record = _playRecord;
+      final recordIndex = record != null
+          ? _sources.indexWhere(
+              (s) => s.source == record.source && s.id == record.id,
+            )
+          : -1;
+
+      // 用户手动切换过源时，测速排序后仍保持用户当前选择的源。
+      if (_sourceSwitchedByUser &&
+          currentSourceKey != null &&
+          currentSourceKey.isNotEmpty &&
+          currentSourceKey != '+') {
+        final manualIndex = _sources.indexWhere(
+          (s) => '${s.source}+${s.id}' == currentSourceKey,
+        );
+        if (manualIndex >= 0) {
+          _selectedSourceIndex = manualIndex;
+        } else {
+          // 用户手动选择的源若不在当前列表中，仍保留原选择避免被强制切走。
+          // 保持当前索引并在安全范围内 clamp。
+          _selectedSourceIndex = _selectedSourceIndex.clamp(
+            0,
+            _sources.isEmpty ? 0 : _sources.length - 1,
+          );
+        }
+      } else if (recordIndex >= 0) {
+        _selectedSourceIndex = recordIndex;
+      } else {
+        _selectedSourceIndex = 0;
+      }
+
+      debugPrint(
+        '[SourceSelect] speedTest done: userSwitched=$_sourceSwitchedByUser, '
+        'currentKey=$currentSourceKey, selectedIndex=$_selectedSourceIndex, '
+        'source=${_sources.isNotEmpty ? _sources[_selectedSourceIndex].source : ""}',
+      );
     });
 
-    final bestIndex = _findBestSourceIndex();
-    // 仅当用户未手动选源且无播放记录时，才自动切换到测速最快的源。
-    if (!_userSelectedSource &&
-        bestIndex != _selectedSourceIndex &&
-        bestIndex >= 0) {
-      await _onSourceChanged(bestIndex);
+    // 选中源发生变化时，重新加载对应源的详情与播放器后端。
+    final currentSource = _sources[_selectedSourceIndex];
+    if (previousSource == null ||
+        currentSource.source != previousSource.source ||
+        currentSource.id != previousSource.id) {
+      await _loadFavoriteStatus(localOnly: true);
+      unawaited(_loadFavoriteStatus(localOnly: false));
+      await _loadPlayerBackend();
+      await _loadVideoDetail();
     }
-  }
-
-  int _findBestSourceIndex() {
-    for (var i = 0; i < _sources.length; i++) {
-      if ((_sources[i].speed ?? 0) > 0) return i;
-    }
-    return _selectedSourceIndex;
   }
 
   void _toggleFavorite() async {
@@ -795,7 +1088,10 @@ class _DetailScreenState extends State<DetailScreen> {
     final key = '$source+$id';
 
     // 1. 先按本地状态切换，立即刷新 UI
-    final currentlyFavorite = await local.LocalStorageService.isFavorite(source, id);
+    final currentlyFavorite = await local.LocalStorageService.isFavorite(
+      source,
+      id,
+    );
     final targetFavorite = !currentlyFavorite;
     final record = local.FavoriteRecord(
       source: source,
@@ -819,7 +1115,10 @@ class _DetailScreenState extends State<DetailScreen> {
     unawaited(_syncFavoriteToRemote(key: key, add: targetFavorite));
   }
 
-  Future<void> _syncFavoriteToRemote({required String key, required bool add}) async {
+  Future<void> _syncFavoriteToRemote({
+    required String key,
+    required bool add,
+  }) async {
     try {
       final favorite = Favorite(
         source: _currentSource.source,
@@ -838,7 +1137,7 @@ class _DetailScreenState extends State<DetailScreen> {
     }
   }
 
-  /// 查找播放记录原始源在当前源列表中的索引。
+  /// 查找指定源 ID 在当前源列表中的索引。
   int? _findSourceIndex(String source, String id) {
     final key = '$source+$id';
     final index = _sources.indexWhere((s) => '${s.source}+${s.id}' == key);
@@ -885,6 +1184,7 @@ class _DetailScreenState extends State<DetailScreen> {
           videoDetail: detail,
           episodeIndex: index,
           sources: _sources,
+          sourcesNotifier: _sourcesNotifier,
           initialSourceIndex: sourceIndex,
           playerBackend: _playerBackend,
           initialPositionMs: initialPlayTime * 1000,
@@ -895,16 +1195,20 @@ class _DetailScreenState extends State<DetailScreen> {
     // 从播放页返回后异步刷新播放记录：先读本地立即更新 UI，再在后台同步远程/海报
     if (mounted) {
       unawaited(
-        _loadPlayRecord(force: true, localOnly: true).then((_) async {
+        _loadPlayRecord(
+          force: true,
+          applySelection: true,
+          localOnly: true,
+        ).then((_) async {
           if (mounted) {
-            // 若播放记录更新导致当前集数/进度变化，刷新视频详情以同步状态
-            if (_playRecord != null &&
-                _playRecord!.index > 0 &&
-                _playRecord!.index <= detail.episodes.length) {
-              setState(() => _selectedEpisodeIndex = _playRecord!.index - 1);
-            }
             // 后台再拉取远程记录和豆瓣海报，不阻塞当前页面
-            unawaited(_loadPlayRecord(force: true, localOnly: false));
+            unawaited(
+              _loadPlayRecord(
+                force: true,
+                applySelection: true,
+                localOnly: false,
+              ),
+            );
           }
         }),
       );
@@ -942,7 +1246,8 @@ class _DetailScreenState extends State<DetailScreen> {
       memCacheHeight: 450,
       httpHeaders: const {
         'Referer': 'https://m.douban.com',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       },
       placeholder: (_, __) => Container(color: AppColors.bgSurface),
@@ -1027,66 +1332,70 @@ class _DetailScreenState extends State<DetailScreen> {
           height: 180,
           child: _sources.isEmpty
               ? _searchingSources
-                  ? const SizedBox.shrink()
-                  : _fuzzySearchEnabled
-                      ? const Text(
-                          '未找到相关播放源',
-                          style: TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            fontSize: 14,
-                            color: AppColors.textSecondary,
+                    ? const SizedBox.shrink()
+                    : _fuzzySearchEnabled
+                    ? const Text(
+                        '未找到相关播放源',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 14,
+                          color: AppColors.textSecondary,
+                        ),
+                      )
+                    : FocusableWidget(
+                        onTap: _runFuzzySearch,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.sm,
                           ),
-                        )
-                      : FocusableWidget(
-                          onTap: _runFuzzySearch,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md,
-                              vertical: AppSpacing.sm,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.bgElevated,
-                              borderRadius: BorderRadius.circular(AppRadius.sm),
-                              border: Border.all(color: AppColors.border),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.search,
-                                  color: AppColors.primary,
-                                  size: 16,
-                                ),
-                                SizedBox(width: AppSpacing.xs),
-                                Text(
-                                  '精确匹配无结果，尝试模糊搜索',
-                                  style: TextStyle(
-                                    fontFamily: 'NotoSansSC',
-                                    fontSize: 13,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                              ],
-                            ),
+                          decoration: BoxDecoration(
+                            color: AppColors.bgElevated,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border.all(color: AppColors.border),
                           ),
-                        )
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.search,
+                                color: AppColors.primary,
+                                size: 16,
+                              ),
+                              SizedBox(width: AppSpacing.xs),
+                              Text(
+                                '精确匹配无结果，尝试模糊搜索',
+                                style: TextStyle(
+                                  fontFamily: 'NotoSansSC',
+                                  fontSize: 13,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
               : SingleChildScrollView(
+                  controller: _sourcesScrollController,
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                     vertical: AppSpacing.xs,
                   ),
-                  child: Row(
-                    children: List.generate(_sources.length, (index) {
-                      return Padding(
-                        padding: EdgeInsets.only(
-                          right: index < _sources.length - 1
-                              ? AppSpacing.md
-                              : AppSpacing.sm,
-                        ),
-                        child: _buildSourceCard(index),
-                      );
-                    }),
+                  child: _wrapHorizontalScrollForMouse(
+                    controller: _sourcesScrollController,
+                    child: Row(
+                      children: List.generate(_sources.length, (index) {
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            right: index < _sources.length - 1
+                                ? AppSpacing.md
+                                : AppSpacing.sm,
+                          ),
+                          child: _buildSourceCard(index),
+                        );
+                      }),
+                    ),
                   ),
                 ),
         ),
@@ -1135,9 +1444,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   cacheManager: HainTvCacheManager(),
                   memCacheWidth: 300,
                   memCacheHeight: 450,
-                  placeholder: (_, __) => Container(
-                    color: AppColors.bgSurface,
-                  ),
+                  placeholder: (_, __) => Container(color: AppColors.bgSurface),
                   errorWidget: (_, __, ___) => Container(
                     color: AppColors.bgSurface,
                     child: Center(
@@ -1327,7 +1634,8 @@ class _DetailScreenState extends State<DetailScreen> {
               const SizedBox(width: AppSpacing.sm),
               _buildMetaChip('豆瓣 $rating', isPrimary: true),
             ],
-            if (widget.bangumiRate != null && widget.bangumiRate!.isNotEmpty) ...[
+            if (widget.bangumiRate != null &&
+                widget.bangumiRate!.isNotEmpty) ...[
               const SizedBox(width: AppSpacing.sm),
               _buildMetaChip('Bangumi ${widget.bangumiRate}', isBangumi: true),
             ],
@@ -1372,8 +1680,7 @@ class _DetailScreenState extends State<DetailScreen> {
           children: [
             if (countries.isNotEmpty)
               _buildMetaChip(countries.take(2).join(' / ')),
-            if (languages.isNotEmpty)
-              _buildMetaChip(languages.first),
+            if (languages.isNotEmpty) _buildMetaChip(languages.first),
             if (totalEpisodes != null && totalEpisodes > 0)
               _buildMetaChip('共${totalEpisodes}集'),
             if (duration != null && duration.isNotEmpty)
@@ -1444,9 +1751,24 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Widget _buildActionButtons() {
     final record = _playRecord;
-    final sourceName = record != null && record.sourceName.isNotEmpty
-        ? record.sourceName
-        : (record != null ? record.source : '');
+    // 未手动切源时优先使用播放记录原始源；手动切源后跟随当前选中的源。
+    final effectiveSourceIndex = _sources.isNotEmpty
+        ? _selectedSourceIndex.clamp(0, _sources.length - 1)
+        : -1;
+    final continueSourceIndex = record != null && effectiveSourceIndex >= 0
+        ? (_sourceSwitchedByUser
+              ? effectiveSourceIndex
+              : _findSourceIndex(record.source, record.id) ??
+                    effectiveSourceIndex)
+        : effectiveSourceIndex;
+    final continueSource = continueSourceIndex >= 0
+        ? _sources[continueSourceIndex]
+        : const SourceOption(source: '', sourceName: '', id: '', title: '');
+    final sourceName = record != null && continueSourceIndex >= 0
+        ? (continueSource.sourceName.isNotEmpty
+              ? continueSource.sourceName
+              : continueSource.source)
+        : '';
     final hasRecord = record != null;
 
     return Wrap(
@@ -1460,11 +1782,13 @@ class _DetailScreenState extends State<DetailScreen> {
             onTap: () => _playEpisode(
               record.index > 0 ? record.index - 1 : 0,
               initialPlayTime: record.playTime,
-              preferredSourceIndex: _findSourceIndex(record.source, record.id),
+              preferredSourceIndex: continueSourceIndex,
             ),
-            onFocusChange: (focused) {
-              if (focused) _ensureInfoVisible();
-            },
+            onFocusChange: DeviceUtils.isWindows
+                ? null
+                : (focused) {
+                    if (focused) _ensureInfoVisible();
+                  },
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg,
@@ -1510,9 +1834,11 @@ class _DetailScreenState extends State<DetailScreen> {
         if (hasRecord)
           FocusableWidget(
             onTap: () => _playEpisode(0),
-            onFocusChange: (focused) {
-              if (focused) _ensureInfoVisible();
-            },
+            onFocusChange: DeviceUtils.isWindows
+                ? null
+                : (focused) {
+                    if (focused) _ensureInfoVisible();
+                  },
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg,
@@ -1545,9 +1871,11 @@ class _DetailScreenState extends State<DetailScreen> {
           FocusableWidget(
             autofocus: true,
             onTap: () => _playEpisode(_selectedEpisodeIndex),
-            onFocusChange: (focused) {
-              if (focused) _ensureInfoVisible();
-            },
+            onFocusChange: DeviceUtils.isWindows
+                ? null
+                : (focused) {
+                    if (focused) _ensureInfoVisible();
+                  },
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg,
@@ -1577,9 +1905,11 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
         FocusableWidget(
           onTap: _toggleFavorite,
-          onFocusChange: (focused) {
-            if (focused) _ensureInfoVisible();
-          },
+          onFocusChange: DeviceUtils.isWindows
+              ? null
+              : (focused) {
+                  if (focused) _ensureInfoVisible();
+                },
           child: Container(
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.lg,
@@ -1594,7 +1924,9 @@ class _DetailScreenState extends State<DetailScreen> {
               children: [
                 Icon(
                   _isFavorite ? Icons.favorite : Icons.favorite_border,
-                  color: _isFavorite ? AppColors.primary : AppColors.textPrimary,
+                  color: _isFavorite
+                      ? AppColors.primary
+                      : AppColors.textPrimary,
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 Text(
@@ -1603,7 +1935,9 @@ class _DetailScreenState extends State<DetailScreen> {
                     fontFamily: 'NotoSansSC',
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: _isFavorite ? AppColors.primary : AppColors.textPrimary,
+                    color: _isFavorite
+                        ? AppColors.primary
+                        : AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -1646,7 +1980,9 @@ class _DetailScreenState extends State<DetailScreen> {
         style: TextStyle(
           fontFamily: 'NotoSansSC',
           fontSize: 12,
-          fontWeight: isPrimary || isBangumi ? FontWeight.w600 : FontWeight.w400,
+          fontWeight: isPrimary || isBangumi
+              ? FontWeight.w600
+              : FontWeight.w400,
           color: fgColor,
         ),
       ),
@@ -1677,9 +2013,10 @@ class _DetailScreenState extends State<DetailScreen> {
 
     final displayIndices = _episodeSortAscending
         ? List<int>.generate(detail.episodes.length, (i) => i)
-        : List<int>.generate(detail.episodes.length, (i) => i)
-            .reversed
-            .toList();
+        : List<int>.generate(
+            detail.episodes.length,
+            (i) => i,
+          ).reversed.toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1779,68 +2116,77 @@ class _DetailScreenState extends State<DetailScreen> {
         SizedBox(
           height: 72,
           child: SingleChildScrollView(
+            controller: _episodesScrollController,
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-            child: Row(
-              children: List.generate(displayIndices.length, (displayIndex) {
-                final originalIndex = displayIndices[displayIndex];
-                final title = titles[originalIndex];
-                final selected = _selectedEpisodeIndex == originalIndex;
-                return Padding(
-                  padding: EdgeInsets.only(
-                    right:
-                        displayIndex < displayIndices.length - 1 ? AppSpacing.sm : 0,
-                  ),
-                  child: SizedBox(
-                    width: 100,
-                    child: FocusableWidget(
-                      autofocus: displayIndex == 0,
-                      onTap: () => _playEpisode(originalIndex),
-                      onFocusChange: (focused) {
-                        if (focused) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (context.mounted) {
-                              Scrollable.ensureVisible(
-                                context,
-                                duration: const Duration(milliseconds: 200),
-                                curve: Curves.easeOut,
-                                alignment: 0.5,
-                              );
-                            }
-                          });
-                        }
-                      },
-                      child: Container(
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm,
-                          vertical: AppSpacing.xs,
-                        ),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? AppColors.primaryTint
-                              : AppColors.bgSurface,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+            child: _wrapHorizontalScrollForMouse(
+              controller: _episodesScrollController,
+              child: Row(
+                children: List.generate(displayIndices.length, (displayIndex) {
+                  final originalIndex = displayIndices[displayIndex];
+                  final title = titles[originalIndex];
+                  final selected = _selectedEpisodeIndex == originalIndex;
+                  return Padding(
+                    key: _episodeKeys.putIfAbsent(
+                      originalIndex,
+                      () => GlobalKey(),
+                    ),
+                    padding: EdgeInsets.only(
+                      right: displayIndex < displayIndices.length - 1
+                          ? AppSpacing.sm
+                          : 0,
+                    ),
+                    child: SizedBox(
+                      width: 100,
+                      child: FocusableWidget(
+                        autofocus: displayIndex == 0,
+                        onTap: () => _playEpisode(originalIndex),
+                        onFocusChange: (focused) {
+                          if (focused) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (context.mounted) {
+                                Scrollable.ensureVisible(
+                                  context,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                  alignment: 0.5,
+                                );
+                              }
+                            });
+                          }
+                        },
+                        child: Container(
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: AppSpacing.xs,
+                          ),
+                          decoration: BoxDecoration(
                             color: selected
-                                ? AppColors.primary
-                                : AppColors.textPrimary,
+                                ? AppColors.primaryTint
+                                : AppColors.bgSurface,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                          ),
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: selected
+                                  ? AppColors.primary
+                                  : AppColors.textPrimary,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }),
+                  );
+                }),
+              ),
             ),
           ),
         ),
@@ -1848,9 +2194,50 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  /// Windows 桌面端左上角返回按钮，支持鼠标点击返回上一页。
+  Widget _buildWindowsBackButton() {
+    return Padding(
+      padding: const EdgeInsets.only(
+        left: AppSpacing.lg,
+        top: AppSpacing.md,
+        bottom: AppSpacing.sm,
+      ),
+      child: FocusableWidget(
+        onTap: () => Navigator.of(context).pop(),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.bgElevated,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.arrow_back, color: AppColors.textPrimary, size: 18),
+              SizedBox(width: AppSpacing.xs),
+              Text(
+                '返回',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 13,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasFatalError = _error != null &&
+    final hasFatalError =
+        _error != null &&
         _videoDetail == null &&
         _doubanDetails == null &&
         !_detailLoading &&
@@ -1901,32 +2288,30 @@ class _DetailScreenState extends State<DetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                height: 320,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(width: AppSpacing.lg),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.lg),
-                      child: SizedBox(
-                        width: 210,
-                        height: 320,
-                        child: _buildPoster(),
-                      ),
+              if (DeviceUtils.isWindows) _buildWindowsBackButton(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(width: AppSpacing.lg),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    child: SizedBox(
+                      width: 210,
+                      height: 320,
+                      child: _buildPoster(),
                     ),
-                    const SizedBox(width: AppSpacing.lg),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: AppSpacing.md,
-                        ),
-                        child: _buildInfoSection(),
+                  ),
+                  const SizedBox(width: AppSpacing.lg),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md,
                       ),
+                      child: _buildInfoSection(),
                     ),
-                    const SizedBox(width: AppSpacing.lg),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: AppSpacing.lg),
+                ],
               ),
               const SizedBox(height: AppSpacing.lg),
               _buildEpisodes(),

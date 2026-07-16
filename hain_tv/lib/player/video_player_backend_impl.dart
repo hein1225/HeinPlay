@@ -15,10 +15,7 @@ Map<String, String> _refererFor(String url) {
     final uri = Uri.parse(url);
     if (uri.scheme.startsWith('http')) {
       final referer = '${uri.scheme}://${uri.host}/';
-      return {
-        'Referer': referer,
-        'Origin': '${uri.scheme}://${uri.host}',
-      };
+      return {'Referer': referer, 'Origin': '${uri.scheme}://${uri.host}'};
     }
   } catch (_) {
     // 忽略无效 URL
@@ -119,10 +116,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     String finalUrl = url;
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
     final isLocalProxy = _isLocalProxyUrl(url);
-    final needsProxy = !isLocalProxy &&
-        (proxyMode ||
-            lowerUrl.contains('.m3u8') ||
-            lowerUrl.contains('/hls/'));
+    final needsProxy =
+        !isLocalProxy &&
+        (proxyMode || lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/'));
     if (proxyUrl.isNotEmpty && needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
@@ -136,7 +132,8 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     };
 
     final lowerFinalUrl = finalUrl.toLowerCase();
-    final isNetwork = lowerFinalUrl.startsWith('http://') ||
+    final isNetwork =
+        lowerFinalUrl.startsWith('http://') ||
         lowerFinalUrl.startsWith('https://');
     final isFile = lowerFinalUrl.startsWith('file://');
 
@@ -186,23 +183,32 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       rethrow;
     }
 
+    // 若指定了起始位置，先在暂停状态下 seek，再开始播放，
+    // 避免 ExoPlayer 在 HLS 起播阶段 seek 被忽略或回退到 0。
+    if (startAt != null && startAt > Duration.zero) {
+      await seek(startAt);
+      // 给 ExoPlayer 一小段时间应用 seek，随后若位置仍被回退则再次 seek。
+      await Future.delayed(const Duration(milliseconds: 100));
+      final actual = _controller?.value.position ?? Duration.zero;
+      if (actual.inMilliseconds < startAt.inMilliseconds * 0.5) {
+        debugPrint(
+          'VideoPlayerBackendImpl 起始定位未生效，再次 seek: actual=${actual.inMilliseconds}ms target=${startAt.inMilliseconds}ms',
+        );
+        await seek(startAt);
+      }
+    }
+
     await _controller!.play();
 
     _durationController.add(_controller!.value.duration);
     _startPositionTimer();
-
-    if (startAt != null && startAt > Duration.zero) {
-      await seek(startAt);
-    }
   }
 
   void _onControllerValueChanged() {
     final value = _controller?.value;
     if (value == null) return;
     if (value.hasError && value.errorDescription != null) {
-      debugPrint(
-        'VideoPlayerBackendImpl 播放错误: ${value.errorDescription}',
-      );
+      debugPrint('VideoPlayerBackendImpl 播放错误: ${value.errorDescription}');
     }
   }
 

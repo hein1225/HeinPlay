@@ -21,12 +21,7 @@ class DoubanRecommendItem {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'poster': poster,
-      'rate': rate,
-    };
+    return {'id': id, 'title': title, 'poster': poster, 'rate': rate};
   }
 }
 
@@ -113,15 +108,19 @@ class DoubanMovieDetails {
       poster = json['cover_url']?.toString() ?? '';
     } else if (json['images'] != null) {
       final images = json['images'] as Map<String, dynamic>?;
-      poster = images?['large']?.toString() ??
+      poster =
+          images?['large']?.toString() ??
           images?['medium']?.toString() ??
-          images?['small']?.toString() ?? '';
+          images?['small']?.toString() ??
+          '';
     } else if (json['pic'] != null) {
       final pic = json['pic'] as Map<String, dynamic>?;
-      poster = pic?['large']?.toString() ??
+      poster =
+          pic?['large']?.toString() ??
           pic?['normal']?.toString() ??
           pic?['medium']?.toString() ??
-          pic?['small']?.toString() ?? '';
+          pic?['small']?.toString() ??
+          '';
     }
     if (poster.startsWith('//')) {
       poster = 'https:$poster';
@@ -148,18 +147,21 @@ class DoubanMovieDetails {
       year = yearMatch?.group(1) ?? '';
     }
 
-    final directors = json['directors'] is List &&
+    final directors =
+        json['directors'] is List &&
             (json['directors'] as List).any((item) => item is Map)
         ? nameList(json['directors'])
         : stringList(json['directors']);
 
-    final screenwriters = json['screenwriters'] is List &&
+    final screenwriters =
+        json['screenwriters'] is List &&
             (json['screenwriters'] as List).any((item) => item is Map)
         ? nameList(json['screenwriters'])
         : stringList(json['screenwriters']);
 
     final actorsSource = json['actors'] ?? json['casts'];
-    final actors = actorsSource is List && actorsSource.any((item) => item is Map)
+    final actors =
+        actorsSource is List && actorsSource.any((item) => item is Map)
         ? nameList(actorsSource)
         : stringList(actorsSource);
 
@@ -192,13 +194,17 @@ class DoubanMovieDetails {
       directors: directors,
       screenwriters: screenwriters,
       actors: actors,
-      duration: nonEmptyString(json['duration']) ??
+      duration:
+          nonEmptyString(json['duration']) ??
           (durations.isNotEmpty ? durations.first : null),
       countries: countries,
       languages: languages,
-      releaseDate: nonEmptyString(json['releaseDate']) ??
+      releaseDate:
+          nonEmptyString(json['releaseDate']) ??
           (pubdates.isNotEmpty ? pubdates.first : null),
-      originalTitle: nonEmptyString(json['originalTitle'] ?? json['original_title']),
+      originalTitle: nonEmptyString(
+        json['originalTitle'] ?? json['original_title'],
+      ),
       imdbId: nonEmptyString(json['imdbId'] ?? json['imdb']),
       totalEpisodes: totalEpisodes,
       recommends: recommends,
@@ -253,20 +259,23 @@ class DoubanMovie {
     String? pickPoster() {
       String? url;
       if (data['poster'] != null) url = data['poster']?.toString();
-      if (url == null && data['cover_url'] != null) url = data['cover_url']?.toString();
+      if (url == null && data['cover_url'] != null)
+        url = data['cover_url']?.toString();
       if (url == null && data['cover'] != null) url = data['cover']?.toString();
       if (url == null && data['img'] != null) url = data['img']?.toString();
       if (url == null && data['thumb'] != null) url = data['thumb']?.toString();
       if (url == null && data['pic'] != null) {
         final pic = data['pic'] as Map<String, dynamic>?;
-        url = pic?['normal']?.toString() ??
+        url =
+            pic?['normal']?.toString() ??
             pic?['large']?.toString() ??
             pic?['medium']?.toString() ??
             pic?['small']?.toString();
       }
       if (url == null && data['images'] != null) {
         final images = data['images'] as Map<String, dynamic>?;
-        url = images?['large']?.toString() ??
+        url =
+            images?['large']?.toString() ??
             images?['medium']?.toString() ??
             images?['small']?.toString();
       }
@@ -304,7 +313,9 @@ class DoubanMovie {
     if (year.isEmpty && data['pubdate'] != null) {
       final pubdates = data['pubdate'];
       if (pubdates is List && pubdates.isNotEmpty) {
-        final yearMatch = RegExp(r'(\d{4})').firstMatch(pubdates.first.toString());
+        final yearMatch = RegExp(
+          r'(\d{4})',
+        ).firstMatch(pubdates.first.toString());
         year = yearMatch?.group(1) ?? '';
       } else {
         final yearMatch = RegExp(r'(\d{4})').firstMatch(pubdates.toString());

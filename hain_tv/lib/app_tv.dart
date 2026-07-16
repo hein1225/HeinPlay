@@ -12,7 +12,7 @@ class HainTvApp extends StatelessWidget {
   Widget build(BuildContext context) {
     // 设置全屏模式，隐藏系统状态栏
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    
+
     return MaterialApp(
       title: '海因影视',
       debugShowCheckedModeBanner: false,

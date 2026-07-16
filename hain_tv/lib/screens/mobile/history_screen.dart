@@ -12,10 +12,7 @@ import 'package:hain_tv/widgets/tv/tv_grid.dart';
 class MobileHistoryScreen extends StatefulWidget {
   final List<PlayRecord> initialRecords;
 
-  const MobileHistoryScreen({
-    super.key,
-    this.initialRecords = const [],
-  });
+  const MobileHistoryScreen({super.key, this.initialRecords = const []});
 
   @override
   State<MobileHistoryScreen> createState() => _MobileHistoryScreenState();
@@ -86,7 +83,9 @@ class _MobileHistoryScreenState extends State<MobileHistoryScreen> {
       id: record.id,
       title: record.title,
       posterUrl: record.cover.isNotEmpty ? record.cover : null,
-      subtitle: record.sourceName.isNotEmpty ? record.sourceName : record.source,
+      subtitle: record.sourceName.isNotEmpty
+          ? record.sourceName
+          : record.source,
       onTap: () => _openRecord(record),
     );
   }

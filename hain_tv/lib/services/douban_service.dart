@@ -8,7 +8,8 @@ import 'cache_service.dart';
 import 'user_data_service.dart';
 
 const Map<String, String> doubanHeaders = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+  'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
   'Referer': 'https://movie.douban.com/',
   'Accept': 'application/json, text/plain, */*',
@@ -107,9 +108,9 @@ class DoubanService {
       queryParams['type'] = type;
     }
 
-    var apiUrl = Uri.parse('$base/rexxar/api/v2/subject/recent_hot/$kind')
-        .replace(queryParameters: queryParams)
-        .toString();
+    var apiUrl = Uri.parse(
+      '$base/rexxar/api/v2/subject/recent_hot/$kind',
+    ).replace(queryParameters: queryParams).toString();
     apiUrl = await _resolveUrl(apiUrl);
 
     try {
@@ -127,7 +128,10 @@ class DoubanService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return ApiResponse.error('获取豆瓣数据失败: ${response.statusCode}', statusCode: response.statusCode);
+      return ApiResponse.error(
+        '获取豆瓣数据失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error('豆瓣数据请求异常: $e');
     }
@@ -161,16 +165,25 @@ class DoubanService {
 
     final serverUrl = await UserDataService.getServerUrl();
     if (serverUrl == null || serverUrl.trim().isEmpty) {
-      return _fallbackToRecentHot(type: type, tag: tag, pageSize: pageSize, pageStart: pageStart);
+      return _fallbackToRecentHot(
+        type: type,
+        tag: tag,
+        pageSize: pageSize,
+        pageStart: pageStart,
+      );
     }
 
     final base = serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    final apiUrl = Uri.parse('$base/api/douban').replace(queryParameters: {
-      'type': type,
-      'tag': tag,
-      'pageSize': pageSize.toString(),
-      'pageStart': pageStart.toString(),
-    }).toString();
+    final apiUrl = Uri.parse('$base/api/douban')
+        .replace(
+          queryParameters: {
+            'type': type,
+            'tag': tag,
+            'pageSize': pageSize.toString(),
+            'pageStart': pageStart.toString(),
+          },
+        )
+        .toString();
 
     try {
       final response = await http
@@ -190,9 +203,19 @@ class DoubanService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return _fallbackToRecentHot(type: type, tag: tag, pageSize: pageSize, pageStart: pageStart);
+      return _fallbackToRecentHot(
+        type: type,
+        tag: tag,
+        pageSize: pageSize,
+        pageStart: pageStart,
+      );
     } catch (e) {
-      return _fallbackToRecentHot(type: type, tag: tag, pageSize: pageSize, pageStart: pageStart);
+      return _fallbackToRecentHot(
+        type: type,
+        tag: tag,
+        pageSize: pageSize,
+        pageStart: pageStart,
+      );
     }
   }
 
@@ -312,7 +335,17 @@ class DoubanService {
     String sort = params.sort == 'all' ? '' : params.sort;
 
     // 动漫分类特殊处理：当分类是地区名称时，将其作为地区筛选
-    final regions = ['中国大陆', '美国', '日本', '韩国', '中国香港', '中国台湾', '英国', '法国', '德国'];
+    final regions = [
+      '中国大陆',
+      '美国',
+      '日本',
+      '韩国',
+      '中国香港',
+      '中国台湾',
+      '英国',
+      '法国',
+      '德国',
+    ];
     if (format == '动画' && regions.contains(category)) {
       // 动漫分类下，把地区名称从category移到region
       region = category;
@@ -344,9 +377,9 @@ class DoubanService {
     };
     if (sort.isNotEmpty) queryParams['sort'] = sort;
 
-    var apiUrl = Uri.parse('$base/rexxar/api/v2/${params.kind}/recommend')
-        .replace(queryParameters: queryParams)
-        .toString();
+    var apiUrl = Uri.parse(
+      '$base/rexxar/api/v2/${params.kind}/recommend',
+    ).replace(queryParameters: queryParams).toString();
     apiUrl = await _resolveUrl(apiUrl);
 
     try {
@@ -368,7 +401,10 @@ class DoubanService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return ApiResponse.error('获取豆瓣推荐失败: ${response.statusCode}', statusCode: response.statusCode);
+      return ApiResponse.error(
+        '获取豆瓣推荐失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error('豆瓣推荐请求异常: $e');
     }
@@ -378,7 +414,9 @@ class DoubanService {
     required String doubanId,
   }) async {
     await _initCache();
-    final cacheKey = _cacheService.generateDoubanDetailsCacheKey(doubanId: doubanId);
+    final cacheKey = _cacheService.generateDoubanDetailsCacheKey(
+      doubanId: doubanId,
+    );
 
     final cached = await _cacheService.get<DoubanMovieDetails>(
       cacheKey,
@@ -414,7 +452,10 @@ class DoubanService {
         );
         return ApiResponse.success(details, statusCode: response.statusCode);
       }
-      return ApiResponse.error('获取豆瓣详情失败: ${response.statusCode}', statusCode: response.statusCode);
+      return ApiResponse.error(
+        '获取豆瓣详情失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error('豆瓣详情请求异常: $e');
     }
@@ -462,11 +503,12 @@ class DoubanService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return ApiResponse.error('豆瓣搜索失败: ${response.statusCode}', statusCode: response.statusCode);
+      return ApiResponse.error(
+        '豆瓣搜索失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error('豆瓣搜索异常: $e');
     }
   }
 }
-
-

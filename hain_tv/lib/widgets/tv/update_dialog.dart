@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/update_info.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -8,28 +8,21 @@ Future<void> showUpdateDialog(
   BuildContext context,
   UpdateInfo info, {
   required Future<void> Function(void Function(double progress) onProgress)
-      onDownload,
+  onDownload,
 }) async {
   await showDialog(
     context: context,
     barrierDismissible: false,
-    builder: (ctx) => UpdateDialog(
-      info: info,
-      onDownload: onDownload,
-    ),
+    builder: (ctx) => UpdateDialog(info: info, onDownload: onDownload),
   );
 }
 
 class UpdateDialog extends StatefulWidget {
   final UpdateInfo info;
   final Future<void> Function(void Function(double progress) onProgress)
-      onDownload;
+  onDownload;
 
-  const UpdateDialog({
-    super.key,
-    required this.info,
-    required this.onDownload,
-  });
+  const UpdateDialog({super.key, required this.info, required this.onDownload});
 
   @override
   State<UpdateDialog> createState() => _UpdateDialogState();
@@ -143,15 +136,16 @@ class _UpdateDialogState extends State<UpdateDialog> {
                               children: [
                                 Expanded(
                                   child: ClipRRect(
-                                    borderRadius:
-                                        BorderRadius.circular(AppRadius.sm),
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.sm,
+                                    ),
                                     child: LinearProgressIndicator(
                                       value: _progress,
                                       backgroundColor: AppColors.bgElevated,
                                       valueColor:
                                           const AlwaysStoppedAnimation<Color>(
-                                        AppColors.primary,
-                                      ),
+                                            AppColors.primary,
+                                          ),
                                       minHeight: 8,
                                     ),
                                   ),
@@ -207,7 +201,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
                     enabled: !_isDownloading,
                     onTap: () async {
                       await UserDataService.saveSkippedVersion(
-                          widget.info.version);
+                        widget.info.version,
+                      );
                       if (context.mounted) {
                         Navigator.of(context).pop();
                       }

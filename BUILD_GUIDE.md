@@ -9,8 +9,10 @@ hain_tv/
 ├── lib/
 │   ├── main_tv.dart              # TV 版入口
 │   ├── main_mobile.dart          # 手机版入口
+│   ├── main_windows.dart         # Windows 桌面版入口
 │   ├── app_tv.dart               # TV 版 MaterialApp
 │   ├── app_mobile.dart           # 手机版 MaterialApp
+│   ├── app_windows.dart          # Windows 桌面版 MaterialApp
 │   ├── screens/
 │   │   ├── tv/                   # TV 版页面（保持原有逻辑）
 │   │   └── mobile/               # 手机版页面（逐步新建）
@@ -25,9 +27,11 @@ hain_tv/
 │   ├── platform/                 # 平台相关工具
 │   └── theme.dart                # 共享设计 token
 ├── android/app/build.gradle.kts  # 已配置 tv / mobile 两个 flavor
+├── windows/                       # Windows 桌面端平台目录
 └── scripts/
     ├── build_tv.ps1              # TV 版 release 打包脚本
-    └── build_mobile.ps1          # 手机版 release 打包脚本
+    ├── build_mobile.ps1          # 手机版 release 打包脚本
+    └── build_windows.ps1         # Windows 桌面端 release 打包脚本
 ```
 
 ## 2. 运行调试
@@ -42,6 +46,21 @@ flutter run -t lib/main_tv.dart --flavor tv
 
 ```powershell
 flutter run -t lib/main_mobile.dart --flavor mobile
+```
+
+### Windows 桌面版
+
+```powershell
+flutter run -d windows --target lib/main_windows.dart
+```
+
+前置条件：
+
+1. 已安装 Visual Studio 2022「使用 C++ 的桌面开发」工作负荷。
+2. 已启用 Windows 桌面支持：
+
+```powershell
+flutter config --enable-windows-desktop
 ```
 
 > 提示：若工程位于 `E:` 盘而默认 Pub Cache 在 `C:` 盘，首次构建可能因 Kotlin daemon 跨盘符缓存问题失败。可设置环境变量 `PUB_CACHE=E:\code\HeinPlay\hain_tv\.pub-cache` 后重新执行 `flutter pub get`。
@@ -65,6 +84,16 @@ flutter pub run flutter_launcher_icons:main -f flutter_launcher_icons-mobile.yam
 ```
 
 两个 flavor 的图标互相独立，mobile flavor 会优先使用 `src/mobile/res/`，tv flavor 会回退到 `src/main/res/`。
+
+### Windows 桌面版
+
+Windows 桌面版图标使用 `../plan/mo_ico.png`，由独立的 `flutter_launcher_icons-windows.yaml` 配置生成到 `windows/runner/resources/app_icon.ico`。
+
+```powershell
+flutter pub run flutter_launcher_icons -f flutter_launcher_icons-windows.yaml
+```
+
+该命令**不会**修改 Android 任何版本的图标。
 
 ## 4. Release 打包
 
@@ -139,10 +168,19 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 输出：`dist/heinplay-{version}-mobile.apk`
 
-例如当前 `pubspec.yaml` 版本为 `1.1.3+8`，脚本会输出：
+#### Windows 桌面版
 
-- `dist/heinplay-1.1.3-tv.apk`
-- `dist/heinplay-1.1.3-mobile.apk`
+```powershell
+.\scripts\build_windows.ps1
+```
+
+输出：`dist/heinplay-{version}-windows-portable.zip`，解压后运行 `hain_tv.exe`。
+
+例如当前 `pubspec.yaml` 版本为 `1.1.4+9`，三个脚本会输出：
+
+- `dist/heinplay-1.1.4-tv.apk`
+- `dist/heinplay-1.1.4-mobile.apk`
+- `dist/heinplay-1.1.4-windows-portable.zip`
 
 ### 4.3 手动打包
 
@@ -163,6 +201,14 @@ flutter build apk --target lib/main_mobile.dart --flavor mobile --release
 ```
 
 默认产物：`build\app\outputs\flutter-apk\app-mobile-release.apk`
+
+#### Windows 桌面版
+
+```powershell
+flutter build windows --target lib/main_windows.dart --release
+```
+
+默认产物：`build\windows\x64\runner\Release\hain_tv.exe`
 
 ### 4.4 验证产物
 
@@ -206,6 +252,18 @@ aapt dump badging build\app\outputs\flutter-apk\app-mobile-release.apk | findstr
 - 手机版：`package: name='com.heinplay.mobile'`
 
 ### 4.5 常见问题
+
+**Q：Windows 构建提示 `Integrity check failed, please try to re-build project again`？**  
+A：这是 `media_kit` 下载 Windows 原生依赖（`mpv-dev-...7z`）时文件损坏或校验失败。解决方法：
+
+```powershell
+Remove-Item -Path "E:\code\HeinPlay\hain_tv\build\windows\x64\mpv-dev-x86_64-20230924-git-652a1dd.7z" -Force
+flutter clean
+flutter pub get
+.\scripts\build_windows.ps1
+```
+
+如果仍然失败，通常是网络问题导致下载不完整，可尝试开启代理或手动下载对应 7z 文件放到上述路径后重新构建。
 
 **Q：Release 构建提示 `Keystore file not found for signing config 'mobile'`？**  
 A：请检查 `android/key-mobile.properties` 中的 `storeFile` 路径是否正确，且 keystore 文件确实存在于 `android/` 目录下。
@@ -251,16 +309,18 @@ keyPassword=YOUR_KEY_PASSWORD
 
 ## 6. 包名与版本
 
-| Flavor | applicationId          | versionNameSuffix |
-|--------|------------------------|-------------------|
-| tv     | com.heinplay.hain_tv   | -tv               |
-| mobile | com.heinplay.mobile    | -mobile           |
+| 平台   | applicationId          | 版本名后缀 | 说明                     |
+|--------|------------------------|------------|--------------------------|
+| tv     | com.heinplay.hain_tv   | -tv        | Android TV 版            |
+| mobile | com.heinplay.mobile    | -mobile    | Android 手机版           |
+| windows| hain_tv.exe            | -windows   | Windows 桌面端，无需包名 |
 
-两个应用可安装在同一台设备上，互不覆盖。
+TV 版与手机版可安装在同一台 Android 设备上，互不覆盖。
 
 ## 7. 开发规范
 
 - **不要修改 TV 版业务逻辑**：TV 版已稳定，手机版开发应在 `screens/mobile/` 与 `widgets/mobile/` 中新建。
+- **Windows 桌面版复用 TV 版页面**：通过 `DeviceUtils.isTvOverride = true` 标记为 TV 模式，保持焦点、键盘与鼠标悬停逻辑一致。
 - **共享层保持 UI 无关**：`models/`、`services/`、`player/` 不应直接引用任何 UI 组件或 `BuildContext`。
 - **import 统一使用 package 路径**：例如 `package:hain_tv/screens/tv/home_screen.dart`、`package:hain_tv/services/search_service.dart`。
 - **每完成一个页面运行一次 `flutter analyze`**，确保无 import 错误。
@@ -274,7 +334,10 @@ A：`lib/main.dart` 暂时保留为 TV 版兼容入口，指向 `app_tv.dart`。
 A：参考 `screens/mobile/home_screen.dart` 等占位页，在 `screens/mobile/` 中实现具体页面，然后在 `widgets/mobile/mobile_shell.dart` 的底部导航中替换对应页面即可。
 
 **Q：构建产物文件名不符合预期？**  
-A：Flutter 默认输出固定文件名，使用 `scripts/build_tv.ps1` 或 `scripts/build_mobile.ps1` 会自动重命名为 `heinplay-{version}-{platform}.apk`。
+A：Flutter 默认输出固定文件名，使用 `scripts/build_tv.ps1`、`scripts/build_mobile.ps1` 或 `scripts/build_windows.ps1` 会自动重命名为 `heinplay-{version}-{platform}.apk` 或 `heinplay-{version}-windows-portable.zip`。
+
+**Q：Windows 版会覆盖或影响 Android 版本吗？**  
+A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立的构建产物目录 `build/windows/` 和独立的发布脚本 `scripts/build_windows.ps1`，不会修改任何 Android flavor 的代码或配置。
 
 ## 9. 关于 .gitignore
 

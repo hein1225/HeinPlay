@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/theme.dart';
@@ -95,7 +95,8 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
   }
 
   KeyEventResult _handleKeyEvent(int index, FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       if (index > 0) {
         _focusIndex(index - 1);
@@ -210,25 +211,25 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
               itemBuilder: (context, index) {
                 final item = widget.items[index];
                 return SizedBox(
-                    width: widget.cardWidth,
-                    child: TvPosterCard(
-                      autofocus: index == 0,
-                      focusNode: _focusNodes[index],
-                      onKeyEvent: (node, event) =>
-                          _handleKeyEvent(index, node, event),
-                      onFocusChange: (focused) {
-                        if (focused) _scrollToIndex(index);
-                      },
-                      title: item.title,
-                      posterUrl: item.posterUrl,
-                      year: item.year,
-                      subtitle: item.subtitle,
-                      rating: item.rating,
-                      ratingLabel: item.ratingLabel,
-                      bangumiRating: item.bangumiRating,
-                      onTap: item.onTap,
-                    ),
-                  );
+                  width: widget.cardWidth,
+                  child: TvPosterCard(
+                    autofocus: index == 0,
+                    focusNode: _focusNodes[index],
+                    onKeyEvent: (node, event) =>
+                        _handleKeyEvent(index, node, event),
+                    onFocusChange: (focused) {
+                      if (focused) _scrollToIndex(index);
+                    },
+                    title: item.title,
+                    posterUrl: item.posterUrl,
+                    year: item.year,
+                    subtitle: item.subtitle,
+                    rating: item.rating,
+                    ratingLabel: item.ratingLabel,
+                    bangumiRating: item.bangumiRating,
+                    onTap: item.onTap,
+                  ),
+                );
               },
             ),
           ),
@@ -252,7 +253,8 @@ class TvPosterGrid extends StatefulWidget {
     int crossAxisCount,
     FocusNode node,
     KeyEvent event,
-  )? onItemKeyEvent;
+  )?
+  onItemKeyEvent;
   final bool Function(int index)? selectedPredicate;
 
   const TvPosterGrid({
@@ -301,7 +303,8 @@ class _TvPosterGridState extends State<TvPosterGrid> {
     _syncKeys();
     // 数据整体刷新（首项变化）时重置上次聚焦行，避免滚动定位沿用上一条数据的状态
     if (widget.items.isNotEmpty &&
-        (oldWidget.items.isEmpty || oldWidget.items.first.id != widget.items.first.id)) {
+        (oldWidget.items.isEmpty ||
+            oldWidget.items.first.id != widget.items.first.id)) {
       _lastFocusedRow = -1;
     }
   }
@@ -335,7 +338,9 @@ class _TvPosterGridState extends State<TvPosterGrid> {
 
     final controller = _scrollController;
     if (!controller.hasClients || _rowHeight <= 0) {
-      debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 无客户端或行高未计算');
+      debugPrint(
+        '[TvPosterGrid._ensureVisible] index=$index row=$row 无客户端或行高未计算',
+      );
       return;
     }
 
@@ -352,7 +357,9 @@ class _TvPosterGridState extends State<TvPosterGrid> {
       controller.position.maxScrollExtent,
     );
 
-    debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 滚动 -> target=$targetOffset');
+    debugPrint(
+      '[TvPosterGrid._ensureVisible] index=$index row=$row 滚动 -> target=$targetOffset',
+    );
     _lastFocusedRow = row;
     controller.animateTo(
       targetOffset,
@@ -376,23 +383,24 @@ class _TvPosterGridState extends State<TvPosterGrid> {
         _crossAxisCount = count;
 
         // 计算单行高度：item 宽度 / 宽高比 + 行间距
-        final itemWidth = (constraints.maxWidth -
+        final itemWidth =
+            (constraints.maxWidth -
                 widget.padding.horizontal -
                 AppSpacing.md * (count - 1)) /
             count;
         _rowHeight = itemWidth / 0.78 + 6;
         return GridView.builder(
-            controller: _scrollController,
-            padding: widget.padding,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: count,
-              crossAxisSpacing: AppSpacing.md,
-              mainAxisSpacing: 6,
-              childAspectRatio: 0.78,
-            ),
-            scrollCacheExtent: ScrollCacheExtent.pixels(2000),
-            itemCount: widget.items.length,
-            itemBuilder: (context, index) {
+          controller: _scrollController,
+          padding: widget.padding,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: count,
+            crossAxisSpacing: AppSpacing.md,
+            mainAxisSpacing: 6,
+            childAspectRatio: 0.78,
+          ),
+          scrollCacheExtent: ScrollCacheExtent.pixels(2000),
+          itemCount: widget.items.length,
+          itemBuilder: (context, index) {
             final item = widget.items[index];
             final isFirst = index == 0;
             final itemCount = count;

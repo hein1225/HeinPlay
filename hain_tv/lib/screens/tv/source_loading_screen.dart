@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/play_record.dart' as models;
@@ -6,15 +6,13 @@ import 'package:hain_tv/models/source_option.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'player_screen.dart';
 
 class SourceLoadingScreen extends StatefulWidget {
   final models.PlayRecord record;
 
-  const SourceLoadingScreen({
-    super.key,
-    required this.record,
-  });
+  const SourceLoadingScreen({super.key, required this.record});
 
   @override
   State<SourceLoadingScreen> createState() => _SourceLoadingScreenState();
@@ -96,8 +94,48 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
         onKeyEvent: _handleKeyEvent,
         child: Scaffold(
           backgroundColor: AppColors.bgSurface,
-          body: Center(
-            child: _error != null ? _buildError() : _buildLoading(),
+          body: Stack(
+            children: [
+              Center(child: _error != null ? _buildError() : _buildLoading()),
+              if (DeviceUtils.isWindows)
+                Positioned(
+                  top: AppSpacing.md,
+                  left: AppSpacing.md,
+                  child: FocusableWidget(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.arrow_back,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '返回',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

@@ -24,6 +24,7 @@ class MobilePlayerScreen extends StatefulWidget {
   final VideoDetail videoDetail;
   final int episodeIndex;
   final List<SourceOption>? sources;
+  final ValueNotifier<List<SourceOption>>? sourcesNotifier;
   final int initialSourceIndex;
   final PlayerBackendType playerBackend;
   final int initialPositionMs;
@@ -33,6 +34,7 @@ class MobilePlayerScreen extends StatefulWidget {
     required this.videoDetail,
     this.episodeIndex = 0,
     this.sources,
+    this.sourcesNotifier,
     this.initialSourceIndex = 0,
     this.playerBackend = PlayerBackendType.exo,
     this.initialPositionMs = 0,
@@ -45,6 +47,10 @@ class MobilePlayerScreen extends StatefulWidget {
 class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   late VideoDetail _currentVideoDetail;
   late int _currentSourceIndex;
+  // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
+  // 仍能准确找回当前源，避免仅依赖 VideoDetail 的 source/id 匹配失败
+  // 导致播放源被重置到列表首位。
+  String? _initialSourceKey;
   VideoPlayerBackend? _backend;
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
@@ -93,12 +99,30 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   static const double _verticalGestureSensitivity = 0.005;
   static const double _horizontalGestureSensitivity = 0.5;
 
-  List<SourceOption> get _sources => widget.sources ?? [];
-  bool get _canSwitchSource => _sources.length > 1;
+  /// 记录进入播放页前设备/系统的方向，退出时恢复。
+  Orientation? _originalOrientation;
+
+  /// 最近一次切换集数/源的时间，用于跳过片头片尾时避免初始化阶段位置抖动。
+  DateTime? _episodeSwitchAt;
+
+  List<SourceOption> get _sources =>
+      widget.sourcesNotifier?.value ?? widget.sources ?? [];
+  bool get _canSwitchSource => _sources.isNotEmpty;
+
+  /// 根据物理尺寸记录进入播放页时的设备方向。
+  void _captureOriginalOrientation() {
+    final view = WidgetsBinding.instance.platformDispatcher.views.firstOrNull;
+    if (view == null) return;
+    final size = view.physicalSize / view.devicePixelRatio;
+    _originalOrientation = size.width < size.height
+        ? Orientation.portrait
+        : Orientation.landscape;
+  }
 
   @override
   void initState() {
     super.initState();
+    _captureOriginalOrientation();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _currentVideoDetail = widget.videoDetail;
     _currentEpisodeIndex = widget.episodeIndex;
@@ -106,8 +130,12 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       0,
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
+    _initialSourceKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+        ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+        : '${_currentVideoDetail.source}+${_currentVideoDetail.id}';
     _currentPlayerBackend = widget.playerBackend;
     _pendingInitialPositionMs = widget.initialPositionMs;
+    widget.sourcesNotifier?.addListener(_onSourcesChanged);
     _loadSkipConfig();
     _initBackend();
     _initWakelock();
@@ -165,7 +193,14 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     if (source.isEmpty || id.isEmpty) return;
 
     setState(() => _skipConfigLoading = true);
-    final response = await LunaTVService.getSkipConfigs(source: source, id: id);
+    final response = await LunaTVService.getSkipConfigs(
+      source: source,
+      id: id,
+      title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
+      forceRefresh: true,
+    );
     if (mounted) {
       setState(() {
         _skipConfigLoading = false;
@@ -174,6 +209,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
           debugPrint(
             '跳过配置加载成功: source=$source id=$id segments=${_skipConfig!.segments.length}',
           );
+          // 配置加载后立即检查当前位置是否处于片头片尾区间，
+          // 避免网络较慢时初始化阶段已经错过了 _openEpisode 的 startAt。
+          _checkSkipSegments(_position);
         } else {
           debugPrint(
             '跳过配置加载失败或为空: source=$source id=$id error=${response.message}',
@@ -192,6 +230,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       source: source,
       id: id,
       title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
       segments: segments,
     );
     if (mounted && response.success && response.data != null) {
@@ -208,7 +248,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     setState(() => _duration = duration);
     // 如果因超时导致界面显示了播放失败提示，但实际视频已初始化成功，
     // 则取消待执行的自动换源并清除错误。
-    final pendingAutoSwitch = _error == '播放失败，即将进行自动换源' ||
+    final pendingAutoSwitch =
+        _error == '播放失败，即将进行自动换源' ||
         _error == '播放失败，请手动更换播放源' ||
         _error == '播放失败，请尝试切换播放源';
     if (duration.inMilliseconds > 0 && pendingAutoSwitch && !_initialized) {
@@ -235,9 +276,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
           }
         }),
       )
-      ..add(
-        backend.durationStream.listen(_onDurationUpdate),
-      )
+      ..add(backend.durationStream.listen(_onDurationUpdate))
       ..add(
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
@@ -262,56 +301,91 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
   void _checkSkipSegments(Duration position) {
     if (_skipConfig == null || _skipConfig!.segments.isEmpty) return;
+
+    // 刚切换集数/源的前 2 秒内不处理跳过，避免初始化阶段位置抖动导致误触发或 seek 失效。
+    final switchAt = _episodeSwitchAt;
+    if (switchAt != null &&
+        DateTime.now().difference(switchAt) < const Duration(seconds: 2)) {
+      return;
+    }
+
     final seconds = position.inMilliseconds / 1000.0;
     final totalSeconds = _duration.inMilliseconds / 1000.0;
+    if (totalSeconds <= 0) return;
 
     for (final segment in _skipConfig!.segments) {
       final key = '${segment.type}_${segment.start}_${segment.end}';
-      if (segment.autoSkip &&
-          !_skippedSegments.contains(key) &&
-          seconds >= segment.start &&
-          seconds <= segment.end) {
+      if (!segment.autoSkip) continue;
+
+      // 过滤时长异常/超出总时长的无效 segment
+      if (segment.end - segment.start < 1.0) continue;
+      if (segment.type == 'opening' && segment.end >= totalSeconds - 1.0) {
+        continue;
+      }
+      if (segment.type == 'ending' && segment.start <= 1.0) continue;
+
+      final inSegment = seconds >= segment.start && seconds <= segment.end;
+      final passedSegment = seconds > segment.end + 1.0;
+
+      if (inSegment) {
+        // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
+        if (!_skippedSegments.contains(key)) {
+          debugPrint(
+            '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+          );
+        }
+        // 跳到片段结束后 1 秒，确保越过片尾并给 ExoPlayer 留出缓冲余量。
+        _safeSeekToSeconds(segment.end + 1.0);
+        break;
+      } else if (passedSegment && !_skippedSegments.contains(key)) {
+        // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
         _skippedSegments.add(key);
         debugPrint(
-          '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+          '跳过片段已生效: type=${segment.type} end=${segment.end} current=$seconds',
         );
-        _safeSeekToSeconds(segment.end);
+      }
+    }
+
+    // 总时长过短（如 HLS 直播或解析异常）时不触发片尾下一集
+    if (totalSeconds <= 10) return;
+
+    for (final segment in _skipConfig!.segments) {
+      // 只有片尾类型的 segment 才允许触发自动下一集
+      if (segment.type != 'ending' ||
+          !segment.autoNextEpisode ||
+          _autoNextTriggered)
+        continue;
+      var remainingTime = segment.remainingTime;
+      if (remainingTime == null) {
+        remainingTime = totalSeconds - segment.start;
+      }
+      // 限制 remainingTime 不超过实际剩余时长，且不超过总时长一半，
+      // 避免播放器报告错误时长时误触发。
+      final actualRemaining = totalSeconds - segment.start;
+      if (remainingTime > actualRemaining) remainingTime = actualRemaining;
+      // 小于 1 秒视为无效，防止立即触发下一集导致卡死
+      if (remainingTime < 1.0) continue;
+      // 超过总时长一半视为异常配置，不触发
+      if (remainingTime > totalSeconds * 0.5) continue;
+      if (totalSeconds - seconds <= remainingTime) {
+        _autoNextTriggered = true;
+        debugPrint(
+          '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
+        );
+        _nextEpisode();
         break;
       }
     }
 
-    if (totalSeconds > 0) {
-      for (final segment in _skipConfig!.segments) {
-        // 只有片尾类型的 segment 才允许触发自动下一集
-        if (segment.type != 'ending' ||
-            !segment.autoNextEpisode ||
-            _autoNextTriggered) continue;
-        var remainingTime = segment.remainingTime;
-        if (remainingTime == null) {
-          remainingTime = totalSeconds - segment.start;
-        }
-        // 小于 1 秒视为无效，防止立即触发下一集导致卡死
-        if (remainingTime < 1.0) continue;
-        if (totalSeconds - seconds <= remainingTime) {
-          _autoNextTriggered = true;
-          debugPrint(
-            '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
-          );
-          _nextEpisode();
-          break;
-        }
-      }
-
-      const fallbackRemaining = 5.0;
-      if (!_autoNextTriggered && totalSeconds - seconds <= fallbackRemaining) {
-        final endingSegments = _skipConfig!.segments
-            .where((s) => s.type == 'ending' && s.autoNextEpisode)
-            .toList();
-        if (endingSegments.isNotEmpty) {
-          _autoNextTriggered = true;
-          debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
-          _nextEpisode();
-        }
+    const fallbackRemaining = 5.0;
+    if (!_autoNextTriggered && totalSeconds - seconds <= fallbackRemaining) {
+      final endingSegments = _skipConfig!.segments
+          .where((s) => s.type == 'ending' && s.autoNextEpisode)
+          .toList();
+      if (endingSegments.isNotEmpty) {
+        _autoNextTriggered = true;
+        debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
+        _nextEpisode();
       }
     }
   }
@@ -341,10 +415,17 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       _autoNextTriggered = false;
     });
 
+    // 记录切换时间，用于跳过逻辑冷却。
+    _episodeSwitchAt = DateTime.now();
+
+    // 先加载跳过配置，确保打开播放器前已知片头片尾区间，
+    // 避免异步加载完成前错过 startAt 定位时机。
+    await _loadSkipConfig();
+
     final timeoutSeconds = await UserDataService.getAutoSwitchSourceTimeout();
     final openTimeout = Duration(seconds: timeoutSeconds);
 
-    Future<bool> tryOpen(String url) async {
+    Future<bool> tryOpen(String url, {int initialPositionMs = 0}) async {
       final startTime = DateTime.now();
       try {
         debugPrint('MobilePlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
@@ -352,6 +433,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
             ?.open(
               url,
               proxyMode: _currentVideoDetail.proxyMode,
+              startAt: initialPositionMs > 0
+                  ? Duration(milliseconds: initialPositionMs)
+                  : null,
             )
             .timeout(openTimeout);
 
@@ -395,7 +479,28 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       url = filteredUrl;
     }
 
-    bool success = await tryOpen(url);
+    // 若已配置自动跳过片头，且待恢复位置落在片头区间内，
+    // 则直接从片头结束处开始播放，避免初始化完成后再 seek 失效。
+    final openingSegment = _skipConfig?.segments
+        .where((s) => s.type == 'opening' && s.autoSkip)
+        .firstOrNull;
+    if (openingSegment != null) {
+      final startMs = (openingSegment.start * 1000).toInt();
+      final endMs = (openingSegment.end * 1000).toInt();
+      if (_pendingInitialPositionMs >= startMs &&
+          _pendingInitialPositionMs <= endMs) {
+        _pendingInitialPositionMs = endMs;
+        _skippedSegments.add(
+          '${openingSegment.type}_${openingSegment.start}_${openingSegment.end}',
+        );
+        debugPrint('MobilePlayerScreen 片头起始定位: ${openingSegment.end}s');
+      }
+    }
+
+    bool success = await tryOpen(
+      url,
+      initialPositionMs: _pendingInitialPositionMs,
+    );
 
     if (!mounted) return;
 
@@ -419,13 +524,17 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         _initialized = true;
         _error = null;
       });
-      // 恢复上次播放位置，并限制在新视频总时长范围内
+      // 恢复上次播放位置，并限制在新视频总时长范围内。
+      // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
       if (_pendingInitialPositionMs > 0) {
         final maxMs = _duration.inMilliseconds > 500
             ? _duration.inMilliseconds - 500
             : _duration.inMilliseconds;
         final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
-        _backend?.seek(Duration(milliseconds: clampedMs));
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (mounted) {
+          _backend?.seek(Duration(milliseconds: clampedMs));
+        }
         _pendingInitialPositionMs = 0;
       }
       _showControls();
@@ -499,7 +608,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         continue;
       }
 
-      _backend?.dispose();
+      await _backend?.dispose();
       for (final sub in _subscriptions) {
         sub.cancel();
       }
@@ -531,9 +640,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
             }
           }),
         )
-        ..add(
-          backend.durationStream.listen(_onDurationUpdate),
-        )
+        ..add(backend.durationStream.listen(_onDurationUpdate))
         ..add(
           backend.playingStream.listen((playing) {
             if (mounted) setState(() => _playing = playing);
@@ -556,6 +663,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
             ?.open(
               url,
               proxyMode: _currentVideoDetail.proxyMode,
+              startAt: previousPositionMs > 0
+                  ? Duration(milliseconds: previousPositionMs)
+                  : null,
             )
             .timeout(Duration(seconds: timeoutSeconds));
 
@@ -571,13 +681,6 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
         if (mounted) {
           setState(() => _initialized = true);
-          if (previousPositionMs > 0) {
-            final maxMs = _duration.inMilliseconds > 500
-                ? _duration.inMilliseconds - 500
-                : _duration.inMilliseconds;
-            final clampedMs = previousPositionMs.clamp(0, maxMs);
-            _backend?.seek(Duration(milliseconds: clampedMs));
-          }
           _showControls();
           return true;
         }
@@ -618,7 +721,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     final previousEpisodeIndex = _currentEpisodeIndex;
     final previousPositionMs = _position.inMilliseconds;
 
-    _backend?.dispose();
+    await _backend?.dispose();
     for (final sub in _subscriptions) {
       sub.cancel();
     }
@@ -773,17 +876,20 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
             width: 400,
             child: ListView.builder(
               shrinkWrap: true,
-              itemCount: PlayerBackendType.values.length,
+              itemCount: PlayerBackendFactory.availableBackends.length,
               itemBuilder: (context, index) {
-                final type = PlayerBackendType.values[index];
+                final type = PlayerBackendFactory.availableBackends[index];
                 final selected = type == _currentPlayerBackend;
                 final String label;
                 switch (type) {
-                  case PlayerBackendType.mediaKit:
-                    label = 'MediaKit';
-                    break;
                   case PlayerBackendType.exo:
                     label = 'ExoPlayer';
+                    break;
+                  case PlayerBackendType.flutterMpv:
+                    label = 'flutter_mpv';
+                    break;
+                  case PlayerBackendType.fvp:
+                    label = 'FVP';
                     break;
                 }
                 return ListTile(
@@ -835,7 +941,12 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     // 切换播放器前保存当前进度，初始化完成后恢复
     _pendingInitialPositionMs = _position.inMilliseconds;
 
-    _backend?.dispose();
+    // 必须先 await dispose 旧后端，否则 ExoPlayer 等平台播放器会在后台继续播放。
+    await _backend?.dispose();
+    _backend = null;
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
     _subscriptions.clear();
 
     setState(() {
@@ -946,15 +1057,16 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   void _start3xSeek() {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
-    _continuousSeekTimer = Timer.periodic(
-      const Duration(milliseconds: 200),
-      (_) {
-        if (!_isLongPressSeeking || _backend == null) return;
-        final step = _longPressDirection == 'right' ? _seekStep * 3 : -_seekStep * 3;
-        final target = _position + Duration(seconds: step);
-        _backend?.seek(_clampDuration(target));
-      },
-    );
+    _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
+      _,
+    ) {
+      if (!_isLongPressSeeking || _backend == null) return;
+      final step = _longPressDirection == 'right'
+          ? _seekStep * 3
+          : -_seekStep * 3;
+      final target = _position + Duration(seconds: step);
+      _backend?.seek(_clampDuration(target));
+    });
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
@@ -1093,10 +1205,12 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
   String _playerBackendLabel(PlayerBackendType type) {
     switch (type) {
-      case PlayerBackendType.mediaKit:
-        return 'MediaKit';
       case PlayerBackendType.exo:
         return 'ExoPlayer';
+      case PlayerBackendType.flutterMpv:
+        return 'flutter_mpv';
+      case PlayerBackendType.fvp:
+        return 'FVP';
     }
   }
 
@@ -1119,11 +1233,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   @override
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    // 退出播放页后恢复竖屏，避免横屏播放后整个应用保持横屏
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
+
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
@@ -1134,9 +1244,13 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       sub.cancel();
     }
 
-    // 立即保存播放记录到 LunaTV
+    // 先暂停播放再异步释放后端，避免在页面转场动画期间阻塞 UI。
+    _backend?.pause();
+
+    // 立即保存播放记录到 LunaTV（本地保存，异步上传不阻塞）
     _savePlayRecordToLunaTV();
 
+    // 异步释放后端与代理，避免 dispose 中的同步/等待操作卡住转场动画。
     _backend?.dispose();
 
     // 退出播放页后允许系统自动休眠/降亮度
@@ -1144,10 +1258,81 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       debugPrint('MobilePlayerScreen: 禁用屏幕常亮失败: $e');
     });
 
-    // 释放本地 M3U8 代理
-    AdFilterEngine.dispose();
+    // 释放本地 M3U8 代理，使用 fire-and-forget 避免关闭连接时阻塞 UI。
+    AdFilterEngine.dispose().catchError((e) {
+      debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败: $e');
+    });
 
+    // 将方向恢复推迟到当前帧绘制完成后，避免在路由退出动画期间
+    // 同时触发方向切换与 PlatformView 销毁，导致偶发卡死。
+    final original = _originalOrientation;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreOrientation(original);
+    });
+
+    widget.sourcesNotifier?.removeListener(_onSourcesChanged);
     super.dispose();
+  }
+
+  /// 详情页在后台搜索/测速到新源或重排后，通过 [sourcesNotifier] 同步到播放页。
+  /// 保持当前正在播放的源仍处于选中状态，确保换源列表实时刷新且不会跳到其他源。
+  void _onSourcesChanged() {
+    if (!mounted) return;
+    setState(() {
+      final candidates = [
+        '${_currentVideoDetail.source}+${_currentVideoDetail.id}',
+        if (_initialSourceKey != null && _initialSourceKey!.isNotEmpty)
+          _initialSourceKey!,
+      ];
+      final currentKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+          ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+          : null;
+      if (currentKey != null && currentKey.isNotEmpty && !candidates.contains(currentKey)) {
+        candidates.add(currentKey);
+      }
+
+      var newIndex = -1;
+      for (final key in candidates) {
+        if (key.isEmpty || key == '+') continue;
+        final index = _sources.indexWhere(
+          (s) => '${s.source}+${s.id}' == key,
+        );
+        if (index >= 0) {
+          newIndex = index;
+          break;
+        }
+      }
+
+      if (newIndex >= 0) {
+        _currentSourceIndex = newIndex;
+      } else {
+        _currentSourceIndex = _currentSourceIndex.clamp(
+          0,
+          _sources.isEmpty ? 0 : _sources.length - 1,
+        );
+      }
+    });
+  }
+
+  Future<void> _restoreOrientation(Orientation? original) async {
+    try {
+      if (original == Orientation.landscape) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else if (original == Orientation.portrait) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+      } else {
+        // 未能确定原始方向时恢复为系统默认（全部允许）
+        await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      }
+    } catch (e) {
+      debugPrint('MobilePlayerScreen: 恢复方向失败: $e');
+    }
   }
 
   /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
@@ -1182,10 +1367,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         child: CircularProgressIndicator(color: AppColors.primary),
       );
     }
-    return Container(
-      color: Colors.black,
-      child: _backend!.buildVideoWidget(),
-    );
+    return Container(color: Colors.black, child: _backend!.buildVideoWidget());
   }
 
   Widget _buildError() {
@@ -1226,11 +1408,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              _gestureIndicatorIcon,
-              color: AppColors.textPrimary,
-              size: 32,
-            ),
+            Icon(_gestureIndicatorIcon, color: AppColors.textPrimary, size: 32),
             const SizedBox(height: AppSpacing.sm),
             Text(
               _gestureIndicatorText,
@@ -1363,8 +1541,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                   child: LinearProgressIndicator(
                     value: _duration.inMilliseconds > 0
-                        ? _position.inMilliseconds /
-                              _duration.inMilliseconds
+                        ? _position.inMilliseconds / _duration.inMilliseconds
                         : 0.0,
                     backgroundColor: AppColors.border,
                     valueColor: const AlwaysStoppedAnimation<Color>(
@@ -1417,9 +1594,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  _buildControlsRow(
-                    children: _buildFunctionButtons(),
-                  ),
+                  _buildControlsRow(children: _buildFunctionButtons()),
                 ],
               )
             else
@@ -1706,6 +1881,7 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
                     key: _itemKeys[index],
                     source: widget.sources[index],
                     selected: index == widget.currentIndex,
+                    rank: index + 1,
                     formatSpeed: widget.formatSpeed,
                     speedColor: widget.speedColor,
                     onTap: () => widget.onSelect(index),
@@ -1722,6 +1898,7 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
 class _SourceSelectorCard extends StatelessWidget {
   final SourceOption source;
   final bool selected;
+  final int rank;
   final String Function(double?) formatSpeed;
   final Color Function(double?) speedColor;
   final VoidCallback onTap;
@@ -1730,6 +1907,7 @@ class _SourceSelectorCard extends StatelessWidget {
     super.key,
     required this.source,
     required this.selected,
+    required this.rank,
     required this.formatSpeed,
     required this.speedColor,
     required this.onTap,
@@ -1760,9 +1938,7 @@ class _SourceSelectorCard extends StatelessWidget {
                   cacheManager: HainTvCacheManager(),
                   memCacheWidth: 300,
                   memCacheHeight: 450,
-                  placeholder: (_, __) => Container(
-                    color: AppColors.bgSurface,
-                  ),
+                  placeholder: (_, __) => Container(color: AppColors.bgSurface),
                   errorWidget: (_, __, ___) => Container(
                     color: AppColors.bgSurface,
                     child: Center(
@@ -1838,6 +2014,30 @@ class _SourceSelectorCard extends StatelessWidget {
                   ),
                 ),
               ),
+              // 排名标识
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgElevated.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    'No.$rank',
+                    style: const TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ),
               if (speedText.isNotEmpty)
                 Positioned(
                   top: 6,
@@ -1888,7 +2088,7 @@ class _SourceSelectorCard extends StatelessWidget {
                 ),
               if (selected)
                 const Positioned(
-                  top: 6,
+                  top: 28,
                   left: 6,
                   child: Icon(
                     Icons.check_circle,
@@ -1991,9 +2191,7 @@ class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
                     fontFamily: 'NotoSansSC',
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: selected
-                        ? AppColors.primary
-                        : AppColors.textPrimary,
+                    color: selected ? AppColors.primary : AppColors.textPrimary,
                   ),
                 ),
               ),

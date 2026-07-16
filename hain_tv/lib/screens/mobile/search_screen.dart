@@ -139,11 +139,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.history,
-              color: AppColors.textSecondary,
-              size: 16,
-            ),
+            const Icon(Icons.history, color: AppColors.textSecondary, size: 16),
             const SizedBox(width: AppSpacing.xs),
             const Expanded(
               child: Text(
@@ -223,11 +219,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.search,
-              size: 64,
-              color: AppColors.textMuted,
-            ),
+            Icon(Icons.search, size: 64, color: AppColors.textMuted),
             SizedBox(height: AppSpacing.md),
             Text(
               '输入关键词开始搜索',
@@ -257,7 +249,9 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
         title: result.title,
         posterUrl: result.poster.isNotEmpty ? result.poster : null,
         year: result.year,
-        subtitle: result.sourceName.isNotEmpty ? result.sourceName : result.source,
+        subtitle: result.sourceName.isNotEmpty
+            ? result.sourceName
+            : result.source,
         onTap: () => _openDetail(result),
       );
     }).toList();

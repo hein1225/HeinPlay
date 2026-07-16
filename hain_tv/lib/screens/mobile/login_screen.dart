@@ -178,10 +178,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
         const SizedBox(height: AppSpacing.xs),
         const Text(
           '手机版',
-          style: TextStyle(
-            fontSize: 14,
-            color: AppColors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
         ),
       ],
     );
@@ -283,10 +280,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          textStyle: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         child: _loading
             ? const SizedBox(

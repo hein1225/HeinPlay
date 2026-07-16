@@ -28,10 +28,9 @@
 
 ### 多播放器后端
 
-- 支持 **ExoPlayer**（默认）与 **MediaKit** 两种播放器后端。
-- 可在设置中按需切换，适配不同网络格式（HLS、DASH、SS、普通 MP4）。
-- 网络流自动使用 PlatformView 渲染。
-- 支持硬件解码开关，按需开启或关闭 `media_kit` 硬件加速。
+- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，可在设置中切换为 **flutter_mpv**（基于 libmpv），适配不同网络格式（HLS、DASH、普通 MP4）。
+- **Windows**：仅使用 **flutter_mpv**，不再提供其他后端切换，保证桌面端播放稳定性。
+- 支持硬件解码开关，按需开启或关闭 `flutter_mpv` 硬件加速。
 
 ### 搜索
 
@@ -81,14 +80,22 @@
 
 ## 支持平台
 
-| 平台         | 状态     | 说明                            |
-| ---------- | ------ | ----------------------------- |
-| Android TV | 主要目标平台 | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航 |
-| Android    | 已发布    | 手机竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
-| Web        | 支持     | 受浏览器 CORS 限制，部分图片资源可能无法加载     |
-| Windows    | 调试中    | 桌面端调试与预览，正式发布敬请期待             |
-| Linux      | 计划中    | 桌面端版本后续支持                    |
-| iOS        | 计划中    | 移动端版本后续支持                    |
+| 平台         | 状态     | 系统要求 | 说明                            |
+| ---------- | ------ | -------- | ----------------------------- |
+| Android TV | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航 |
+| Android    | 已发布    | Android 7.0+（API 24+） | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
+| Web        | 支持     | 现代浏览器 | 受浏览器 CORS 限制，部分图片资源可能无法加载     |
+| Windows    | 已发布    | Windows 10 1809+ | 桌面端便携版，使用 `flutter_mpv` 播放             |
+| Linux      | 计划中    | — | 桌面端版本后续支持                    |
+| iOS        | 计划中    | — | 移动端版本后续支持                    |
+
+### Release 文件说明
+
+| 文件名 | 适用设备 | 系统要求 | 说明 |
+| --- | --- | --- | --- |
+| `heinplay-1.1.4-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
+| `heinplay-1.1.4-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
+| `heinplay-1.1.4-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，无需安装。 |
 
 ## 项目结构
 
@@ -115,7 +122,7 @@ hain_tv/
 
 - Flutter SDK: `^3.12.0`
 - Dart SDK: 与 Flutter 版本匹配
-- Android SDK: minSdk 21
+- Android SDK: minSdk 24（Android 7.0+）
 - JDK: 用于 Android 构建
 
 ## 运行与调试
@@ -139,20 +146,50 @@ flutter run -d windows
 
 ## 构建发布包
 
-项目提供 PowerShell 构建脚本，位于 `scripts/` 目录：
+### 一键全平台构建（推荐）
+
+项目根目录下的 `build_all.bat` 是 HeinPlay 全平台一键构建入口，实际构建逻辑由同目录的 `build_all.ps1` 实现。运行后会依次完成：
+
+1. **Flutter 环境检查**：运行 `flutter doctor`。
+2. **依赖准备**：执行 `flutter pub get`。
+3. **Windows 原生依赖检查**：检测并清理损坏或版本错误的 `mpv-dev` / `ANGLE` 等 `.7z` 依赖包，确保 CMake 使用正确版本重新解压。
+4. **Android 签名完整性检查**：验证 TV 版（`android/key.properties`）与手机版（`android/key-mobile.properties`）签名配置及 keystore 文件是否存在。
+5. **分平台构建**：按需构建手机版、TV 版、Windows 版，失败时输出对应日志路径与最近 30 行日志。
+6. **结果汇总**：构建成功后输出产物可点击链接（apk / zip），并在最后汇总成功/失败/跳过状态。
+
+```bash
+# 交互式菜单（最常用）
+e:\code\HeinPlay\build_all.bat
+
+# 非交互式：跳过 doctor，仅构建 Windows 版
+e:\code\HeinPlay\build_all.bat -SkipDoctor -SkipMobile -SkipTv
+
+# 非交互式：跳过 doctor，构建全部版本
+e:\code\HeinPlay\build_all.bat -SkipDoctor
+```
+
+- 产物输出目录：`hain_tv/dist/`
+- 构建日志目录：`hain_tv/logs/`
+
+### 单独构建
+
+项目也提供独立的 PowerShell 构建脚本，位于 `hain_tv/scripts/` 目录：
 
 ```powershell
 # 构建 Android TV Release APK
-.\scripts\build_android_tv.ps1
+.\hain_tv\scripts\build_tv.ps1
 
 # 构建 Android 手机版 Release APK
-.\scripts\build_mobile.ps1
+.\hain_tv\scripts\build_mobile.ps1
+
+# 构建 Windows 便携版
+.\hain_tv\scripts\build_windows.ps1
 
 # 构建 Web 版本
-.\scripts\build_web.ps1
+.\hain_tv\scripts\build_web.ps1
 
 # 生成应用图标
-.\scripts\generate_icons.ps1
+.\hain_tv\scripts\generate_icons.ps1
 ```
 
 Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mobile.properties`（手机版）中配置的签名密钥。详细构建说明请查看 [BUILD_GUIDE.md](./BUILD_GUIDE.md)。
@@ -160,6 +197,14 @@ Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mob
 ## 更新日志
 
 <details open>
+<summary><strong>1.1.4</strong></summary>
+
+- **Windows 版本播放器统一**：Windows 端仅保留 `flutter_mpv` 一个播放器后端，不再提供其他后端切换，保证桌面端播放稳定性。
+- **Release 文件与设备对应**：`heinplay-1.1.4-tv.apk` 用于 Android TV / 电视盒子，`heinplay-1.1.4-mobile.apk` 用于 Android 手机 / 平板，`heinplay-1.1.4-windows-portable.zip` 用于 Windows 10/11 电脑；Android 端要求 Android 7.0+（API 24+）。
+
+</details>
+
+<details>
 <summary><strong>1.1.3</strong></summary>
 
 - **手机版正式发布**：新增 Android 手机版入口，与 TV 版共用业务层但拥有独立的竖屏触屏 UI；支持首页、分类、搜索、个人中心四大模块；播放器支持屏幕旋转与横竖屏自适应；构建产物区分 `tv` / `mobile` 两个 Flavor，使用不同包名与签名密钥。手机版 APK 可在 GitCode / GitHub Release 页面下载。
@@ -244,7 +289,7 @@ Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mob
 - **主题色选择**：在设置中提供多套主题色方案，允许用户自定义应用强调色。
 - **LunaTV 直播源**：对接 LunaTV 直播源接口，在应用内直接浏览和播放电视直播频道。
 - **TVBox 订阅源支持**：尝试解析 TVBox 标准订阅源（如 JSON、TXT 格式），将其作为影视播放源导入与切换。
-- **Windows 版本**：桌面端 Windows 版本正在开发中，敬请期待。
+- **Windows 版本优化**：持续优化桌面端焦点、快捷键与播放体验。
 - **Linux / iOS 版本**：后续计划支持 Linux 桌面端与 iOS 移动端。
 
 ## 重要：需妥善保管的密钥文件

@@ -39,7 +39,9 @@ class VideoInfo {
       sourceName: json['source_name']?.toString() ?? '',
       year: json['year']?.toString() ?? '',
       cover: json['cover']?.toString() ?? '',
-      index: json['index'] is int ? json['index'] : int.tryParse(json['index']?.toString() ?? '1') ?? 1,
+      index: json['index'] is int
+          ? json['index']
+          : int.tryParse(json['index']?.toString() ?? '1') ?? 1,
       totalEpisodes: json['total_episodes'] is int
           ? json['total_episodes']
           : int.tryParse(json['total_episodes']?.toString() ?? '1') ?? 1,

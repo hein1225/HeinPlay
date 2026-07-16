@@ -157,6 +157,14 @@ class LocalStorageService {
     await prefs.remove(_favoritesKey);
   }
 
+  static Future<void> setFavorites(List<FavoriteRecord> records) async {
+    final prefs = await _prefs();
+    await prefs.setString(
+      _favoritesKey,
+      json.encode(records.map((e) => e.toJson()).toList()),
+    );
+  }
+
   static Future<List<FavoriteRecord>> getFavorites() async {
     final prefs = await _prefs();
     final raw = prefs.getString(_favoritesKey);

@@ -1,12 +1,15 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/services/ad_filter_service.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/cache_service.dart';
 import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,7 +30,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hardwareDecoding = true;
   BangumiApiProxyType _bangumiApiProxyType = BangumiApiProxyType.cmliussss;
   String _bangumiApiProxyUrl = '';
-  BangumiImageProxyType _bangumiImageProxyType = BangumiImageProxyType.cmliussss;
+  BangumiImageProxyType _bangumiImageProxyType =
+      BangumiImageProxyType.cmliussss;
   String _bangumiImageProxyUrl = '';
 
   @override
@@ -42,14 +46,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final skip = await UserDataService.getAutoSkipOpeningEnding();
     final next = await UserDataService.getAutoPlayNextEpisode();
     final autoSwitchSource = await UserDataService.getAutoSwitchSource();
-    final autoSwitchSourceTimeout = await UserDataService.getAutoSwitchSourceTimeout();
+    final autoSwitchSourceTimeout =
+        await UserDataService.getAutoSwitchSourceTimeout();
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
     final bangumiApiProxyType = await UserDataService.getBangumiApiProxyType();
     final bangumiApiProxyUrl = await UserDataService.getBangumiApiProxyUrl();
-    final bangumiImageProxyType = await UserDataService.getBangumiImageProxyType();
-    final bangumiImageProxyUrl = await UserDataService.getBangumiImageProxyUrl();
+    final bangumiImageProxyType =
+        await UserDataService.getBangumiImageProxyType();
+    final bangumiImageProxyUrl =
+        await UserDataService.getBangumiImageProxyUrl();
     await BangumiService.loadProxySettings();
     setState(() {
       _playerBackend = backend;
@@ -106,10 +113,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('切换失败: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('切换失败: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -201,13 +205,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _requestStoragePermission() async {
+    if (!Platform.isAndroid) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('当前平台无需存储权限')));
+      }
+      return;
+    }
+
     final status = await Permission.storage.request();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            status.isGranted ? '已获取存储权限' : '存储权限被拒绝',
-          ),
+          content: Text(status.isGranted ? '已获取存储权限' : '存储权限被拒绝'),
           backgroundColor: status.isGranted ? Colors.green : Colors.orange,
         ),
       );
@@ -222,10 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            '图片与豆瓣数据缓存已清除',
-            style: TextStyle(color: Colors.white),
-          ),
+          content: Text('图片与豆瓣数据缓存已清除', style: TextStyle(color: Colors.white)),
           backgroundColor: AppColors.bgElevated,
         ),
       );
@@ -247,6 +255,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: AppColors.bgSurface,
         elevation: 0,
         title: const Text('软件设置'),
+        leading: DeviceUtils.isWindows
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
       ),
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.lg),
@@ -275,7 +289,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _buildSwitchTile(
             title: '硬件解码',
-            subtitle: 'media_kit 播放器生效；关闭后使用软件解码',
+            subtitle: 'flutter_mpv 播放器生效；关闭后使用软件解码',
             value: _hardwareDecoding,
             onChanged: _setHardwareDecoding,
           ),
@@ -312,14 +326,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('关于'),
-          _buildInfoTile(
-            title: '版本',
-            value: '1.1.3',
-          ),
-          _buildInfoTile(
-            title: '作者',
-            value: '海因茨',
-          ),
+          _buildInfoTile(title: '版本', value: '1.1.4'),
+          _buildInfoTile(title: '作者', value: '海因茨'),
         ],
       ),
     );
@@ -342,28 +350,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _playerBackendTitle(PlayerBackendType type) {
+    final isDefault = PlayerBackendFactory.platformDefault == type;
+    switch (type) {
+      case PlayerBackendType.exo:
+        return isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
+      case PlayerBackendType.flutterMpv:
+        return isDefault ? 'flutter_mpv（默认）' : 'flutter_mpv';
+      case PlayerBackendType.fvp:
+        return isDefault ? 'FVP（默认）' : 'FVP';
+    }
+  }
+
+  String _playerBackendSubtitle(PlayerBackendType type) {
+    switch (type) {
+      case PlayerBackendType.exo:
+        return 'Android 原生播放器，硬解能力强';
+      case PlayerBackendType.flutterMpv:
+        return '基于 libmpv，兼容性较强';
+      case PlayerBackendType.fvp:
+        return '基于 libmdk，桌面端兼容性好';
+    }
+  }
+
   Widget _buildPlayerBackendTile() {
-    return _buildCard(
-      child: Column(
-        children: [
-          _buildRadioTile<PlayerBackendType>(
-            title: 'ExoPlayer（默认）',
-            subtitle: 'Android 原生播放器，硬解能力强',
-            value: PlayerBackendType.exo,
-            groupValue: _playerBackend,
-            onChanged: _setPlayerBackend,
-          ),
-          const Divider(height: 1, color: AppColors.border),
-          _buildRadioTile<PlayerBackendType>(
-            title: 'media_kit',
-            subtitle: '兼容性强，支持 HLS/DASH/MKV',
-            value: PlayerBackendType.mediaKit,
-            groupValue: _playerBackend,
-            onChanged: _setPlayerBackend,
-          ),
-        ],
-      ),
-    );
+    final tiles = <Widget>[];
+    for (final type in PlayerBackendFactory.availableBackends) {
+      if (tiles.isNotEmpty) {
+        tiles.add(const Divider(height: 1, color: AppColors.border));
+      }
+      tiles.add(
+        _buildRadioTile<PlayerBackendType>(
+          title: _playerBackendTitle(type),
+          subtitle: _playerBackendSubtitle(type),
+          value: type,
+          groupValue: _playerBackend,
+          onChanged: _setPlayerBackend,
+        ),
+      );
+    }
+
+    return _buildCard(child: Column(children: tiles));
   }
 
   Widget _buildDoubanSourceTile() {
@@ -378,10 +405,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             child: Text(
               '当前：${_doubanSourceLabel(_doubanSource)}',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textMuted,
-              ),
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ),
           const Divider(height: 1, color: AppColors.border),
@@ -428,7 +452,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Builder(
             builder: (context) => FocusableWidget(
               onTap: () => _setAutoSwitchSource(!_autoSwitchSource),
-              onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+              onFocusChange: (focused) =>
+                  _ensureVisibleOnFocus(context, focused),
               child: SwitchListTile(
                 title: const Text(
                   '播放失败自动切换播放源',
@@ -635,7 +660,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   current: _bangumiApiProxyUrl,
                   onSave: _setBangumiApiProxyUrl,
                 ),
-                onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+                onFocusChange: (focused) =>
+                    _ensureVisibleOnFocus(context, focused),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -646,7 +672,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _bangumiApiProxyUrl.isEmpty ? '点击输入反代地址' : _bangumiApiProxyUrl,
+                        _bangumiApiProxyUrl.isEmpty
+                            ? '点击输入反代地址'
+                            : _bangumiApiProxyUrl,
                         style: TextStyle(
                           fontSize: 13,
                           color: _bangumiApiProxyUrl.isEmpty
@@ -678,10 +706,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               child: Text(
                 'Thanks to @CMLiussss',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ),
         ],
@@ -749,7 +774,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   current: _bangumiImageProxyUrl,
                   onSave: _setBangumiImageProxyUrl,
                 ),
-                onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+                onFocusChange: (focused) =>
+                    _ensureVisibleOnFocus(context, focused),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -760,7 +786,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _bangumiImageProxyUrl.isEmpty ? '点击输入图片代理地址' : _bangumiImageProxyUrl,
+                        _bangumiImageProxyUrl.isEmpty
+                            ? '点击输入图片代理地址'
+                            : _bangumiImageProxyUrl,
                         style: TextStyle(
                           fontSize: 13,
                           color: _bangumiImageProxyUrl.isEmpty
@@ -792,10 +820,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               child: Text(
                 'Thanks to @CMLiussss',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ),
         ],
@@ -876,7 +901,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             subtitle: Text(
               subtitle,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
             value: value,
             onChanged: onChanged,
@@ -913,7 +941,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             subtitle: Text(
               subtitle,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
             trailing: const Icon(
               Icons.chevron_right,
@@ -953,64 +984,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onTap: () => onChanged(value),
         onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
         child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected ? AppColors.primary : AppColors.textMuted,
-                  width: 2,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? AppColors.primary : AppColors.textMuted,
+                    width: 2,
+                  ),
                 ),
+                child: selected
+                    ? Center(
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      )
+                    : null,
               ),
-              child: selected
-                  ? Center(
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.primary,
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.textPrimary,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                    if (subtitle != null)
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
                         ),
                       ),
-                    )
-                  : null,
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: selected ? AppColors.primary : AppColors.textPrimary,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildCard({required Widget child}) {
     return Container(

@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:hain_tv/theme.dart';
 
 class FocusableWidget extends StatefulWidget {
@@ -50,14 +51,28 @@ class _FocusableWidgetState extends State<FocusableWidget> {
 
   void _onFocusChange(bool focused) {
     if (_focused == focused) return;
-    setState(() {
-      _focused = focused;
-    });
-    widget.onFocusChange?.call(focused);
+
+    void apply() {
+      if (!mounted) return;
+      setState(() {
+        _focused = focused;
+      });
+      widget.onFocusChange?.call(focused);
+    }
+
+    // FocusableActionDetector 可能会在 build 阶段回调 focus 变化，
+    // 直接 setState 会触发 "setState during build" 异常， defer 到帧尾处理。
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => apply());
+    } else {
+      apply();
+    }
   }
 
   void _onHover(bool hovered) {
     if (_hovered == hovered) return;
+    if (!mounted) return;
     setState(() {
       _hovered = hovered;
     });
@@ -100,12 +115,7 @@ class _FocusableWidgetState extends State<FocusableWidget> {
     );
 
     if (!widget.enabled) {
-      result = IgnorePointer(
-        child: Opacity(
-          opacity: 0.5,
-          child: result,
-        ),
-      );
+      result = IgnorePointer(child: Opacity(opacity: 0.5, child: result));
     }
 
     return Focus(

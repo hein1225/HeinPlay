@@ -1,20 +1,61 @@
+import 'dart:io';
+
+import 'package:video_player_android/video_player_android.dart';
+
 import '../services/user_data_service.dart';
 import 'exo_player_backend.dart';
-import 'media_kit_backend.dart';
+import 'flutter_mpv_backend.dart';
+import 'fvp_backend.dart';
 import 'video_player_backend.dart';
 
 class PlayerBackendFactory {
-  static VideoPlayerBackend create(PlayerBackendType type) {
-    switch (type) {
-      case PlayerBackendType.mediaKit:
-        return MediaKitBackend();
-      case PlayerBackendType.exo:
-        return ExoPlayerBackend();
+  /// 将 video_player 平台实现恢复为 Android 原生 ExoPlayer。
+  ///
+  /// 某些插件可能会全局替换 [VideoPlayerPlatform.instance]，
+  /// 使用 ExoPlayer 前显式恢复官方 Android 实现。
+  static void _restoreAndroidVideoPlayer() {
+    if (Platform.isAndroid) {
+      AndroidVideoPlayer.registerWith();
     }
   }
 
+  static VideoPlayerBackend create(PlayerBackendType type) {
+    switch (type) {
+      case PlayerBackendType.exo:
+        _restoreAndroidVideoPlayer();
+        return ExoPlayerBackend();
+      case PlayerBackendType.flutterMpv:
+        return FlutterMpvBackend();
+      case PlayerBackendType.fvp:
+        return FvpBackend();
+    }
+  }
+
+  /// 各平台默认后端：
+  /// - Android / TV：ExoPlayer
+  /// - Windows：fvp
+  static PlayerBackendType get platformDefault {
+    if (Platform.isWindows) return PlayerBackendType.fvp;
+    return PlayerBackendType.exo;
+  }
+
+  /// 当前平台可供用户切换的播放器后端列表。
+  /// - Android / TV：ExoPlayer、flutter_mpv
+  /// - Windows：fvp、flutter_mpv
+  static List<PlayerBackendType> get availableBackends {
+    if (Platform.isWindows) {
+      return [PlayerBackendType.fvp, PlayerBackendType.flutterMpv];
+    }
+    return [PlayerBackendType.exo, PlayerBackendType.flutterMpv];
+  }
+
   static Future<VideoPlayerBackend> createDefault() async {
-    final type = await UserDataService.getPlayerBackend();
+    var type = await UserDataService.getPlayerBackend();
+    // 若全局设置中的后端在当前平台不可用，回退到平台默认并更新设置。
+    if (!availableBackends.contains(type)) {
+      type = platformDefault;
+      await UserDataService.savePlayerBackend(type);
+    }
     return create(type);
   }
 
@@ -23,11 +64,16 @@ class PlayerBackendFactory {
     String id,
   ) async {
     final fallback = await UserDataService.getPlayerBackend();
-    final type = await UserDataService.getPlayerBackendForVideo(
+    var type = await UserDataService.getPlayerBackendForVideo(
       source,
       id,
       fallback: fallback,
     );
+    // 若某个视频单独保存的后端在当前平台不可用，回退到平台默认。
+    if (!availableBackends.contains(type)) {
+      type = platformDefault;
+      await UserDataService.savePlayerBackendForVideo(source, id, type);
+    }
     return create(type);
   }
 }

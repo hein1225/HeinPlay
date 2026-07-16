@@ -14,9 +14,7 @@ class M3u8AdFilter {
   static const String _tagCueIn = '#EXT-X-CUE-IN';
   static const String _tagDateRange = '#EXT-X-DATERANGE';
 
-  static final RegExp _regexMediaDuration = RegExp(
-    r'#EXTINF:([\d\.]+)\b',
-  );
+  static final RegExp _regexMediaDuration = RegExp(r'#EXTINF:([\d\.]+)\b');
   static final RegExp _regexUri = RegExp(r'URI="(.+?)"');
 
   // 广告片段 URL 特征识别
@@ -236,7 +234,9 @@ class M3u8AdFilter {
       }
 
       if (item.startsWith('#')) {
-        final output = _hasUriAttribute(item) ? _resolveUriLine(tsUrlPre, raw) : raw;
+        final output = _hasUriAttribute(item)
+            ? _resolveUriLine(tsUrlPre, raw)
+            : raw;
         if (_isSegmentTag(item)) {
           pendingSegmentTags.add(output);
         } else {
@@ -283,9 +283,7 @@ class M3u8AdFilter {
     final sb = StringBuffer();
     for (final line in content.split('\n')) {
       final trimmed = line.trim();
-      sb.writeln(
-        _shouldResolve(trimmed) ? _resolve(tsUrlPre, trimmed) : line,
-      );
+      sb.writeln(_shouldResolve(trimmed) ? _resolve(tsUrlPre, trimmed) : line);
     }
     return sb.toString();
   }
@@ -344,9 +342,7 @@ class M3u8AdFilter {
         continue;
       }
 
-      if (inAdBreak ||
-          _hasAdSignal(pending) ||
-          _hasAdFeature(item)) {
+      if (inAdBreak || _hasAdSignal(pending) || _hasAdFeature(item)) {
         pending.clear();
         currentAdCount += 1;
         changed = true;
@@ -360,11 +356,7 @@ class M3u8AdFilter {
     return changed ? sb.toString() : line;
   }
 
-  static void _flush(
-    StringBuffer sb,
-    List<String> pending,
-    String lineSplit,
-  ) {
+  static void _flush(StringBuffer sb, List<String> pending, String lineSplit) {
     for (final line in pending) {
       _appendLine(sb, line, lineSplit);
     }
@@ -510,13 +502,16 @@ class M3u8AdFilter {
   static bool _shouldDropGroup(_Group group, _Group main) {
     if (group == main || group.segmentCount == 0) return false;
 
-    final mainAvgDuration =
-        main.segmentCount > 0 ? main.totalDuration / main.segmentCount : 0;
-    final groupAvgDuration =
-        group.segmentCount > 0 ? group.totalDuration / group.segmentCount : 0;
+    final mainAvgDuration = main.segmentCount > 0
+        ? main.totalDuration / main.segmentCount
+        : 0;
+    final groupAvgDuration = group.segmentCount > 0
+        ? group.totalDuration / group.segmentCount
+        : 0;
 
     // 广告组通常很短：片段数少 或 总时长占比小 或 平均时长远小于主内容
-    final shortGroup = group.segmentCount <= 2 ||
+    final shortGroup =
+        group.segmentCount <= 2 ||
         (main.totalDuration > 0 &&
             group.totalDuration > 0 &&
             group.totalDuration < main.totalDuration * 0.18) ||
@@ -524,20 +519,24 @@ class M3u8AdFilter {
             groupAvgDuration > 0 &&
             groupAvgDuration < mainAvgDuration * 0.35);
 
-    final differentHost = main.host.isNotEmpty &&
+    final differentHost =
+        main.host.isNotEmpty &&
         group.host.isNotEmpty &&
         main.host != group.host;
 
-    final differentPath = main.pathPrefix.isNotEmpty &&
+    final differentPath =
+        main.pathPrefix.isNotEmpty &&
         group.pathPrefix.isNotEmpty &&
         main.pathPrefix != group.pathPrefix;
 
-    final hasAdFeature = group.adLikeCount > 0 ||
+    final hasAdFeature =
+        group.adLikeCount > 0 ||
         _hasAdFeature(group.host) ||
         _hasAdFeature(group.pathPrefix);
 
     // 有明确广告特征时，即使只有 2 个组也允许删除
-    final adLike = hasAdFeature ||
+    final adLike =
+        hasAdFeature ||
         differentHost ||
         (group.segmentCount <= 2 && differentPath) ||
         (groupAvgDuration > 0 && groupAvgDuration < 4.0 && differentPath) ||
@@ -589,7 +588,9 @@ class M3u8AdFilter {
 
     if (!domainFiltering) return absoluteUrl.startsWith(maxTimesPreUrl);
     final ifirst = absoluteUrl.indexOf('/', 9);
-    final domain = (ifirst > 0) ? absoluteUrl.substring(0, ifirst) : absoluteUrl;
+    final domain = (ifirst > 0)
+        ? absoluteUrl.substring(0, ifirst)
+        : absoluteUrl;
     final cnt = preUrlMap[domain];
     return domain == maxTimesPreUrl || (cnt != null && cnt > _timesNoAd);
   }
@@ -603,7 +604,10 @@ class M3u8AdFilter {
     final value = match?.group(1);
     if (value == null) return line;
     try {
-      return line.replaceFirst(value, Uri.parse(base).resolve(value).toString());
+      return line.replaceFirst(
+        value,
+        Uri.parse(base).resolve(value).toString(),
+      );
     } catch (_) {
       return line;
     }
@@ -661,10 +665,7 @@ class M3u8AdFilter {
   static String? _keepVodEndList(String original, String? result) {
     if (result == null) return null;
     if (!_hasEndList(original) || _hasEndList(result)) return result;
-    return result +
-        (result.endsWith('\n') ? '' : '\n') +
-        _tagEndList +
-        '\n';
+    return result + (result.endsWith('\n') ? '' : '\n') + _tagEndList + '\n';
   }
 
   static bool _hasEndList(String? content) {

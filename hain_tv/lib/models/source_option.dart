@@ -41,10 +41,7 @@ class SourceOption {
     );
   }
 
-  SourceOption copyWith({
-    Duration? responseTime,
-    double? speed,
-  }) {
+  SourceOption copyWith({Duration? responseTime, double? speed}) {
     return SourceOption(
       source: source,
       sourceName: sourceName,
