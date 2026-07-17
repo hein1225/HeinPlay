@@ -6,7 +6,6 @@ import 'package:hain_tv/screens/tv/home_screen.dart';
 import 'package:hain_tv/screens/tv/profile_screen.dart';
 import 'package:hain_tv/screens/tv/search_screen.dart';
 import 'package:hain_tv/services/connectivity_service.dart';
-import 'package:hain_tv/services/permission_service.dart';
 import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/back_interceptor.dart';
@@ -56,23 +55,10 @@ class _TvShellState extends State<TvShell> {
     }
     ConnectivityService.instance.startMonitoring();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _checkFirstLaunch();
       if (mounted) {
         await _checkUpdate();
       }
     });
-  }
-
-  Future<void> _checkFirstLaunch() async {
-    if (DeviceUtils.isDesktop) {
-      await PermissionService.markFirstLaunchCompleted();
-      return;
-    }
-    final isFirst = await PermissionService.isFirstLaunch();
-    if (isFirst && mounted) {
-      await PermissionService.showStoragePermissionDialog(context);
-      await PermissionService.markFirstLaunchCompleted();
-    }
   }
 
   Future<void> _checkUpdate() async {

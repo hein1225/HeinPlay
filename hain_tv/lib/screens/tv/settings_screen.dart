@@ -1,6 +1,4 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/services/ad_filter_service.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
@@ -196,19 +194,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _showSnackBar('切换源超时时间已设为 $seconds 秒');
   }
 
-  Future<void> _requestStoragePermission() async {
-    if (!Platform.isAndroid) {
-      _showSnackBar('当前平台无需存储权限');
-      return;
-    }
-
-    final status = await Permission.storage.request();
-    _showSnackBar(
-      status.isGranted ? '已获取存储权限' : '存储权限被拒绝',
-      backgroundColor: status.isGranted ? Colors.green : Colors.orange,
-    );
-  }
-
   Future<void> _clearCache() async {
     final cacheService = CacheService();
     await cacheService.init();
@@ -279,13 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionTitle('豆瓣数据源'),
           _buildDoubanSourceTile(),
           const SizedBox(height: AppSpacing.lg),
-          _buildSectionTitle('存储与权限'),
-          _buildActionTile(
-            title: '获取存储权限',
-            subtitle: '授权应用访问设备存储以缓存图片和数据',
-            icon: Icons.storage_outlined,
-            onTap: _requestStoragePermission,
-          ),
+          _buildSectionTitle('缓存'),
           _buildActionTile(
             title: '清除缓存',
             subtitle: '清除海报、图片与豆瓣数据缓存，保留播放记录、搜索记录、跳过设置等数据',

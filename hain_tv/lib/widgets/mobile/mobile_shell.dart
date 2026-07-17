@@ -3,7 +3,6 @@ import 'package:hain_tv/screens/mobile/category_screen.dart';
 import 'package:hain_tv/screens/mobile/home_screen.dart';
 import 'package:hain_tv/screens/mobile/profile_screen.dart';
 import 'package:hain_tv/screens/mobile/search_screen.dart';
-import 'package:hain_tv/services/permission_service.dart';
 import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/theme.dart';
 
@@ -20,7 +19,6 @@ class _MobileShellState extends State<MobileShell> {
   @override
   void initState() {
     super.initState();
-    _checkFirstLaunchPermission();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) await _checkUpdate();
     });
@@ -33,14 +31,6 @@ class _MobileShellState extends State<MobileShell> {
       channel: UpdateChannel.domestic,
       platform: 'mobile',
     );
-  }
-
-  Future<void> _checkFirstLaunchPermission() async {
-    final isFirst = await PermissionService.isFirstLaunch();
-    if (isFirst && mounted) {
-      await PermissionService.showStoragePermissionDialog(context);
-      await PermissionService.markFirstLaunchCompleted();
-    }
   }
 
   final List<NavigationDestination> _destinations = const [

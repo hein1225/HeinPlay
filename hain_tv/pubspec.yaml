@@ -31,7 +31,7 @@ dependencies:
   screen_brightness: ^2.1.1
   volume_controller: ^3.3.2
   flutter_js: ^0.8.2
-  window_manager: ^0.4.0
+  window_manager: ^0.5.2
   fvp: ^0.37.3
 
 dependency_overrides:

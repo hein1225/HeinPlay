@@ -19,10 +19,18 @@
   - 手机版全屏横屏播放退出到详情页时，将播放器销毁、M3U8 代理关闭、系统 UI 恢复等操作顺序化并延后到下一帧执行，降低卡死概率。
   - Windows 版关闭窗口时改为异步刷新日志并立即销毁窗口，日志刷新完成后强制退出进程，显著减少关闭延迟。
 
+- **权限精简**
+  - 全版本取消启动时获取存储读取权限，AndroidManifest 移除 `READ_EXTERNAL_STORAGE` / `READ_MEDIA_*` / `MANAGE_EXTERNAL_STORAGE` 等声明。
+  - 图片缓存、豆瓣数据缓存、应用内更新 APK 下载、播放记录与收藏均使用应用私有目录，不需要存储权限，功能不受影响。
+
 - **代码与构建**
   - 全平台排查并清理冗余代码，统一评分标签颜色逻辑与 SnackBar 提示方法。
-  - 新增 GitHub Actions 自动构建工作流，支持 `v*` 或纯版本号标签触发，自动构建 TV / 手机 / Windows 三个产物。
+  - 新增 GitHub Actions 自动构建工作流，改为仅支持手动触发（`workflow_dispatch`），自动构建 TV / 手机 / Windows 三个产物。
   - 全项目版本号统一更新至 `1.1.5`。
+
+- **依赖升级**
+  - 升级 `window_manager`：`^0.4.0` → `^0.5.2`。
+  - 通过 `flutter pub upgrade --major-versions` 更新 `video_player`、`wakelock_plus`、`package_info_plus`、`uuid`、`win32` 等可解析到最新兼容版本的依赖。
 
 ### 构建产物与适用设备
 

@@ -202,7 +202,9 @@ Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mob
 - **每日放送中文详情与评分修复**：Bangumi 请求优先获取中文内容，详情页优先展示豆瓣评分并在无匹配时回退到 Bangumi，海报墙评分标签统一按分数段着色。
 - **设置页提示可读性修复**：TV / 手机设置页所有切换操作 SnackBar 提示文字统一为白色，避免深色背景下看不清。
 - **稳定性优化**：手机版全屏退出顺序化销毁资源，降低卡死概率；Windows 版异步刷新日志并快速关闭窗口。
-- **GitHub Actions 自动构建**：新增 `.github/workflows/build-release.yml`，支持标签与手动触发，自动产出 TV / 手机 / Windows 三个版本。
+- **GitHub Actions 自动构建**：新增 `.github/workflows/build-release.yml`，改为仅支持手动触发，自动产出 TV / 手机 / Windows 三个版本。
+- **权限精简**：取消启动时获取存储读取权限，缓存、更新下载、播放记录与收藏均使用应用私有目录，功能不受影响。
+- **依赖升级**：`window_manager` 升级至 `^0.5.2`，并更新多个兼容依赖。
 - **版本号统一**：全项目更新至 `1.1.5`，Release 产物命名同步为 `heinplay-1.1.5-tv.apk`、`heinplay-1.1.5-mobile.apk`、`heinplay-1.1.5-windows-portable.zip`。
 
 </details>
