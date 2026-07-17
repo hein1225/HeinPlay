@@ -1,11 +1,6 @@
 name: Build Release
 
 on:
-  push:
-    branches: [main, master]
-    tags: ['v*', '*.*.*']
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
     inputs:
       upload-artifacts:
@@ -63,7 +58,7 @@ jobs:
           cp build/app/outputs/flutter-apk/app-tv-release.apk "dist/heinplay-${VERSION}-tv.apk"
 
       - name: Upload TV APK
-        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        if: ${{ inputs.upload-artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-tv-apk
@@ -118,7 +113,7 @@ jobs:
           cp build/app/outputs/flutter-apk/app-mobile-release.apk "dist/heinplay-${VERSION}-mobile.apk"
 
       - name: Upload Mobile APK
-        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        if: ${{ inputs.upload-artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-mobile-apk
@@ -210,7 +205,7 @@ jobs:
           Write-Output "已生成: $destZip"
 
       - name: Upload Windows artifact
-        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        if: ${{ inputs.upload-artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-windows-portable
