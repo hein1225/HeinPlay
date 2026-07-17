@@ -21,6 +21,7 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
+import 'package:hain_tv/app_windows.dart';
 import 'package:window_manager/window_manager.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -169,6 +170,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
     if (!DeviceUtils.isWindows) return;
     try {
       final fullScreen = await windowManager.isFullScreen();
+      if (fullScreen) {
+        WindowsEscController.disabled = true;
+      }
       if (mounted) {
         setState(() => _isFullScreen = fullScreen);
       }
@@ -1395,6 +1399,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
   /// 窗口进入全屏时由 [windowManager] 通知更新状态。
   @override
   void onWindowEnterFullScreen() {
+    if (DeviceUtils.isWindows) {
+      WindowsEscController.disabled = true;
+    }
     if (mounted) {
       setState(() {
         _isFullScreen = true;
@@ -1406,6 +1413,9 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
   /// 窗口退出全屏时由 [windowManager] 通知更新状态。
   @override
   void onWindowLeaveFullScreen() {
+    if (DeviceUtils.isWindows) {
+      WindowsEscController.disabled = false;
+    }
     if (mounted) {
       setState(() {
         _isFullScreen = false;
@@ -1596,6 +1606,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
   void dispose() {
     if (DeviceUtils.isWindows) {
       windowManager.removeListener(this);
+      WindowsEscController.disabled = false;
     }
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();

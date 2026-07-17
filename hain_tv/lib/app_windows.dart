@@ -16,6 +16,12 @@ class HainWindowsApp extends StatefulWidget {
   State<HainWindowsApp> createState() => _HainWindowsAppState();
 }
 
+/// Windows 全局 ESC 返回拦截开关。
+/// 进入需要自行处理 ESC 的页面（如播放页全屏）时置为 true，退出时还原。
+class WindowsEscController {
+  static bool disabled = false;
+}
+
 class _HainWindowsAppState extends State<HainWindowsApp>
     with WindowListener {
   @override
@@ -57,9 +63,12 @@ class _HainWindowsAppState extends State<HainWindowsApp>
   }
 
   /// 拦截 ESC 键：若当前有可以弹出的路由则执行返回，否则忽略。
+  /// 当 [WindowsEscController.disabled] 为 true 时，表示当前页面（如播放页）已自行处理 ESC，
+  /// 全局 handler 不再消费，避免播放页全屏时 ESC 直接退出页面。
   bool _handleEscKey(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
     if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (WindowsEscController.disabled) return false;
 
     final navigator = Navigator.of(context, rootNavigator: true);
     if (navigator.canPop()) {
