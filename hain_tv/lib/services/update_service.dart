@@ -19,7 +19,7 @@ class UpdateService {
       'https://gitcode.com/api/v5/repos/gcw_QbmhmbO8/HeinPlay/releases/latest';
   static const String _githubReleasesUrl =
       'https://api.github.com/repos/hein1225/HeinPlay/releases/latest';
-  static const String currentVersion = '1.1.4';
+  static const String currentVersion = '1.1.5';
 
   static String _channelName(UpdateChannel channel) {
     switch (channel) {

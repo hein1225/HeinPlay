@@ -75,20 +75,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  void _showSnackBar(
+    String message, {
+    Color backgroundColor = AppColors.bgElevated,
+    Duration duration = const Duration(seconds: 2),
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: backgroundColor,
+        duration: duration,
+      ),
+    );
+  }
+
   Future<void> _setDoubanSource(DoubanDataSource value) async {
     try {
       await UserDataService.saveDoubanDataSource(value);
       // 验证保存是否成功
       final verified = await UserDataService.getDoubanDataSource();
       if (verified != value) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('数据源保存验证失败，请重试'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        _showSnackBar('数据源保存验证失败，请重试', backgroundColor: Colors.red);
         return;
       }
       setState(() => _doubanSource = value);
@@ -99,23 +110,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } catch (e) {
         // 缓存清除失败不影响设置保存
       }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '已切换为 ${_doubanSourceLabel(value)}，豆瓣缓存已清除',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: AppColors.bgElevated,
-          ),
-        );
-      }
+      _showSnackBar(
+        '已切换为 ${_doubanSourceLabel(value)}，豆瓣缓存已清除',
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('切换失败: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showSnackBar('切换失败: $e', backgroundColor: Colors.red);
     }
   }
 
@@ -194,35 +193,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setAutoSwitchSourceTimeout(int seconds) async {
     await UserDataService.saveAutoSwitchSourceTimeout(seconds);
     setState(() => _autoSwitchSourceTimeout = seconds);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('切换源超时时间已设为 $seconds 秒'),
-          backgroundColor: AppColors.bgElevated,
-        ),
-      );
-    }
+    _showSnackBar('切换源超时时间已设为 $seconds 秒');
   }
 
   Future<void> _requestStoragePermission() async {
     if (!Platform.isAndroid) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('当前平台无需存储权限')));
-      }
+      _showSnackBar('当前平台无需存储权限');
       return;
     }
 
     final status = await Permission.storage.request();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(status.isGranted ? '已获取存储权限' : '存储权限被拒绝'),
-          backgroundColor: status.isGranted ? Colors.green : Colors.orange,
-        ),
-      );
-    }
+    _showSnackBar(
+      status.isGranted ? '已获取存储权限' : '存储权限被拒绝',
+      backgroundColor: status.isGranted ? Colors.green : Colors.orange,
+    );
   }
 
   Future<void> _clearCache() async {
@@ -230,14 +214,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await cacheService.init();
     await cacheService.clearPrefix('douban_');
     await HainTvCacheManager().emptyCache();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('图片与豆瓣数据缓存已清除', style: TextStyle(color: Colors.white)),
-          backgroundColor: AppColors.bgElevated,
-        ),
-      );
-    }
+    _showSnackBar('图片与豆瓣数据缓存已清除');
   }
 
   Future<void> _logout() async {
@@ -326,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('关于'),
-          _buildInfoTile(title: '版本', value: '1.1.4'),
+          _buildInfoTile(title: '版本', value: '1.1.5'),
           _buildInfoTile(title: '作者', value: '海因茨'),
         ],
       ),

@@ -1232,8 +1232,6 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
   @override
   void dispose() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
@@ -1244,33 +1242,46 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       sub.cancel();
     }
 
-    // 先暂停播放再异步释放后端，避免在页面转场动画期间阻塞 UI。
+    // 先暂停播放，立即切断音视频输出，避免退出过程中仍有声音。
     _backend?.pause();
 
     // 立即保存播放记录到 LunaTV（本地保存，异步上传不阻塞）
     _savePlayRecordToLunaTV();
-
-    // 异步释放后端与代理，避免 dispose 中的同步/等待操作卡住转场动画。
-    _backend?.dispose();
 
     // 退出播放页后允许系统自动休眠/降亮度
     WakelockPlus.disable().catchError((e) {
       debugPrint('MobilePlayerScreen: 禁用屏幕常亮失败: $e');
     });
 
-    // 释放本地 M3U8 代理，使用 fire-and-forget 避免关闭连接时阻塞 UI。
-    AdFilterEngine.dispose().catchError((e) {
-      debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败: $e');
-    });
-
-    // 将方向恢复推迟到当前帧绘制完成后，避免在路由退出动画期间
-    // 同时触发方向切换与 PlatformView 销毁，导致偶发卡死。
-    final original = _originalOrientation;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _restoreOrientation(original);
-    });
-
     widget.sourcesNotifier?.removeListener(_onSourcesChanged);
+
+    // 将后端释放、代理释放、方向恢复、系统 UI 恢复全部推迟到路由转场完成后执行。
+    // 这样可以避免在页面退出动画期间同时进行 PlatformView 销毁、网络连接关闭、
+    // 屏幕方向切换和系统 UI 模式切换，显著降低偶发卡死/ANR 的概率。
+    final backend = _backend;
+    _backend = null;
+    final original = _originalOrientation;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (backend != null) {
+        try {
+          await backend.dispose();
+        } catch (e) {
+          debugPrint('MobilePlayerScreen: 释放播放器后端失败: $e');
+        }
+      }
+      try {
+        await AdFilterEngine.dispose();
+      } catch (e) {
+        debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败: $e');
+      }
+      try {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      } catch (e) {
+        debugPrint('MobilePlayerScreen: 恢复系统 UI 模式失败: $e');
+      }
+      await _restoreOrientation(original);
+    });
+
     super.dispose();
   }
 

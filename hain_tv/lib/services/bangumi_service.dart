@@ -57,7 +57,11 @@ class BangumiService {
       final response = await http
           .get(
             Uri.parse('$baseUrl/calendar'),
-            headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
+            headers: {
+              'User-Agent': _userAgent,
+              'Accept': 'application/json',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,ja;q=0.7',
+            },
           )
           .timeout(const Duration(seconds: 15));
 
@@ -186,7 +190,11 @@ class BangumiService {
       final response = await http
           .get(
             Uri.parse('$baseUrl/v0/subjects/$id'),
-            headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
+            headers: {
+              'User-Agent': _userAgent,
+              'Accept': 'application/json',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,ja;q=0.7',
+            },
           )
           .timeout(const Duration(seconds: 15));
 

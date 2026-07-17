@@ -12,6 +12,7 @@ import 'platform/device_utils.dart';
 import 'services/bangumi_service.dart';
 import 'services/portable_storage_windows.dart';
 import 'services/storage_service.dart';
+import 'services/user_data_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +33,9 @@ void main() async {
 
   // 初始化 flutter_mpv。
   FlutterMpv.ensureInitialized();
+
+  // 每次 App 启动后重置首页首次进入标记，确保用云端数据覆盖本地旧缓存。
+  await UserDataService.resetHomeFirstEntryCompleted();
 
   // 异步请求存储权限（不阻塞启动）。
   StorageService.requestStoragePermission().catchError((_) => false);

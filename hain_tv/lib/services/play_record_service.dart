@@ -302,15 +302,15 @@ class PlayRecordService {
     );
   }
 
-  /// 强制从服务器全量同步播放记录并缓存到本地。
+  /// 强制从服务器全量同步播放记录并覆盖本地缓存。
   /// 返回是否成功完成同步。
   static Future<bool> syncFromRemote() async {
     try {
-      final records = await getAll(forceRefresh: true);
-      // getAll(forceRefresh: true) 内部已将合并结果写回本地缓存。
-      if (records.isNotEmpty) {
-        PlayRecordRefreshNotifier.instance.notify();
-      }
+      // 先清空本地旧数据，确保用云端数据完整覆盖，避免软件更新后旧缓存残留。
+      await local.LocalStorageService.clearPlayHistory();
+      await getAll(forceRefresh: true);
+      // getAll(forceRefresh: true) 内部已将远程结果写回本地缓存。
+      PlayRecordRefreshNotifier.instance.notify();
       return true;
     } catch (e) {
       debugPrint('PlayRecordService.syncFromRemote 失败: $e');

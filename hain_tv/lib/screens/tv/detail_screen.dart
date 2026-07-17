@@ -191,9 +191,11 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _speedTesting = false;
   bool _hasSpeedTested = false;
   bool _searchingSources = false;
+  bool _isBangumiFallback = false;
   String? _error;
   VideoDetail? _videoDetail;
   DoubanMovieDetails? _doubanDetails;
+  String? _doubanSearchRate;
 
   /// 视频详情请求序号，用于在用户手动切换源后丢弃旧源的异步响应，
   /// 避免界面仍显示已放弃源的数据。
@@ -839,6 +841,7 @@ class _DetailScreenState extends State<DetailScreen> {
     // Bangumi 每日放送条目：优先用豆瓣详情，豆瓣找不到再回退到 Bangumi
     if (widget.bangumiId != null) {
       DoubanMovieDetails? doubanDetails;
+      var isBangumiFallback = false;
       if (widget.title.isNotEmpty) {
         final searchResponse = await DoubanService.search(
           keyword: widget.title,
@@ -858,6 +861,7 @@ class _DetailScreenState extends State<DetailScreen> {
             }
           }
           if (bestMatch != null && bestScore >= 0.6) {
+            _doubanSearchRate = bestMatch.rate;
             final detailResponse = await DoubanService.getDetails(
               doubanId: bestMatch.id,
             );
@@ -872,6 +876,7 @@ class _DetailScreenState extends State<DetailScreen> {
         final response = await BangumiService.fetchSubject(widget.bangumiId!);
         if (response.success && response.data != null) {
           doubanDetails = response.data;
+          isBangumiFallback = true;
         }
       }
 
@@ -879,6 +884,7 @@ class _DetailScreenState extends State<DetailScreen> {
         setState(() {
           _doubanLoading = false;
           _doubanDetails = doubanDetails;
+          _isBangumiFallback = isBangumiFallback;
         });
       }
       return;
@@ -1606,7 +1612,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _buildInfoSection() {
-    final rating = _doubanDetails?.rate;
+    final rating = _doubanDetails?.rate ?? _doubanSearchRate;
     final genres = _doubanDetails?.genres ?? [];
     final summary = _doubanDetails?.summary ?? _videoDetail?.desc ?? '';
     final directors = _doubanDetails?.directors ?? [];
@@ -1636,9 +1642,14 @@ class _DetailScreenState extends State<DetailScreen> {
             if (widget.year.isNotEmpty) _buildMetaChip(widget.year),
             if (rating != null && rating.isNotEmpty) ...[
               const SizedBox(width: AppSpacing.sm),
-              _buildMetaChip('豆瓣 $rating', isPrimary: true),
+              _buildMetaChip(
+                _isBangumiFallback ? 'Bangumi $rating' : '豆瓣 $rating',
+                isPrimary: !_isBangumiFallback,
+                isBangumi: _isBangumiFallback,
+              ),
             ],
-            if (widget.bangumiRate != null &&
+            if (!_isBangumiFallback &&
+                widget.bangumiRate != null &&
                 widget.bangumiRate!.isNotEmpty) ...[
               const SizedBox(width: AppSpacing.sm),
               _buildMetaChip('Bangumi ${widget.bangumiRate}', isBangumi: true),

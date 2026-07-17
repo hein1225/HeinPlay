@@ -39,12 +39,21 @@ class _HainWindowsAppState extends State<HainWindowsApp>
   }
 
   /// 窗口关闭前刷新日志，确保退出前所有 pending 日志写入文件。
+  ///
+  /// 注意：这里不再 await [windowManager.destroy]，否则 Flutter 引擎在后台等待
+  /// PlatformView、网络连接、本地代理等资源释放时，会导致窗口卡住很久才消失。
+  /// 日志刷新也改为异步执行，不阻塞窗口关闭动画；刷新完成后强制 [exit] 结束进程。
   @override
   Future<void> onWindowClose() async {
+    // 立即触发窗口销毁，让窗口立刻响应关闭动作；后续操作均不等待。
+    windowManager.destroy();
+
     if (Platform.isWindows) {
-      await WindowsLogger.flush();
+      // 在后台刷新日志，不阻塞窗口关闭；无论刷新成功/失败，最后都强制退出进程。
+      WindowsLogger.flush().whenComplete(() => exit(0));
+    } else {
+      exit(0);
     }
-    await windowManager.destroy();
   }
 
   /// 拦截 ESC 键：若当前有可以弹出的路由则执行返回，否则忽略。

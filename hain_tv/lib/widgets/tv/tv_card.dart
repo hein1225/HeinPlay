@@ -84,28 +84,11 @@ class TvPosterCard extends StatelessWidget {
   Widget _buildRatingBadge(
     String rate, {
     String? label,
-    bool isBangumi = false,
   }) {
-    final score = double.tryParse(rate);
-    final Color bgColor;
-    if (isBangumi) {
-      bgColor = const Color(0xFFF472B6); // Bangumi 粉
-    } else if (score == null) {
-      bgColor = AppColors.textMuted;
-    } else if (score >= 9.0) {
-      bgColor = const Color(0xFF3B82F6); // 蓝色
-    } else if (score >= 8.0) {
-      bgColor = const Color(0xFF22C55E); // 绿色
-    } else if (score >= 6.0) {
-      bgColor = const Color(0xFFEAB308); // 黄色
-    } else {
-      bgColor = const Color(0xFFEF4444); // 红色
-    }
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: AppColors.ratingColor(rate),
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Text(
@@ -191,7 +174,6 @@ class TvPosterCard extends StatelessWidget {
                   child: _buildRatingBadge(
                     rating!,
                     label: ratingLabel ?? '豆瓣',
-                    isBangumi: ratingLabel == 'Bangumi',
                   ),
                 ),
               if (bangumiRating != null && bangumiRating!.isNotEmpty)
@@ -201,7 +183,6 @@ class TvPosterCard extends StatelessWidget {
                   child: _buildRatingBadge(
                     bangumiRating!,
                     label: 'Bangumi',
-                    isBangumi: true,
                   ),
                 ),
             ],

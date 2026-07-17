@@ -291,6 +291,12 @@ class UserDataService {
     await prefs.setBool(_homeFirstEntryCompletedKey, true);
   }
 
+  /// 重置首次进入首页刷新标记，用于每次 App 启动后强制重新从云端刷新。
+  static Future<void> resetHomeFirstEntryCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_homeFirstEntryCompletedKey, false);
+  }
+
   // ===================== Bangumi 代理设置 =====================
 
   static BangumiApiProxyType? get cachedBangumiApiProxyType =>

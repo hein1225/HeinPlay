@@ -1,0 +1,175 @@
+name: Build Release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*', '*.*.*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      upload-artifacts:
+        description: '是否上传构建产物'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build-tv:
+    name: Build TV APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: 'stable'
+
+      - name: Decode TV keystore
+        run: |
+          echo "${{ secrets.TV_KEYSTORE_BASE64 }}" | base64 -d > android/app/hain_tv_keystore.jks
+
+      - name: Write TV key.properties
+        run: |
+          cat > android/key.properties <<EOF
+          storeFile=hain_tv_keystore.jks
+          storePassword=${{ secrets.TV_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.TV_KEY_ALIAS }}
+          keyPassword=${{ secrets.TV_KEY_PASSWORD }}
+          EOF
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build TV APK
+        run: flutter build apk --target lib/main_tv.dart --flavor tv --release
+
+      - name: Rename artifact
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-tv-release.apk "dist/heinplay-${VERSION}-tv.apk"
+
+      - name: Upload TV APK
+        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-tv-apk
+          path: hain_tv/dist/heinplay-*-tv.apk
+          if-no-files-found: error
+
+  build-mobile:
+    name: Build Mobile APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: 'stable'
+
+      - name: Decode Mobile keystore
+        run: |
+          echo "${{ secrets.MOBILE_KEYSTORE_BASE64 }}" | base64 -d > android/app/heinplay-mobile.jks
+
+      - name: Write Mobile key.properties
+        run: |
+          cat > android/key-mobile.properties <<EOF
+          storeFile=heinplay-mobile.jks
+          storePassword=${{ secrets.MOBILE_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.MOBILE_KEY_ALIAS }}
+          keyPassword=${{ secrets.MOBILE_KEY_PASSWORD }}
+          EOF
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Mobile APK
+        run: flutter build apk --target lib/main_mobile.dart --flavor mobile --release
+
+      - name: Rename artifact
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-mobile-release.apk "dist/heinplay-${VERSION}-mobile.apk"
+
+      - name: Upload Mobile APK
+        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-mobile-apk
+          path: hain_tv/dist/heinplay-*-mobile.apk
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows Portable
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    env:
+      FVP_DEPS_URL: 'https://github.com/wang-bin/mdk-sdk/releases/latest/download'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --target lib/main_windows.dart --release
+
+      - name: Rename artifact
+        shell: pwsh
+        run: |
+          $pubspec = Get-Content -Path pubspec.yaml -Raw
+          if ($pubspec -notmatch 'version:\s*([^\s]+)') {
+            Write-Error "无法从 pubspec.yaml 读取 version"
+            exit 1
+          }
+          $version = $Matches[1].Split('+')[0]
+          $distDir = "dist"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          $sourceDir = "build\windows\x64\runner\Release"
+          $destZip = "$distDir\heinplay-$version-windows-portable.zip"
+          if (Test-Path $destZip) { Remove-Item $destZip -Force }
+          Compress-Archive -Path "$sourceDir\*" -DestinationPath $destZip -Force
+          Write-Output "已生成: $destZip"
+
+      - name: Upload Windows artifact
+        if: ${{ github.event_name != 'pull_request' || inputs.upload-artifacts == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-windows-portable
+          path: hain_tv/dist/heinplay-*-windows-portable.zip
+          if-no-files-found: error

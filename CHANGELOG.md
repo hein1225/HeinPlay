@@ -1,6 +1,48 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.1.5</h2></summary>
+
+## 1.1.5
+
+### 变更
+
+- **每日放送（Bangumi）中文详情与评分显示修复**
+  - Bangumi API 请求新增 `Accept-Language: zh-CN` 头，优先获取中文动漫详情，避免详情页显示日文。
+  - 详情页优先使用豆瓣数据，未匹配时回退到 Bangumi，并明确标注评分为「豆瓣评分」或「Bangumi 评分」。
+  - 每日放送海报墙评分标签统一为分段背景色：≥9.0 蓝色、≥8.0 绿色、≥6.0 黄色、<6.0 红色、无法解析灰色。
+
+- **设置页提示可读性修复**
+  - 修复 TV / 手机设置页中所有切换操作 SnackBar 提示文字为黑色、在深色背景下看不清的问题，统一为白色字体。
+
+- **性能与稳定性优化**
+  - 手机版全屏横屏播放退出到详情页时，将播放器销毁、M3U8 代理关闭、系统 UI 恢复等操作顺序化并延后到下一帧执行，降低卡死概率。
+  - Windows 版关闭窗口时改为异步刷新日志并立即销毁窗口，日志刷新完成后强制退出进程，显著减少关闭延迟。
+
+- **代码与构建**
+  - 全平台排查并清理冗余代码，统一评分标签颜色逻辑与 SnackBar 提示方法。
+  - 新增 GitHub Actions 自动构建工作流，支持 `v*` 或纯版本号标签触发，自动构建 TV / 手机 / Windows 三个产物。
+  - 全项目版本号统一更新至 `1.1.5`。
+
+### 构建产物与适用设备
+
+| 文件名 | 适用设备 | 系统要求 | 说明 |
+| --- | --- | --- | --- |
+| `heinplay-1.1.5-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
+| `heinplay-1.1.5-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
+| `heinplay-1.1.5-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，使用 `flutter_mpv` 播放。 |
+
+### 1.1.4 → 1.1.5 主要差异
+
+- 修复 Bangumi 详情日文问题，优先展示中文并正确区分豆瓣 / Bangumi 评分。
+- 修复设置页 SnackBar 文字颜色，提升深色主题下可读性。
+- 优化手机全屏退出与 Windows 关闭速度。
+- 新增 GitHub Actions 自动构建与 Release 产物上传。
+- 全项目版本号统一为 `1.1.5`。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.1.4</h2></summary>
 
 ## 1.1.4

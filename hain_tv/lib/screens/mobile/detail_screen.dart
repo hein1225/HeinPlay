@@ -187,9 +187,11 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   bool _speedTesting = false;
   bool _hasSpeedTested = false;
   bool _searchingSources = false;
+  bool _isBangumiFallback = false;
   String? _error;
   VideoDetail? _videoDetail;
   DoubanMovieDetails? _doubanDetails;
+  String? _doubanSearchRate;
 
   /// 视频详情请求序号，用于在用户手动切换源后丢弃旧源的异步响应，
   /// 避免界面仍显示已放弃源的数据。
@@ -766,6 +768,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     // Bangumi 每日放送条目：优先用豆瓣详情，豆瓣找不到再回退到 Bangumi
     if (widget.bangumiId != null) {
       DoubanMovieDetails? doubanDetails;
+      var isBangumiFallback = false;
       if (widget.title.isNotEmpty) {
         final searchResponse = await DoubanService.search(
           keyword: widget.title,
@@ -785,6 +788,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
             }
           }
           if (bestMatch != null && bestScore >= 0.6) {
+            _doubanSearchRate = bestMatch.rate;
             final detailResponse = await DoubanService.getDetails(
               doubanId: bestMatch.id,
             );
@@ -799,6 +803,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         final response = await BangumiService.fetchSubject(widget.bangumiId!);
         if (response.success && response.data != null) {
           doubanDetails = response.data;
+          isBangumiFallback = true;
         }
       }
 
@@ -806,6 +811,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         setState(() {
           _doubanLoading = false;
           _doubanDetails = doubanDetails;
+          _isBangumiFallback = isBangumiFallback;
         });
       }
       return;
@@ -1520,7 +1526,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   }
 
   Widget _buildInfoSection() {
-    final rating = _doubanDetails?.rate;
+    final rating = _doubanDetails?.rate ?? _doubanSearchRate;
     final genres = _doubanDetails?.genres ?? [];
     final summary = _doubanDetails?.summary ?? _videoDetail?.desc ?? '';
     final directors = _doubanDetails?.directors ?? [];
@@ -1551,8 +1557,14 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           children: [
             if (widget.year.isNotEmpty) _buildMetaChip(widget.year),
             if (rating != null && rating.isNotEmpty)
-              _buildMetaChip('豆瓣 $rating', isPrimary: true),
-            if (widget.bangumiRate != null && widget.bangumiRate!.isNotEmpty)
+              _buildMetaChip(
+                _isBangumiFallback ? 'Bangumi $rating' : '豆瓣 $rating',
+                isPrimary: !_isBangumiFallback,
+                isBangumi: _isBangumiFallback,
+              ),
+            if (!_isBangumiFallback &&
+                widget.bangumiRate != null &&
+                widget.bangumiRate!.isNotEmpty)
               _buildMetaChip('Bangumi ${widget.bangumiRate}', isBangumi: true),
             if (genres.isNotEmpty) _buildMetaChip(genres.take(3).join(' / ')),
           ],

@@ -82,28 +82,11 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
   Widget _buildRatingBadge(
     String rate, {
     String? label,
-    bool isBangumi = false,
   }) {
-    final score = double.tryParse(rate);
-    final Color bgColor;
-    if (isBangumi) {
-      bgColor = const Color(0xFFF472B6);
-    } else if (score == null) {
-      bgColor = AppColors.textMuted;
-    } else if (score >= 9.0) {
-      bgColor = const Color(0xFF3B82F6);
-    } else if (score >= 8.0) {
-      bgColor = const Color(0xFF22C55E);
-    } else if (score >= 6.0) {
-      bgColor = const Color(0xFFEAB308);
-    } else {
-      bgColor = const Color(0xFFEF4444);
-    }
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: AppColors.ratingColor(rate),
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Text(
@@ -204,7 +187,6 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
                     child: _buildRatingBadge(
                       widget.rating!,
                       label: widget.ratingLabel ?? '豆瓣',
-                      isBangumi: widget.ratingLabel == 'Bangumi',
                     ),
                   ),
                 if (widget.bangumiRating != null &&
@@ -215,7 +197,6 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
                     child: _buildRatingBadge(
                       widget.bangumiRating!,
                       label: 'Bangumi',
-                      isBangumi: true,
                     ),
                   ),
               ],
