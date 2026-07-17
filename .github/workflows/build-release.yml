@@ -131,8 +131,6 @@ jobs:
     defaults:
       run:
         working-directory: hain_tv
-    env:
-      FVP_DEPS_URL: 'https://github.com/wang-bin/mdk-sdk/releases/latest/download'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,8 +144,53 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
+      # mdk-sdk 的 GitHub latest 目录中已不存在 mdk-sdk-windows-x64.7z，
+      # 导致 FVP 在 CI 中下载失败。这里手动下载与 fvp 0.37.x 对应的
+      # v0.37.0 release 中的 x64 包并解压到插件目录，让 FVP 跳过下载。
+      - name: Restore mdk-sdk cache
+        id: cache-mdk
+        uses: actions/cache/restore@v4
+        with:
+          path: hain_tv/windows/flutter/ephemeral/.plugin_symlinks/fvp/windows/mdk-sdk
+          key: mdk-sdk-windows-${{ hashFiles('hain_tv/pubspec.lock') }}
+
+      - name: Download mdk-sdk for FVP
+        if: steps.cache-mdk.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $fvpWindows = "windows/flutter/ephemeral/.plugin_symlinks/fvp/windows"
+          $marker = "$fvpWindows/mdk-sdk/lib/cmake/FindMDK.cmake"
+          if (Test-Path $marker) {
+            Write-Output "mdk-sdk 已存在，跳过下载"
+            exit 0
+          }
+          $url = "https://github.com/wang-bin/mdk-sdk/releases/download/v0.37.0/mdk-sdk-windows-x64-vs2026.7z"
+          $tmp7z = "$env:TEMP/mdk-sdk-windows-x64-vs2026.7z"
+          Write-Output "Downloading mdk-sdk from $url"
+          curl.exe -L --retry 3 -o $tmp7z $url
+          $size = (Get-Item $tmp7z).Length
+          if ($size -lt 1MB) {
+            Write-Error "下载的 mdk-sdk 文件过小（$size 字节），可能失败"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path $fvpWindows | Out-Null
+          7z x $tmp7z "-o$fvpWindows" -y
+          if (-not (Test-Path $marker)) {
+            Write-Error "解压后未找到 FindMDK.cmake"
+            exit 1
+          }
+          Remove-Item $tmp7z -Force
+          Write-Output "mdk-sdk 准备完成"
+
       - name: Build Windows release
         run: flutter build windows --target lib/main_windows.dart --release
+
+      - name: Save mdk-sdk cache
+        if: steps.cache-mdk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: hain_tv/windows/flutter/ephemeral/.plugin_symlinks/fvp/windows/mdk-sdk
+          key: ${{ steps.cache-mdk.outputs.cache-primary-key }}
 
       - name: Rename artifact
         shell: pwsh
