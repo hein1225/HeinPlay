@@ -15,6 +15,7 @@ import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'package:hain_tv/widgets/tv/update_channel_dialog.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'detail_screen.dart';
 import 'settings_screen.dart';
 
@@ -203,7 +204,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                           context,
                           force: true,
                           channel: channel,
-                          platform: 'tv',
+                          platform: DeviceUtils.isWindows ? 'windows' : 'tv',
                         );
                       }
                     },
