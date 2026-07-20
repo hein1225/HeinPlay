@@ -1,10 +1,5 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import '../models/api_response.dart';
 import '../models/favorite.dart';
 import '../models/live_channel.dart';
@@ -13,7 +8,6 @@ import '../models/search_result.dart';
 import '../models/skip_segment.dart';
 import '../models/video_detail.dart';
 import 'cache_service.dart';
-import 'm3u8_utils.dart';
 import 'user_data_service.dart';
 
 class LunaTVConfig {
@@ -49,7 +43,7 @@ class LunaTVService {
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.1.6 Flutter',
+      'User-Agent': 'HainTV/1.1.4 Flutter',
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -174,7 +168,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.1.6 Flutter',
+              'User-Agent': 'HainTV/1.1.4 Flutter',
             },
             body: json.encode(body),
           )
@@ -356,434 +350,61 @@ class LunaTVService {
     }
   }
 
-  static Map<String, String> _buildVideoHeaders(String targetUrl) {
-    try {
-      final uri = Uri.parse(targetUrl);
-      final origin = '${uri.scheme}://${uri.host}';
-      return {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Origin': origin,
-        'Referer': '$origin/',
-      };
-    } catch (_) {
-      return {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      };
-    }
-  }
-
-  /// 创建测速专用 HTTP 客户端。
-  ///
-  /// 部分视频 CDN 使用非标准证书或 TLS 配置，Dart 默认证书校验会触发
-  /// HandshakeException，而原生播放器通常可正常访问。测速场景下放宽校验
-  /// 可减少误判，与 Selene/LunaTV 的行为一致。
-  static http.Client _createSpeedTestClient() {
-    final httpClient = HttpClient()
-      ..badCertificateCallback =
-          (X509Certificate cert, String host, int port) => true;
-    return IOClient(httpClient);
-  }
-
-  static Future<({Duration responseTime, double? speed, String? resolution})>
-      speedTestEpisode(
+  static Future<({Duration responseTime, double? speed})> speedTestEpisode(
     String url, {
-    Duration timeout = const Duration(seconds: 12),
+    Duration timeout = const Duration(seconds: 10),
     int sampleBytes = 512 * 1024,
-    int maxConcurrency = 3,
-    String? sourceType,
-    /// 若已缓存该源分辨率，传入后可跳过 M3U8 分辨率提取，但仍会解析分片用于测速。
-    String? cachedResolution,
   }) async {
     final stopwatch = Stopwatch()..start();
-    final headers = _buildVideoHeaders(url);
-    final isM3u8 = M3u8Utils.isM3u8Url(url);
-    var hasNetworkError = false;
 
-    /// 安全排空响应流，避免连接被半开占用。
-    Future<void> drain(http.StreamedResponse response) async {
-      try {
-        await response.stream.drain<void>();
-      } catch (_) {}
-    }
-
-    /// 测量首个分片的响应延迟（RTT），优先使用 HEAD，失败则回退到 GET 读少量数据。
-    Future<int?> _measureLatency(
-      String targetUrl, {
-      Map<String, String>? headers,
-      Duration probeTimeout = const Duration(seconds: 4),
+    Future<({Duration responseTime, double? speed})> doTest(
+      String testUrl, {
+      bool useRange = true,
     }) async {
-      final client = _createSpeedTestClient();
-      try {
-        try {
-          final sw = Stopwatch()..start();
-          final headReq = http.Request('HEAD', Uri.parse(targetUrl));
-          if (headers != null && headers.isNotEmpty) {
-            headReq.headers.addAll(headers);
-          }
-          final headResp = await client.send(headReq).timeout(probeTimeout);
-          await drain(headResp);
-          if (headResp.statusCode >= 200 && headResp.statusCode < 400) {
-            return sw.elapsedMilliseconds;
-          }
-        } catch (_) {}
-
-        try {
-          final sw = Stopwatch()..start();
-          final getReq = http.Request('GET', Uri.parse(targetUrl));
-          if (headers != null && headers.isNotEmpty) {
-            getReq.headers.addAll(headers);
-          }
-          final getResp = await client.send(getReq).timeout(probeTimeout);
-          var received = 0;
-          const maxProbeBytes = 8 * 1024;
-          await for (final chunk in getResp.stream) {
-            received += chunk.length;
-            if (received >= maxProbeBytes) break;
-          }
-          await drain(getResp);
-          if (getResp.statusCode >= 200 && getResp.statusCode < 400) {
-            return sw.elapsedMilliseconds;
-          }
-        } catch (_) {}
-        return null;
-      } finally {
-        client.close();
+      final req = http.Request('GET', Uri.parse(testUrl));
+      req.headers['User-Agent'] =
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+      req.headers['Accept'] = '*/*';
+      req.headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8';
+      if (useRange) {
+        req.headers['Range'] = 'bytes=0-${sampleBytes - 1}';
       }
-    }
+      final streamedResponse = await http.Client().send(req).timeout(timeout);
 
-    /// 对单个 URL 做下载测速，读取最多 [maxBytes] 字节后停止并排空剩余流。
-    /// 返回正数表示实测速度；返回 -1.0 表示 Dart 网络层握手/连接/超时失败，
-    /// 不代表源站不可播放（原生播放器网络层通常可正常访问）。
-    Future<double?> _measureSpeed(
-      String targetUrl, {
-      Map<String, String>? headers,
-      required int maxBytes,
-      required Duration measureTimeout,
-    }) async {
-      final client = _createSpeedTestClient();
-      try {
-        final req = http.Request('GET', Uri.parse(targetUrl));
-        if (headers != null && headers.isNotEmpty) {
-          req.headers.addAll(headers);
-        }
-        final streamedResponse = await client.send(req).timeout(measureTimeout);
-
-        if (streamedResponse.statusCode == 200 ||
-            streamedResponse.statusCode == 206) {
-          final transferStopwatch = Stopwatch()..start();
-          var received = 0;
-          await for (final chunk in streamedResponse.stream) {
-            received += chunk.length;
-            if (received >= maxBytes) break;
-          }
-          await drain(streamedResponse);
-          transferStopwatch.stop();
-          final seconds = transferStopwatch.elapsedMilliseconds / 1000.0;
-          return seconds > 0 ? (received / seconds) : 0.0;
-        }
-        await drain(streamedResponse);
-        return null;
-      } on HandshakeException catch (_) {
-        return -1.0;
-      } on SocketException catch (_) {
-        return -1.0;
-      } on TimeoutException catch (_) {
-        return -1.0;
-      } on http.ClientException catch (_) {
-        return -1.0;
-      } catch (_) {
-        return null;
-      } finally {
-        client.close();
-      }
-    }
-
-    /// 快速可用性探测：HEAD 失败后尝试 GET 读少量数据，
-    /// 任何 2xx/3xx 均视为可用。
-    Future<({Duration responseTime, bool available})> _probeAvailability(
-      String targetUrl, {
-      bool drainStream = true,
-    }) async {
-      final probeStopwatch = Stopwatch()..start();
-      final probeHeaders = _buildVideoHeaders(targetUrl);
-
-      Future<bool> tryHead() async {
-        final client = http.Client();
-        try {
-          final headReq = http.Request('HEAD', Uri.parse(targetUrl));
-          headReq.headers.addAll(probeHeaders);
-          final headResponse = await client.send(headReq).timeout(
-            const Duration(seconds: 4),
-          );
-          if (drainStream) await drain(headResponse);
-          return headResponse.statusCode >= 200 && headResponse.statusCode < 400;
-        } catch (_) {
-          return false;
-        } finally {
-          client.close();
-        }
-      }
-
-      Future<bool> tryGet() async {
-        final client = http.Client();
-        try {
-          final getReq = http.Request('GET', Uri.parse(targetUrl));
-          getReq.headers.addAll(probeHeaders);
-          final getResponse = await client.send(getReq).timeout(
-            const Duration(seconds: 4),
-          );
-          if (drainStream) {
-            var received = 0;
-            const maxProbeBytes = 16 * 1024;
-            await for (final chunk in getResponse.stream) {
-              received += chunk.length;
-              if (received >= maxProbeBytes) break;
-            }
-            await drain(getResponse);
-          }
-          return getResponse.statusCode >= 200 && getResponse.statusCode < 400;
-        } catch (_) {
-          return false;
-        } finally {
-          client.close();
-        }
-      }
-
-      if (await tryHead()) {
-        return (responseTime: probeStopwatch.elapsed, available: true);
-      }
-      if (await tryGet()) {
-        return (responseTime: probeStopwatch.elapsed, available: true);
-      }
-      return (responseTime: probeStopwatch.elapsed, available: false);
-    }
-
-    String? detectedResolution = cachedResolution;
-    var testUrl = url;
-
-    // 1. M3U8 源：先解析出真正要测速的分片 URL 与分辨率，再对分片测速。
-    // 这样比直接对 playlist URL 测速更准确，也能正确识别 master playlist 的真实分辨率。
-    if (isM3u8) {
-      try {
-        final m3u8Client = _createSpeedTestClient();
-        try {
-          final analysis = await M3u8Utils.analyzeM3u8ForSpeedTest(
-            url,
-            headers: headers,
-            timeout: const Duration(seconds: 8),
-            maxSegments: maxConcurrency,
-            client: m3u8Client,
-          );
-        detectedResolution ??= analysis.resolution;
-        testUrl = analysis.playlistUrl;
-
-        if (analysis.segmentUrls.isNotEmpty) {
-          final firstSegment = analysis.segmentUrls.first;
-          final latencyMs = await _measureLatency(
-            firstSegment,
-            headers: headers,
-            probeTimeout: const Duration(seconds: 4),
-          );
-          if (latencyMs != null && latencyMs >= 0) {
-            final segmentSpeeds = await Future.wait(
-              analysis.segmentUrls
-                  .take(maxConcurrency)
-                  .map(
-                    (u) => _measureSpeed(
-                      u,
-                      headers: headers,
-                      maxBytes: sampleBytes,
-                      measureTimeout: timeout,
-                    ),
-                  ),
-            );
-            if (segmentSpeeds.any((s) => s == -1.0)) {
-              hasNetworkError = true;
-            }
-            final validSpeeds = segmentSpeeds
-                .whereType<double>()
-                .where((s) => s > 0)
-                .toList();
-            if (validSpeeds.isNotEmpty) {
-              final avgSpeed =
-                  validSpeeds.reduce((a, b) => a + b) / validSpeeds.length;
-              return (
-                responseTime: Duration(milliseconds: latencyMs),
-                speed: avgSpeed,
-                resolution: detectedResolution,
-              );
-            }
-          } else {
-            hasNetworkError = true;
-          }
-        } else {
-          // 无分片（可能是纯子 playlist），回退到 playlist URL 测速。
-          final speed = await _measureSpeed(
-            analysis.playlistUrl,
-            headers: headers,
-            maxBytes: 32 * 1024,
-            measureTimeout: timeout,
-          );
-          if (speed == -1.0) {
-            hasNetworkError = true;
-          } else if (speed != null && speed > 0) {
-            return (
-              responseTime: stopwatch.elapsed,
-              speed: speed,
-              resolution: detectedResolution,
-            );
-          }
-        }
-      } finally {
-        m3u8Client.close();
-      }
-      } on HandshakeException catch (_) {
-        hasNetworkError = true;
-        debugPrint('speedTest M3U8 解析失败（TLS 握手） $url');
-      } on SocketException catch (_) {
-        hasNetworkError = true;
-        debugPrint('speedTest M3U8 解析失败（连接错误） $url');
-      } on TimeoutException catch (_) {
-        hasNetworkError = true;
-        debugPrint('speedTest M3U8 解析失败（超时） $url');
-      } catch (e) {
-        debugPrint('speedTest M3U8 解析失败 $url: $e');
-      }
-    } else {
-      // 2. 非 M3U8 源：直接对 URL 做下载测速。
-      detectedResolution ??= M3u8Utils.extractResolutionFromText(url);
-      try {
-        final speed = await _measureSpeed(
-          url,
-          headers: headers,
-          maxBytes: sampleBytes,
-          measureTimeout: timeout,
-        );
-        if (speed == -1.0) {
-          hasNetworkError = true;
-        } else if (speed != null && speed > 0) {
-          return (
-            responseTime: stopwatch.elapsed,
-            speed: speed,
-            resolution: detectedResolution,
-          );
-        }
-      } catch (e) {
-        debugPrint('speedTest 非 M3U8 URL 测速失败 $url: $e');
-      }
-    }
-
-    // 3. 测速失败时做可用性探测：可访问则标记为可用（速度未知）。
-    try {
-      final probe = await _probeAvailability(testUrl);
-      if (probe.available || hasNetworkError) {
-        return (
-          responseTime: probe.responseTime,
-          speed: -1.0,
-          resolution: detectedResolution,
-        );
-      }
-    } catch (_) {
-      hasNetworkError = true;
-    }
-
-    stopwatch.stop();
-    if (hasNetworkError) {
-      debugPrint('speedTest 最终判定网络层异常但可能可播放: $url');
-      return (
-        responseTime: stopwatch.elapsed,
-        speed: -1.0,
-        resolution: detectedResolution,
-      );
-    }
-    debugPrint('speedTest 最终判定不可用: $url');
-    return (
-      responseTime: stopwatch.elapsed,
-      speed: 0.0,
-      resolution: detectedResolution,
-    );
-  }
-
-  /// 对单个 URL 做轻量级可用性探测，返回是否可用及响应时间。
-  /// 只做 HEAD/GET，不解析 M3U8、不测下载速度。
-  static Future<({String url, Duration responseTime, bool available})>
-      _probeUrlAvailability(
-    String url, {
-    Duration timeout = const Duration(seconds: 4),
-  }) async {
-    final stopwatch = Stopwatch()..start();
-    final headers = _buildVideoHeaders(url);
-
-    Future<bool> tryHead() async {
-      final client = _createSpeedTestClient();
-      try {
-        final req = http.Request('HEAD', Uri.parse(url));
-        req.headers.addAll(headers);
-        final resp = await client.send(req).timeout(timeout);
-        await resp.stream.drain<void>();
-        return resp.statusCode >= 200 && resp.statusCode < 400;
-      } catch (_) {
-        return false;
-      } finally {
-        client.close();
-      }
-    }
-
-    Future<bool> tryGet() async {
-      final client = _createSpeedTestClient();
-      try {
-        final req = http.Request('GET', Uri.parse(url));
-        req.headers.addAll(headers);
-        final resp = await client.send(req).timeout(timeout);
+      if (streamedResponse.statusCode == 200 ||
+          streamedResponse.statusCode == 206) {
         var received = 0;
-        const maxBytes = 8 * 1024;
-        await for (final chunk in resp.stream) {
+        await for (final chunk in streamedResponse.stream) {
           received += chunk.length;
-          if (received >= maxBytes) break;
+          if (received >= sampleBytes) break;
         }
-        await resp.stream.drain<void>();
-        return resp.statusCode >= 200 && resp.statusCode < 400;
-      } catch (_) {
-        return false;
-      } finally {
-        client.close();
+        stopwatch.stop();
+        final seconds = stopwatch.elapsedMilliseconds / 1000.0;
+        // 即使 received 小于 sampleBytes（如 .m3u8 文件较小），也计算实际速度
+        final speed = seconds > 0 ? (received * 8 / seconds) : 0.0;
+        return (responseTime: stopwatch.elapsed, speed: speed);
       }
+      return (responseTime: stopwatch.elapsed, speed: null);
     }
 
-    if (await tryHead()) {
-      return (url: url, responseTime: stopwatch.elapsed, available: true);
-    }
-    if (await tryGet()) {
-      return (url: url, responseTime: stopwatch.elapsed, available: true);
-    }
-    return (url: url, responseTime: stopwatch.elapsed, available: false);
-  }
+    try {
+      // 先尝试 Range 请求
+      var result = await doTest(url, useRange: true);
+      if (result.speed != null && result.speed! > 0) return result;
 
-  /// 对 [urls] 批量做轻量级可用性探测，返回每个 URL 是否可用及响应时间。
-  /// 用于搜索结果列表快速标记源是否可用，不下载实际内容。
-  static Future<List<({String url, Duration responseTime, bool available})>>
-      probeUrls(
-    List<String> urls, {
-    int concurrency = 8,
-    Duration timeout = const Duration(seconds: 3),
-  }) async {
-    final results = <({String url, Duration responseTime, bool available})>[];
-    for (var i = 0; i < urls.length; i += concurrency) {
-      final batch = urls.skip(i).take(concurrency).toList();
-      final batchResults = await Future.wait(
-        batch.map((url) => _probeUrlAvailability(url, timeout: timeout)),
-      );
-      results.addAll(batchResults);
+      // Range 失败则尝试普通 GET
+      stopwatch.reset();
+      stopwatch.start();
+      result = await doTest(url, useRange: false);
+      if (result.speed != null && result.speed! > 0) return result;
+
+      stopwatch.stop();
+      return (responseTime: stopwatch.elapsed, speed: 0.0);
+    } catch (e) {
+      stopwatch.stop();
+      return (responseTime: stopwatch.elapsed, speed: 0.0);
     }
-    return results;
   }
 
   static Future<ApiResponse<VideoDetail>> getDetailForSpeedTest({
@@ -794,7 +415,7 @@ class LunaTVService {
     return getDetail(source: source, id: id, title: title);
   }
 
-  /// 生成跨源身份 key。
+  /// 生成跨源身份 key，与 LunaTV 网页端保持一致。
   /// 优先使用 doubanId，其次使用 title+year 组合。
   static String? _generateSkipConfigIdentityKey({
     required String title,
@@ -876,17 +497,6 @@ class LunaTVService {
       }
     }
 
-    // 生成跨源身份 key，用于不同源之间共享跳过配置。
-    final identityKey = _generateSkipConfigIdentityKey(
-      title: title ?? '',
-      year: year,
-      doubanId: doubanId,
-    );
-    debugPrint(
-      '[SkipConfig] 加载跳过配置: source=$source id=$id '
-      'title=$title year=$year doubanId=$doubanId identityKey=$identityKey',
-    );
-
     // 优先使用 source+id 精确匹配
     var result = await doGet(key: '$source+$id');
     if (result.success && result.data != null) {
@@ -894,6 +504,11 @@ class LunaTVService {
     }
 
     // 未命中时尝试 identityKey 跨源匹配
+    final identityKey = _generateSkipConfigIdentityKey(
+      title: title ?? '',
+      year: year,
+      doubanId: doubanId,
+    );
     if (identityKey != null && identityKey.isNotEmpty) {
       result = await doGet(
         key: '$source+$id',
@@ -901,28 +516,6 @@ class LunaTVService {
       );
       if (result.success && result.data != null) {
         return result;
-      }
-
-      // 服务器跨源匹配未命中时，回退到本地按 identityKey 缓存的配置，
-      // 避免同一影片更换源后因服务器索引延迟/不一致导致跳过配置丢失。
-      final identityCacheKey = _cacheService.generateSkipConfigsIdentityCacheKey(
-        identityKey: identityKey,
-      );
-      final cachedIdentity = await _cacheService.get<EpisodeSkipConfig>(
-        identityCacheKey,
-        (raw) => EpisodeSkipConfig.fromJson(raw as Map<String, dynamic>),
-      );
-      if (cachedIdentity != null) {
-        debugPrint(
-          '[SkipConfig] 使用本地 identityKey 缓存: identityKey=$identityKey',
-        );
-        // 同时按当前 source+id 缓存一份，下次可直接命中。
-        await _cacheService.set(
-          cacheKey,
-          cachedIdentity.toJson(),
-          const Duration(days: 7),
-        );
-        return ApiResponse.success(cachedIdentity);
       }
     }
 
@@ -988,17 +581,6 @@ class LunaTVService {
       }
     }
 
-    // 生成跨源身份 key。
-    final identityKey = _generateSkipConfigIdentityKey(
-      title: title,
-      year: year,
-      doubanId: doubanId,
-    );
-    debugPrint(
-      '[SkipConfig] 保存跳过配置: source=$source id=$id '
-      'title=$title year=$year doubanId=$doubanId identityKey=$identityKey',
-    );
-
     // 1. 先保存到 source+id（精确匹配，向后兼容）
     var result = await doSet(key: '$source+$id');
     if (!result.success) {
@@ -1006,6 +588,11 @@ class LunaTVService {
     }
 
     // 2. 如果有 identityKey，再保存到 identityKey（跨源同步）
+    final identityKey = _generateSkipConfigIdentityKey(
+      title: title,
+      year: year,
+      doubanId: doubanId,
+    );
     if (identityKey != null && identityKey.isNotEmpty) {
       final identityResult = await doSet(
         key: '$source+$id',
@@ -1014,16 +601,6 @@ class LunaTVService {
       if (!identityResult.success) {
         return identityResult;
       }
-
-      // 同时按 identityKey 缓存一份到本地，供其他源回退读取。
-      final identityCacheKey = _cacheService.generateSkipConfigsIdentityCacheKey(
-        identityKey: identityKey,
-      );
-      await _cacheService.set(
-        identityCacheKey,
-        config.toJson(),
-        const Duration(days: 30),
-      );
     }
 
     final cacheKey = _cacheService.generateSkipConfigsCacheKey(

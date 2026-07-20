@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_mpv/flutter_mpv.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
@@ -10,8 +11,7 @@ import 'app_windows.dart';
 import 'platform/device_utils.dart';
 import 'services/bangumi_service.dart';
 import 'services/portable_storage_windows.dart';
-import 'services/user_data_service.dart';
-import 'services/version_migration_service.dart';
+import 'services/storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,12 +30,11 @@ void main() async {
     await windowManager.setTitle('海因影视');
   }
 
-  // 版本升级时自动清理旧缓存（保留用户数据），首次安装仅记录版本号。
-  await VersionMigrationService.migrate();
+  // 初始化 flutter_mpv。
+  FlutterMpv.ensureInitialized();
 
-  // 每次 App 启动后重置首页首次进入标记，确保用云端数据覆盖本地旧缓存。
-  await UserDataService.resetHomeFirstEntryCompleted();
-
+  // 异步请求存储权限（不阻塞启动）。
+  StorageService.requestStoragePermission().catchError((_) => false);
   // 异步加载 Bangumi 代理设置到内存缓存，便于后续图片代理同步使用。
   BangumiService.loadProxySettings().catchError((_) {});
 

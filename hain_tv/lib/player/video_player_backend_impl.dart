@@ -3,9 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import '../services/ad_filter_service.dart';
 import '../services/user_data_service.dart';
-import 'buffer_profile_config.dart';
 import 'video_player_backend.dart';
 
 const _defaultUserAgent =
@@ -111,20 +109,18 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     Duration? startAt,
     Map<String, String>? headers,
     bool proxyMode = false,
-    BufferProfileConfig? bufferConfig,
   }) async {
     await dispose();
 
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
     final proxyUrl = await UserDataService.getM3u8ProxyUrl();
-    final adFilterEnabled = await AdFilterService.isEnabled();
     final isLocalProxy = _isLocalProxyUrl(url);
     final isM3u8 = lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/');
-    // 统一逻辑：仅当源本身声明 proxyMode，或去广告开启且配置了全局 M3U8 代理且当前是 M3U8 时，
-    // 才走全局代理；去广告关闭时直接播放原始 URL，与 Selene 保持一致。
-    final needsProxy = !isLocalProxy &&
-        (proxyMode || (adFilterEnabled && proxyUrl.isNotEmpty && isM3u8));
+    // 统一逻辑：仅当源本身声明 proxyMode，或用户配置了全局 M3U8 代理且当前是 M3U8 时，
+    // 才走全局代理；否则直接播放原始 URL（参照 Selene）。
+    final needsProxy =
+        !isLocalProxy && (proxyMode || (proxyUrl.isNotEmpty && isM3u8));
     if (needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
@@ -166,11 +162,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
         Uri.parse(finalUrl),
         httpHeaders: effectiveHeaders,
         formatHint: formatHint,
-        // Windows 端 FVP/libmdk 使用 texture view 更稳定，
-        // platform view 在部分 Windows 环境会导致初始化失败或无法发起网络请求。
-        viewType: Platform.isWindows
-            ? VideoViewType.textureView
-            : VideoViewType.platformView,
+        viewType: VideoViewType.platformView,
       );
     } else if (isFile) {
       final filePath = Uri.parse(finalUrl).toFilePath();

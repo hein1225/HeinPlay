@@ -12,8 +12,6 @@ class SourceOption {
   final String? resolution;
   final Duration? responseTime;
   final double? speed;
-  /// 保存搜索结果中的剧集 URL 列表，测速时可直接使用，避免重复请求详情接口。
-  final List<String> episodes;
 
   const SourceOption({
     required this.source,
@@ -27,7 +25,6 @@ class SourceOption {
     this.resolution,
     this.responseTime,
     this.speed,
-    this.episodes = const [],
   });
 
   factory SourceOption.fromSearchResult(SearchResult result) {
@@ -41,16 +38,10 @@ class SourceOption {
       doubanId: result.doubanId,
       remarks: result.remarks,
       resolution: result.resolution,
-      episodes: result.episodes,
     );
   }
 
-  SourceOption copyWith({
-    Duration? responseTime,
-    double? speed,
-    String? resolution,
-    List<String>? episodes,
-  }) {
+  SourceOption copyWith({Duration? responseTime, double? speed}) {
     return SourceOption(
       source: source,
       sourceName: sourceName,
@@ -60,10 +51,9 @@ class SourceOption {
       year: year,
       doubanId: doubanId,
       remarks: remarks,
-      resolution: resolution ?? this.resolution,
+      resolution: resolution,
       responseTime: responseTime ?? this.responseTime,
       speed: speed ?? this.speed,
-      episodes: episodes ?? this.episodes,
     );
   }
 }

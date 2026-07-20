@@ -4,9 +4,9 @@ import 'package:video_player_android/video_player_android.dart';
 
 import '../services/user_data_service.dart';
 import 'exo_player_backend.dart';
+import 'flutter_mpv_backend.dart';
 import 'fvp_backend.dart';
 import 'video_player_backend.dart';
-import 'vlc_backend.dart';
 
 class PlayerBackendFactory {
   /// 将 video_player 平台实现恢复为 Android 原生 ExoPlayer。
@@ -24,10 +24,10 @@ class PlayerBackendFactory {
       case PlayerBackendType.exo:
         _restoreAndroidVideoPlayer();
         return ExoPlayerBackend();
+      case PlayerBackendType.flutterMpv:
+        return FlutterMpvBackend();
       case PlayerBackendType.fvp:
         return FvpBackend();
-      case PlayerBackendType.vlc:
-        return VlcBackend();
     }
   }
 
@@ -40,13 +40,13 @@ class PlayerBackendFactory {
   }
 
   /// 当前平台可供用户切换的播放器后端列表。
-  /// - Android / TV：ExoPlayer、fvp
-  /// - Windows：fvp、vlc
+  /// - Android / TV：ExoPlayer、flutter_mpv
+  /// - Windows：fvp、flutter_mpv
   static List<PlayerBackendType> get availableBackends {
     if (Platform.isWindows) {
-      return [PlayerBackendType.fvp, PlayerBackendType.vlc];
+      return [PlayerBackendType.fvp, PlayerBackendType.flutterMpv];
     }
-    return [PlayerBackendType.exo, PlayerBackendType.fvp];
+    return [PlayerBackendType.exo, PlayerBackendType.flutterMpv];
   }
 
   static Future<VideoPlayerBackend> createDefault() async {

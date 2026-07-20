@@ -7,9 +7,7 @@ import '../models/douban_movie.dart';
 import '../models/search_result.dart';
 import '../models/source_option.dart';
 import 'douban_service.dart';
-import 'local_storage_service.dart';
 import 'lunatv_service.dart';
-import 'm3u8_utils.dart';
 
 class SearchService {
   static const double _similarityThreshold = 0.6;
@@ -67,7 +65,7 @@ class SearchService {
     return (2 * lcsLength) / (na.length + nb.length);
   }
 
-  /// 计算 Levenshtein 编辑距离。
+  /// 计算 Levenshtein 编辑距离（参考 LunaTV search-ranking.ts）。
   static int _levenshteinDistance(String str1, String str2) {
     final len1 = str1.length;
     final len2 = str2.length;
@@ -314,7 +312,7 @@ class SearchService {
     return previous[n];
   }
 
-  /// 智能生成数字变体。
+  /// 智能生成数字变体（参考 LunaTV 实现）。
   /// - "极速车魂第3季" -> "极速车魂第三季"
   /// - "中国奇谭第二季" -> "中国奇谭2"
   static String? _generateNumberVariant(String query) {
@@ -359,8 +357,21 @@ class SearchService {
     return null;
   }
 
-  /// 智能生成搜索变体。
-  /// 为减少 API 调用并加快搜索速度，仅保留原始查询和数字变体（如"第二季"→"第2季"）。
+  /// 智能生成中文标点变体。
+  static String? _generatePunctuationVariant(String query) {
+    if (query.contains('：')) {
+      return query.replaceAll('：', ' ').trim();
+    }
+    if (query.contains(':')) {
+      return query.replaceAll(':', ' ').trim();
+    }
+    return null;
+  }
+
+  /// 智能生成搜索变体，参考 LunaTV 的 generateSearchVariants。
+  /// 优先返回原始查询；仅在可能提升命中率时生成额外变体。
+  /// [fuzzy] 为 true 时，额外生成剥离季/部/年番等后缀的基础标题变体，
+  /// 用于提升带后缀标题（如"凡人修仙传 年番4"）的模糊搜索命中率。
   static List<String> generateSearchVariants(
     String originalQuery, {
     bool fuzzy = false,
@@ -370,13 +381,48 @@ class SearchService {
 
     final variants = <String>[trimmed];
 
-    // 仅保留数字变体，减少并发 API 调用
+    // 1. 数字变体（最高优先级）
     final numberVariant = _generateNumberVariant(trimmed);
     if (numberVariant != null && numberVariant != trimmed) {
       variants.add(numberVariant);
     }
 
-    return variants;
+    // 2. 中文标点变体
+    final punctuationVariant = _generatePunctuationVariant(trimmed);
+    if (punctuationVariant != null && punctuationVariant != trimmed) {
+      variants.add(punctuationVariant);
+    }
+
+    // 3. 空格变体（多词搜索）
+    if (trimmed.contains(' ')) {
+      final keywords = trimmed.split(RegExp(r'\s+'));
+      if (keywords.length >= 2) {
+        final lastKeyword = keywords.last;
+        if (RegExp(r'第|季|集|部|篇|章').hasMatch(lastKeyword)) {
+          final combined = keywords.first + lastKeyword;
+          if (combined != trimmed) variants.add(combined);
+        }
+        final noSpaces = trimmed.replaceAll(RegExp(r'\s+'), '');
+        if (noSpaces != trimmed) variants.add(noSpaces);
+
+        // 模糊搜索时：若最后一个词像季/部/集/年番等后缀，额外生成基础标题变体
+        if (fuzzy && _looksLikeSeasonSuffix(lastKeyword)) {
+          final baseTitle = keywords.take(keywords.length - 1).join(' ').trim();
+          if (baseTitle.isNotEmpty && baseTitle != trimmed) {
+            variants.add(baseTitle);
+          }
+        }
+      }
+    }
+
+    return variants.toSet().toList();
+  }
+
+  /// 判断 [token] 是否像季/部/集/年番等后缀标识。
+  static bool _looksLikeSeasonSuffix(String token) {
+    if (token.isEmpty) return false;
+    return RegExp(r'第|季|部|集|篇|章|年番|季番|期|卷').hasMatch(token) ||
+        RegExp(r'\d').hasMatch(token);
   }
 
   static Future<SearchResult> _enrichWithDouban(SearchResult result) async {
@@ -483,328 +529,50 @@ class SearchService {
 
   static Future<List<SourceOption>> speedTestSources(
     List<SourceOption> sources, {
-    /// 每次有源测速完成时回调当前已排序的完整列表，供 UI 实时刷新。
-    void Function(List<SourceOption> sortedSources)? onProgress,
-    int concurrency = 4,
-    /// 播放记录中的源标识（格式 source+id）。存在时优先对该源做真实测速。
-    String? playedSourceKey,
-    /// 为 true 时对所有源做真实下载测速与分辨率分析；否则仅测速优先级源（13 个）。
-    bool testAllSources = false,
-    /// 无播放记录时测速完成前的进度文案回调，供详情页展示“测速中 x/y”。
-    void Function(int completed, int total)? onProgressText,
-    /// 为 true 时只测试 [sources] 中尚未被探测过（speed 为 null）的源，
-    /// 用于测速期间新增源或补充 episodes 后的补测，避免全部源重测一遍。
-    bool onlyUntested = false,
+    void Function(int index, SourceOption updated)? onProgress,
   }) async {
-    // 真实下载测速覆盖优先级源；其余源通过快速可用性探测标记为可用/不可用。
-    // 默认选择策略：播放记录原始源 + 响应最快 4 个源 + 随机 8 个源。
-    const speedTestCount = 13;
-    const priorityFastCount = 4;
-    const perSourceTimeout = Duration(seconds: 8);
-    const probeConcurrency = 8;
+    final futures = <Future<void>>[];
+    final updated = List<SourceOption>.from(sources);
 
-    /// 为每个源补充从 sourceName/remarks 推断的分辨率，避免服务端未返回时完全空白。
-    SourceOption _inferResolution(SourceOption option) {
-      if (option.resolution != null && option.resolution!.isNotEmpty) {
-        return option;
-      }
-      final text = <String>[option.sourceName, option.remarks ?? ''].join(' ');
-      final inferred = M3u8Utils.extractResolutionFromText(text);
-      if (inferred != null) {
-        return option.copyWith(resolution: inferred);
-      }
-      return option;
-    }
-
-    var workingSources = sources.map(_inferResolution).toList();
-    final testedKeys = <String>{};
-    final resolutionCache = await LocalStorageService.getSourceResolutionCache();
-
-    // 预填缓存中的分辨率，避免重复下载 M3U8 分析（仅缓存分辨率，不缓存测速数值）。
-    for (var i = 0; i < workingSources.length; i++) {
-      final option = workingSources[i];
-      if (option.resolution != null && option.resolution!.isNotEmpty) continue;
-      final cached = resolutionCache['${option.source}+${option.id}'];
-      if (cached != null && cached.isNotEmpty) {
-        workingSources[i] = option.copyWith(resolution: cached);
-      }
-    }
-
-    void _notifyProgress() {
-      final sorted = _sortSourcesBySpeed(
-        workingSources,
-        recordKey: playedSourceKey,
-        testedKeys: testedKeys,
-      );
-      onProgress?.call(sorted);
-    }
-
-    // 阶段 1：快速可用性探测，覆盖所有源，让列表中的每个源都有 speed/responseTime。
-    // 探测只做轻量级 HEAD/GET，不解析 M3U8 也不测下载速度，避免浪费流量和时间。
-    // 仅在非补测模式下执行探测；补测模式下已有真实测速结果，避免被探测结果覆盖。
-    if (!onlyUntested) {
-      final urlsToProbe = <String>[];
-      final probeIndexMap = <int, int>{}; // probe list index -> workingSources index
-      for (var i = 0; i < workingSources.length; i++) {
-        final option = workingSources[i];
-        if (option.episodes.isEmpty) continue;
-        final testEpisodeIndex = option.episodes.length > 1 ? 1 : 0;
-        probeIndexMap[urlsToProbe.length] = i;
-        urlsToProbe.add(option.episodes[testEpisodeIndex]);
-      }
-
-      if (urlsToProbe.isNotEmpty) {
-        final probeResults = await LunaTVService.probeUrls(
-          urlsToProbe,
-          concurrency: probeConcurrency,
-          timeout: const Duration(seconds: 4),
+    for (var i = 0; i < updated.length; i++) {
+      final index = i;
+      futures.add(() async {
+        final option = updated[index];
+        final detailResponse = await LunaTVService.getDetailForSpeedTest(
+          source: option.source,
+          id: option.id,
+          title: option.title,
         );
-        for (var i = 0; i < probeResults.length; i++) {
-          final sourceIdx = probeIndexMap[i];
-          if (sourceIdx == null) continue;
-          final option = workingSources[sourceIdx];
-          final r = probeResults[i];
-          workingSources[sourceIdx] = option.copyWith(
-            responseTime: r.responseTime,
-            speed: r.available ? -1.0 : 0.0,
+        if (!detailResponse.success ||
+            detailResponse.data == null ||
+            detailResponse.data!.episodes.isEmpty) {
+          updated[index] = option.copyWith(
+            responseTime: const Duration(seconds: 999),
+            speed: 0.0,
           );
+          onProgress?.call(index, updated[index]);
+          return;
         }
-        _notifyProgress();
-      }
-    }
 
-    // 阶段 2：选择需要做真实下载测速与分辨率识别的源。
-    final List<SourceOption> sourcesToSpeedTest;
-    if (onlyUntested) {
-      // 仅测试尚未被探测过的源（speed 为 null），用于补测新增源或刚补充 episodes 的源。
-      sourcesToSpeedTest = workingSources.where((s) => s.speed == null).toList();
-      if (playedSourceKey != null && playedSourceKey.isNotEmpty) {
-        final originalIndex = sourcesToSpeedTest.indexWhere(
-          (s) => '${s.source}+${s.id}' == playedSourceKey,
+        final firstEpisode = detailResponse.data!.episodes.first;
+        final metrics = await LunaTVService.speedTestEpisode(firstEpisode);
+        updated[index] = option.copyWith(
+          responseTime: metrics.responseTime,
+          speed: metrics.speed,
         );
-        if (originalIndex > 0) {
-          final original = sourcesToSpeedTest.removeAt(originalIndex);
-          sourcesToSpeedTest.insert(0, original);
-        }
-      }
-    } else if (testAllSources) {
-      // 对所有源测速，但把 playedSourceKey 对应的原始源置顶优先测速。
-      sourcesToSpeedTest = List<SourceOption>.from(workingSources);
-      if (playedSourceKey != null && playedSourceKey.isNotEmpty) {
-        final originalIndex = sourcesToSpeedTest.indexWhere(
-          (s) => '${s.source}+${s.id}' == playedSourceKey,
-        );
-        if (originalIndex > 0) {
-          final original = sourcesToSpeedTest.removeAt(originalIndex);
-          sourcesToSpeedTest.insert(0, original);
-        }
-      }
-    } else {
-      sourcesToSpeedTest = _selectSourcesForSpeedTest(
-        workingSources,
-        playedSourceKey: playedSourceKey,
-        maxTestCount: speedTestCount,
-        topPriorityCount: priorityFastCount,
-      );
-    }
-    for (final s in sourcesToSpeedTest) {
-      testedKeys.add('${s.source}+${s.id}');
+        onProgress?.call(index, updated[index]);
+      }());
     }
 
-    final totalToTest = sourcesToSpeedTest.length;
-    var completedCount = 0;
-
-    for (var i = 0; i < sourcesToSpeedTest.length; i += concurrency) {
-      final batchEnd = (i + concurrency).clamp(0, sourcesToSpeedTest.length);
-      await Future.wait([
-        for (var j = i; j < batchEnd; j++)
-          () async {
-            final option = sourcesToSpeedTest[j];
-            if (option.episodes.isEmpty) {
-              completedCount++;
-              onProgressText?.call(completedCount, totalToTest);
-              return;
-            }
-
-            final testEpisodeIndex = option.episodes.length > 1 ? 1 : 0;
-            final episodeUrl = option.episodes[testEpisodeIndex];
-            // 若缓存已有分辨率，传入避免重复解析 M3U8。
-            final cachedResolution = option.resolution != null &&
-                    option.resolution!.isNotEmpty &&
-                    resolutionCache.containsKey('${option.source}+${option.id}')
-                ? option.resolution
-                : null;
-
-            final metrics = await LunaTVService.speedTestEpisode(
-              episodeUrl,
-              sourceType: option.source,
-              cachedResolution: cachedResolution,
-            )
-                .timeout(perSourceTimeout)
-                .catchError((_) {
-              // 单源测速超时视为可用但速度未知，避免把可播放源误判为不可用。
-              return (
-                responseTime: Duration.zero,
-                speed: -1.0,
-                resolution: option.resolution,
-              );
-            });
-
-            final fallbackText = <String>[
-              option.sourceName,
-              option.remarks ?? '',
-              episodeUrl,
-            ].join(' ');
-            final detectedResolution = option.resolution ??
-                (metrics.resolution ??
-                    M3u8Utils.extractResolutionFromText(fallbackText));
-
-            // 缓存从真实 M3U8 分析得到的分辨率，便于下次直接使用。
-            if (detectedResolution != null &&
-                detectedResolution.isNotEmpty &&
-                (option.resolution == null || option.resolution!.isEmpty)) {
-              await LocalStorageService.setSourceResolutionCache(
-                option.source,
-                option.id,
-                detectedResolution,
-              );
-            }
-
-            final updated = option.copyWith(
-              responseTime: metrics.responseTime,
-              speed: metrics.speed,
-              resolution: detectedResolution,
-            );
-
-            // 把真实测速结果写回 workingSources 的对应位置。
-            final sourceIdx = workingSources.indexWhere(
-              (s) => s.source == option.source && s.id == option.id,
-            );
-            if (sourceIdx >= 0) {
-              workingSources[sourceIdx] = updated;
-              _notifyProgress();
-            }
-            completedCount++;
-            onProgressText?.call(completedCount, totalToTest);
-          }(),
-      ]);
-
-      if (i + concurrency < sourcesToSpeedTest.length) {
-        await Future.delayed(const Duration(milliseconds: 150));
-      }
-    }
-
-    return _sortSourcesBySpeed(
-      workingSources,
-      recordKey: playedSourceKey,
-      testedKeys: testedKeys,
-    );
-  }
-
-  /// 按测速结果排序源列表。
-  /// - [recordKey] 对应的源永远置顶（若存在）。
-  /// - 真实测速过的源按速度降序排在记录源之后。
-  /// - 未真实测速的源：可用（speed == -1）> 不可用/未知。
-  static List<SourceOption> _sortSourcesBySpeed(
-    List<SourceOption> sources, {
-    String? recordKey,
-    Set<String>? testedKeys,
-  }) {
-    if (sources.length <= 1) return List<SourceOption>.from(sources);
-
-    final keys = testedKeys ?? <String>{};
-    SourceOption? recordSource;
-    if (recordKey != null && recordKey.isNotEmpty) {
-      final idx = sources.indexWhere((s) => '${s.source}+${s.id}' == recordKey);
-      if (idx >= 0) {
-        recordSource = sources[idx];
-      }
-    }
-
-    int _speedRank(double? speed) {
-      if (speed == null) return 0;
-      if (speed == 0) return 1;
-      if (speed == -1.0) return 2;
-      return 3;
-    }
-
-    final others = sources.where((s) => s != recordSource).toList();
-    others.sort((a, b) {
-      final aKey = '${a.source}+${a.id}';
-      final bKey = '${b.source}+${b.id}';
-      final aTested = keys.contains(aKey);
-      final bTested = keys.contains(bKey);
-
-      // 真实测速过的源排在最前面，按真实速度降序。
-      if (aTested && !bTested) return -1;
-      if (!aTested && bTested) return 1;
-
-      final aRank = _speedRank(a.speed);
-      final bRank = _speedRank(b.speed);
-      if (aRank != bRank) return bRank.compareTo(aRank);
-
-      final aEffective = a.speed == -1.0 ? 0.0 : (a.speed ?? 0.0);
-      final bEffective = b.speed == -1.0 ? 0.0 : (b.speed ?? 0.0);
-      return bEffective.compareTo(aEffective);
+    await Future.wait(futures);
+    updated.sort((a, b) {
+      final aOk = (a.speed ?? 0) > 0;
+      final bOk = (b.speed ?? 0) > 0;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return (b.speed ?? 0).compareTo(a.speed ?? 0);
     });
-
-    if (recordSource != null) {
-      return [recordSource, ...others];
-    }
-    return others;
-  }
-
-  /// 选择需要真实测速的源：总数不超过 [maxTestCount]。
-  /// 若存在 [playedSourceKey]，优先保留播放记录中的原始源，再从剩余源中按响应时间
-  /// 取最快的 [topPriorityCount] 个，最后随机补齐剩余位置。
-  static List<SourceOption> _selectSourcesForSpeedTest(
-    List<SourceOption> sources, {
-    String? playedSourceKey,
-    required int maxTestCount,
-    required int topPriorityCount,
-  }) {
-    if (sources.length <= maxTestCount) return sources;
-
-    final selected = <SourceOption>[];
-    final selectedKeys = <String>{};
-
-    // 1. 优先加入播放记录中的原始源。
-    if (playedSourceKey != null && playedSourceKey.isNotEmpty) {
-      final originalIndex = sources.indexWhere(
-        (s) => '${s.source}+${s.id}' == playedSourceKey,
-      );
-      if (originalIndex >= 0) {
-        selected.add(sources[originalIndex]);
-        selectedKeys.add(playedSourceKey);
-      }
-    }
-
-    // 2. 从剩余源中按响应时间取最快的源。
-    final remaining = sources.where((s) {
-      return !selectedKeys.contains('${s.source}+${s.id}');
-    }).toList();
-    remaining.sort((a, b) {
-      final aTime = a.responseTime?.inMilliseconds ?? 0x7FFFFFFFFFFFFFFF;
-      final bTime = b.responseTime?.inMilliseconds ?? 0x7FFFFFFFFFFFFFFF;
-      return aTime.compareTo(bTime);
-    });
-
-    final fastCount = topPriorityCount.clamp(0, maxTestCount - selected.length);
-    for (var i = 0; i < fastCount && i < remaining.length; i++) {
-      selected.add(remaining[i]);
-      selectedKeys.add('${remaining[i].source}+${remaining[i].id}');
-    }
-
-    // 3. 随机补齐剩余位置。
-    final pool = sources.where((s) {
-      return !selectedKeys.contains('${s.source}+${s.id}');
-    }).toList()..shuffle();
-    final randomNeed = maxTestCount - selected.length;
-    if (randomNeed > 0) {
-      selected.addAll(pool.take(randomNeed));
-    }
-
-    return selected;
+    return updated;
   }
 
   static Future<ApiResponse<List<SourceOption>>> searchSources({
@@ -856,7 +624,7 @@ class SearchService {
     return ApiResponse.success(grouped, statusCode: lunaResponse.statusCode);
   }
 
-  /// 使用搜索变体并行搜索可用源，提升 Bangumi/动漫条目命中率。
+  /// 使用搜索变体并行搜索可用源，参考 LunaTV 提升 Bangumi/动漫条目命中率。
   /// [onProgress] 会在每个变体搜索完成后被调用，用于详情页实时展示已找到的结果。
   static Future<ApiResponse<List<SourceOption>>> searchSourcesFastWithVariants({
     required String keyword,
@@ -868,49 +636,48 @@ class SearchService {
   }) async {
     final variants = generateSearchVariants(keyword, fuzzy: fuzzy);
 
-    // 顺序搜索变体：先搜原始词，有结果立即返回，避免并发 API 调用过多导致等待时间长
-    final responses = <ApiResponse<List<SearchResult>>>[];
-    for (final variant in variants) {
+    // 启动所有变体搜索，但不等待全部完成
+    final futures = variants.map((variant) async {
       try {
-        final response = await LunaTVService.search(
+        return await LunaTVService.search(
           keyword: variant,
           source: source,
           forceRefresh: forceRefresh,
         );
-        responses.add(response);
+      } catch (e) {
+        debugPrint('搜索变体 "$variant" 失败: $e');
+        return ApiResponse<List<SearchResult>>.error('变体搜索失败: $e');
+      }
+    }).toList();
 
-        // 每完成一个变体就进行一次中间结果回调，减少详情页等待感
-        if (onProgress != null) {
-          final seen = <String>{};
-          final merged = <SearchResult>[];
-          for (final r in responses) {
-            if (r.success && r.data != null) {
-              for (final result in r.data!) {
-                final key = '${result.source}_${result.id}';
-                if (!seen.contains(key)) {
-                  seen.add(key);
-                  merged.add(result);
-                }
+    final responses = <ApiResponse<List<SearchResult>>>[];
+    for (var i = 0; i < futures.length; i++) {
+      final response = await futures[i];
+      responses.add(response);
+
+      // 每完成一个变体就进行一次中间结果回调，减少详情页等待感
+      if (onProgress != null) {
+        final seen = <String>{};
+        final merged = <SearchResult>[];
+        for (final r in responses) {
+          if (r.success && r.data != null) {
+            for (final result in r.data!) {
+              final key = '${result.source}_${result.id}';
+              if (!seen.contains(key)) {
+                seen.add(key);
+                merged.add(result);
               }
             }
           }
-          final filtered = _filterByRelevance(
-            merged,
-            keyword,
-            variants: variants.sublist(0, responses.length),
-            exactMatch: exactMatch,
-            fuzzy: fuzzy,
-          );
-          onProgress(groupBySource(filtered));
         }
-
-        // 若当前变体搜索成功且有数据，直接返回，不再搜索后续变体
-        if (response.success && response.data != null && response.data!.isNotEmpty) {
-          break;
-        }
-      } catch (e) {
-        debugPrint('搜索变体 "$variant" 失败: $e');
-        responses.add(ApiResponse<List<SearchResult>>.error('变体搜索失败: $e'));
+        final filtered = _filterByRelevance(
+          merged,
+          keyword,
+          variants: variants.sublist(0, responses.length),
+          exactMatch: exactMatch,
+          fuzzy: fuzzy,
+        );
+        onProgress(groupBySource(filtered));
       }
     }
 
@@ -933,7 +700,7 @@ class SearchService {
     final filtered = _filterByRelevance(
       merged,
       keyword,
-      variants: variants.sublist(0, responses.length),
+      variants: variants,
       exactMatch: exactMatch,
       fuzzy: fuzzy,
     );
@@ -957,7 +724,7 @@ class SearchService {
   }
 
   /// 搜索某部影片的可用源，并把 [current] 放在第一位，其余去重排在后面。
-  /// 使用后端搜索（不走豆瓣 enrich）以提升速度，失败或超时时只返回 [current]，
+  /// 使用 LunaTV 搜索（不走豆瓣 enrich）以提升速度，失败或超时时只返回 [current]，
   /// 避免让用户长时间等待在搜索页。
   static Future<List<SourceOption>> searchAlternativeSources({
     required String keyword,
@@ -1000,5 +767,3 @@ class _ScoredResult {
 
   _ScoredResult(this.result, this.baseScore, this.totalScore);
 }
-
-

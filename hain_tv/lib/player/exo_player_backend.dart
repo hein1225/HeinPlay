@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'buffer_profile_config.dart';
-import 'exo_player_buffer_config.dart';
 import 'video_player_backend.dart';
 import 'video_player_backend_impl.dart';
 
@@ -26,22 +24,8 @@ class ExoPlayerBackend implements VideoPlayerBackend {
     Duration? startAt,
     Map<String, String>? headers,
     bool proxyMode = false,
-    BufferProfileConfig? bufferConfig,
-  }) async {
-    final effectiveConfig = bufferConfig ?? await BufferProfileConfig.current();
-    try {
-      await ExoPlayerBufferConfig.apply(effectiveConfig);
-    } catch (e) {
-      debugPrint('ExoPlayerBackend 缓冲配置下发失败（可能尚未实现原生端）: $e');
-    }
-    return _impl.open(
-      url,
-      startAt: startAt,
-      headers: headers,
-      proxyMode: proxyMode,
-      bufferConfig: effectiveConfig,
-    );
-  }
+  }) =>
+      _impl.open(url, startAt: startAt, headers: headers, proxyMode: proxyMode);
 
   @override
   Future<void> play() => _impl.play();

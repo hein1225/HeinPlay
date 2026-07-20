@@ -23,21 +23,6 @@ class AppColors {
   static const Color warning = Color(0xFFF59E0B);
   static const Color error = Color(0xFFEF4444);
   static const Color info = Color(0xFF3B82F6);
-
-  /// 根据评分返回标签背景色，用于豆瓣/Bangumi 评分徽章。
-  /// - ≥ 9.0：蓝色
-  /// - ≥ 8.0：绿色
-  /// - ≥ 6.0：黄色
-  /// - ＜ 6.0：红色
-  /// - 无法解析：灰色
-  static Color ratingColor(String? rate) {
-    final score = double.tryParse(rate ?? '');
-    if (score == null) return textMuted;
-    if (score >= 9.0) return const Color(0xFF3B82F6);
-    if (score >= 8.0) return const Color(0xFF22C55E);
-    if (score >= 6.0) return const Color(0xFFEAB308);
-    return const Color(0xFFEF4444);
-  }
 }
 
 class AppRadius {
@@ -144,16 +129,6 @@ ThemeData buildAppTheme() {
           fontSize: 16,
           fontWeight: FontWeight.w600,
         ),
-      ),
-    ),
-    // 全局滚动条样式：细、圆角、半透明，适配深色主题。
-    scrollbarTheme: ScrollbarThemeData(
-      thickness: WidgetStateProperty.all(4.0),
-      radius: const Radius.circular(AppRadius.full),
-      thumbVisibility: WidgetStateProperty.all(true),
-      trackVisibility: WidgetStateProperty.all(false),
-      thumbColor: WidgetStateProperty.all(
-        AppColors.textMuted.withValues(alpha: 0.4),
       ),
     ),
   );

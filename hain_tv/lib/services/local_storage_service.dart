@@ -105,7 +105,6 @@ class LocalStorageService {
   static const String _playHistoryKey = 'play_history';
   static const String _favoritesKey = 'favorites';
   static const String _searchHistoryKey = 'search_history';
-  static const String _sourceResolutionCacheKey = 'source_resolution_cache';
 
   static Future<SharedPreferences> _prefs() async {
     return SharedPreferences.getInstance();
@@ -245,48 +244,9 @@ class LocalStorageService {
     await prefs.remove(_searchHistoryKey);
   }
 
-  static Future<Map<String, String>> getSourceResolutionCache() async {
-    final prefs = await _prefs();
-    final raw = prefs.getString(_sourceResolutionCacheKey);
-    if (raw == null || raw.isEmpty) return {};
-    try {
-      final map = json.decode(raw) as Map<String, dynamic>;
-      return map.map((k, v) => MapEntry(k, v.toString()));
-    } catch (_) {
-      return {};
-    }
-  }
-
-  static Future<void> setSourceResolutionCache(
-    String source,
-    String id,
-    String resolution,
-  ) async {
-    if (source.isEmpty || id.isEmpty || resolution.isEmpty) return;
-    final prefs = await _prefs();
-    final cache = await getSourceResolutionCache();
-    cache['$source+$id'] = resolution;
-    // 限制缓存条目数，避免无限增长。
-    const maxEntries = 2000;
-    if (cache.length > maxEntries) {
-      final keys = cache.keys.toList()..sort();
-      final toRemove = keys.take(cache.length - maxEntries);
-      for (final k in toRemove) {
-        cache.remove(k);
-      }
-    }
-    await prefs.setString(_sourceResolutionCacheKey, json.encode(cache));
-  }
-
-  static Future<void> clearSourceResolutionCache() async {
-    final prefs = await _prefs();
-    await prefs.remove(_sourceResolutionCacheKey);
-  }
-
   static Future<void> clearAllCache() async {
     await clearPlayHistory();
     await clearSearchHistory();
-    await clearSourceResolutionCache();
     // 收藏不被清除，如需清除可单独调用
   }
 }

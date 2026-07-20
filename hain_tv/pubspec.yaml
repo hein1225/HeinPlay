@@ -56,11 +56,11 @@ flutter_launcher_icons:
   image_path: "../plan/ico.png"
   android:
     generate: true
-    adaptive_icon_background: "#0A0A0F"
-    adaptive_icon_foreground: "../plan/ico.png"
+    adaptive_icon_background: "#00000000"
+    adaptive_icon_foreground: "../plan/mo_ico.png"
   windows:
     generate: true
-    image_path: "../plan/ico.png"
+    image_path: "../plan/mo_ico.png"
     icon_size: 48
   macos:
     generate: true
