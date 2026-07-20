@@ -139,7 +139,7 @@ class DoubanService {
 
   /// 通过 LunaTV 后端的 /api/douban 代理获取豆瓣“热门”数据。
   /// 后端实际调用的是 `https://movie.douban.com/j/search_subjects?sort=recommend`，
-  /// 该接口返回的内容与豆瓣网站“热门”标签页一致，比 recent_hot 更准确。
+  /// 该接口返回的内容与豆瓣“热门”标签页一致，比 recent_hot 更准确。
   /// 当未配置服务器或代理失败时，自动回退到 [getCategoryData]（recent_hot）。
   static Future<ApiResponse<List<DoubanMovie>>> getHotDataFromServer({
     required String type,

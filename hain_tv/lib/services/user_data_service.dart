@@ -4,7 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum DoubanDataSource { direct, cdnTencent, cdnAliyun, corsProxy }
 
-enum PlayerBackendType { exo, flutterMpv, fvp }
+enum PlayerBackendType { exo, fvp, vlc }
+
+enum BufferProfile { standard, enhanced, power, lowLatency }
 
 enum BangumiApiProxyType { direct, cmliussss, custom }
 
@@ -30,9 +32,10 @@ class UserDataService {
       'per_video_player_backend_';
   static const String _homeFirstEntryCompletedKey =
       'home_first_entry_completed';
-  // 与 Selene 保持一致，方便共用已配置的代理
+  // M3U8 代理地址存储键
   static const String _m3u8ProxyUrlKey = 'm3u8_proxy_url';
   static const String _hardwareDecodingKey = 'hardware_decoding';
+  static const String _bufferProfileKey = 'buffer_profile';
 
   // Bangumi 代理设置
   static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
@@ -228,6 +231,22 @@ class UserDataService {
     return prefs.getBool(_hardwareDecodingKey) ?? true;
   }
 
+  static Future<void> saveBufferProfile(BufferProfile profile) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_bufferProfileKey, profile.index);
+  }
+
+  static Future<BufferProfile> getBufferProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = prefs.getInt(_bufferProfileKey);
+    if (index != null &&
+        index >= 0 &&
+        index < BufferProfile.values.length) {
+      return BufferProfile.values[index];
+    }
+    return BufferProfile.standard;
+  }
+
   static String _perVideoBackendKey(String source, String id) {
     return '$_perVideoPlayerBackendPrefix${source}_$id';
   }
@@ -289,6 +308,12 @@ class UserDataService {
   static Future<void> markHomeFirstEntryCompleted() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_homeFirstEntryCompletedKey, true);
+  }
+
+  /// 重置首次进入首页刷新标记，用于每次 App 启动后强制重新从云端刷新。
+  static Future<void> resetHomeFirstEntryCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_homeFirstEntryCompletedKey, false);
   }
 
   // ===================== Bangumi 代理设置 =====================

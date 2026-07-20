@@ -28,9 +28,9 @@
 
 ### 多播放器后端
 
-- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，可在设置中切换为 **flutter_mpv**（基于 libmpv），适配不同网络格式（HLS、DASH、普通 MP4）。
-- **Windows**：仅使用 **flutter_mpv**，不再提供其他后端切换，保证桌面端播放稳定性。
-- 支持硬件解码开关，按需开启或关闭 `flutter_mpv` 硬件加速。
+- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，适配 HLS、DASH、普通 MP4 等主流网络格式。
+- **Windows**：抛弃长期未更新的 `flutter_mpv`，默认使用 **fvp**，并保留 **vlc_player** 作为备用后端，提升桌面端格式兼容性与播放稳定性。
+- 优化视频缓冲配置与测速优选逻辑，详情页自动对所有播放源测速并按响应速度排序，无播放记录时完成测速后再允许播放。
 
 ### 搜索
 
@@ -85,7 +85,7 @@
 | Android TV | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航 |
 | Android    | 已发布    | Android 7.0+（API 24+） | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
 | Web        | 支持     | 现代浏览器 | 受浏览器 CORS 限制，部分图片资源可能无法加载     |
-| Windows    | 已发布    | Windows 10 1809+ | 桌面端便携版，使用 `flutter_mpv` 播放             |
+| Windows    | 已发布    | Windows 10 1809+ | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player` |
 | Linux      | 计划中    | — | 桌面端版本后续支持                    |
 | iOS        | 计划中    | — | 移动端版本后续支持                    |
 
@@ -93,9 +93,9 @@
 
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
-| `heinplay-1.1.4-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
-| `heinplay-1.1.4-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
-| `heinplay-1.1.4-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，无需安装。 |
+| `heinplay-1.1.6-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
+| `heinplay-1.1.6-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
+| `heinplay-1.1.6-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，无需安装。 |
 
 ## 项目结构
 
@@ -197,6 +197,30 @@ Release 构建会使用 `android/key.properties`（TV 版）或 `android/key-mob
 ## 更新日志
 
 <details open>
+<summary><strong>1.1.6</strong></summary>
+
+- **播放器后端重构**：Windows 端抛弃长期不更新的 `flutter_mpv`，默认切换为 `fvp`，并新增 `vlc_player` 作为备用后端，解决部分源播放失败问题。
+- **视频缓冲与测速优选优化**：重构详情页播放源测速逻辑，自动对所有源进行连通性与响应速度测试，按速度实时排序；无播放记录时完成测速后再启用播放按钮。
+- **M3U8 播放体验优化**：统一播放器代理与请求头补全逻辑，M3U8/playlist 强制完整请求并返回 200，仅分片请求透传 Range，提升进度条与播放稳定性。
+- **构建与依赖**：`vlc_player` 改为仅 Windows 平台的本地依赖，避免 Android 构建引入 `libvlc-all` 导致 `.so` 冲突与 `minSdk` 抬升。
+- **版本号统一**：全项目更新至 `1.1.6`，Release 产物命名同步为 `heinplay-1.1.6-tv.apk`、`heinplay-1.1.6-mobile.apk`、`heinplay-1.1.6-windows-portable.zip`。
+
+</details>
+
+<details>
+<summary><strong>1.1.5</strong></summary>
+
+- **每日放送中文详情与评分修复**：Bangumi 请求优先获取中文内容，详情页优先展示豆瓣评分并在无匹配时回退到 Bangumi，海报墙评分标签统一按分数段着色。
+- **设置页提示可读性修复**：TV / 手机设置页所有切换操作 SnackBar 提示文字统一为白色，避免深色背景下看不清。
+- **稳定性优化**：手机版全屏退出顺序化销毁资源，降低卡死概率；Windows 版异步刷新日志并快速关闭窗口。
+- **GitHub Actions 自动构建**：新增 `.github/workflows/build-release.yml`，改为仅支持手动触发，自动产出 TV / 手机 / Windows 三个版本。
+- **权限精简**：取消启动时获取存储读取权限，缓存、更新下载、播放记录与收藏均使用应用私有目录，功能不受影响。
+- **依赖升级**：`window_manager` 升级至 `^0.5.2`，并更新多个兼容依赖。
+- **版本号统一**：全项目更新至 `1.1.5`，Release 产物命名同步为 `heinplay-1.1.5-tv.apk`、`heinplay-1.1.5-mobile.apk`、`heinplay-1.1.5-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.1.4</strong></summary>
 
 - **Windows 桌面端正式发布**：统一使用 `flutter_mpv`，新增 Windows 日志、用户数据便携化、ESC 返回与全屏切换等桌面交互。
