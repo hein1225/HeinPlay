@@ -6,10 +6,26 @@ class CacheService {
   factory CacheService() => _instance;
   CacheService._internal();
 
+  /// 缓存结构版本号。修改缓存字段解析逻辑或需要强制刷新缓存时，应递增此值。
+  static const String _cacheVersion = '1';
+  static const String _cacheVersionKey = 'cache_service_version';
+
   SharedPreferences? _prefs;
 
   Future<void> init() async {
     _prefs ??= await SharedPreferences.getInstance();
+    await _checkVersion();
+  }
+
+  /// 检查缓存版本号，版本不一致时清空所有缓存条目，避免旧缓存导致新代码逻辑失效。
+  Future<void> _checkVersion() async {
+    if (_prefs == null) return;
+    final storedVersion = _prefs!.getString(_cacheVersionKey);
+    if (storedVersion != _cacheVersion) {
+      // 先写入新版本号，避免 clear()->init() 再次触发版本检查造成递归。
+      await _prefs!.setString(_cacheVersionKey, _cacheVersion);
+      await clear();
+    }
   }
 
   Future<T?> get<T>(String key, T Function(dynamic) parser) async {
@@ -135,6 +151,11 @@ class CacheService {
     required String id,
   }) {
     return 'lunatv_skipconfigs_${source}_$id';
+  }
+
+  /// 按影片身份（doubanId 或 title+year）生成的跨源跳过配置缓存 key。
+  String generateSkipConfigsIdentityCacheKey({required String identityKey}) {
+    return 'lunatv_skipconfigs_identity_$identityKey';
   }
 
   String generatePlayRecordsCacheKey() => 'lunatv_playrecords';

@@ -54,6 +54,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   VideoPlayerBackend? _backend;
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
+  bool _controlsLocked = false;
+  bool _lockIndicatorVisible = false;
+  Timer? _lockIndicatorTimer;
   bool _playing = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -101,6 +104,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
   /// 记录进入播放页前设备/系统的方向，退出时恢复。
   Orientation? _originalOrientation;
+
+  /// 是否正在退出播放页，防止重复触发退出流程。
+  bool _isExiting = false;
 
   /// 最近一次切换集数/源的时间，用于跳过片头片尾时避免初始化阶段位置抖动。
   DateTime? _episodeSwitchAt;
@@ -793,7 +799,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   }
 
   void _showControls() {
-    debugPrint('显示控制栏');
+    if (_controlsLocked) return;
+    _controlsTimer?.cancel();
     setState(() => _controlsVisible = true);
     _startControlsTimer();
   }
@@ -885,11 +892,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                   case PlayerBackendType.exo:
                     label = 'ExoPlayer';
                     break;
-                  case PlayerBackendType.flutterMpv:
-                    label = 'flutter_mpv';
-                    break;
                   case PlayerBackendType.fvp:
                     label = 'FVP';
+                    break;
+                  case PlayerBackendType.vlc:
+                    label = 'VLC';
                     break;
                 }
                 return ListTile(
@@ -1025,7 +1032,43 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   }
 
   void _onTapScreen() {
+    if (_controlsLocked) {
+      if (_lockIndicatorVisible) {
+        _hideLockIndicator();
+      } else {
+        _showLockIndicator();
+      }
+      return;
+    }
     _toggleControls();
+  }
+
+  void _toggleControlsLock() {
+    setState(() {
+      _controlsLocked = !_controlsLocked;
+      if (_controlsLocked) {
+        // 锁定时立即隐藏控制栏并停止自动隐藏计时，避免控制栏意外弹出。
+        _controlsTimer?.cancel();
+        _controlsTimer = null;
+        _controlsVisible = false;
+        _lockIndicatorVisible = false;
+      }
+    });
+  }
+
+  void _showLockIndicator() {
+    _lockIndicatorTimer?.cancel();
+    setState(() => _lockIndicatorVisible = true);
+    _lockIndicatorTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _lockIndicatorVisible = false);
+      }
+    });
+  }
+
+  void _hideLockIndicator() {
+    _lockIndicatorTimer?.cancel();
+    setState(() => _lockIndicatorVisible = false);
   }
 
   void _onDoubleTapScreen() {
@@ -1042,10 +1085,10 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     _isLongPressSeeking = true;
     _longPressDirection = isRight ? 'right' : 'left';
     _showGestureIndicator(
-      isRight ? '3X 快进中' : '3X 快退中',
+      isRight ? '0.5X 快进中' : '0.5X 快退中',
       isRight ? Icons.fast_forward : Icons.fast_rewind,
     );
-    _start3xSeek();
+    _startHalfSpeedSeek();
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
@@ -1054,7 +1097,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     setState(() => _gestureIndicatorVisible = false);
   }
 
-  void _start3xSeek() {
+  void _startHalfSpeedSeek() {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
@@ -1062,8 +1105,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     ) {
       if (!_isLongPressSeeking || _backend == null) return;
       final step = _longPressDirection == 'right'
-          ? _seekStep * 3
-          : -_seekStep * 3;
+          ? _seekStep ~/ 2
+          : -(_seekStep ~/ 2);
       final target = _position + Duration(seconds: step);
       _backend?.seek(_clampDuration(target));
     });
@@ -1159,17 +1202,19 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
   String _formatSpeed(double? speedBps) {
     if (speedBps == null) return '';
+    if (speedBps == -1.0) return '可用';
     if (speedBps <= 0) return '不可用';
-    if (speedBps >= 1000 * 1000) {
-      return '${(speedBps / 1000 / 1000).toStringAsFixed(1)} Mbps';
+    if (speedBps >= 1024 * 1024) {
+      return '${(speedBps / 1024 / 1024).toStringAsFixed(2)} MB/s';
     }
-    return '${(speedBps / 1000).toStringAsFixed(1)} Kbps';
+    return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
   }
 
   Color _speedColor(double? speedBps) {
-    if (speedBps == null || speedBps <= 0) return AppColors.error;
-    if (speedBps >= 8 * 1000 * 1000) return AppColors.success;
-    if (speedBps >= 2 * 1000 * 1000) return AppColors.primary;
+    if (speedBps == null || speedBps == 0) return AppColors.error;
+    if (speedBps == -1.0) return AppColors.success;
+    if (speedBps >= 1 * 1024 * 1024) return AppColors.success;
+    if (speedBps >= 256 * 1024) return AppColors.primary;
     return AppColors.warning;
   }
 
@@ -1207,10 +1252,10 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     switch (type) {
       case PlayerBackendType.exo:
         return 'ExoPlayer';
-      case PlayerBackendType.flutterMpv:
-        return 'flutter_mpv';
       case PlayerBackendType.fvp:
         return 'FVP';
+      case PlayerBackendType.vlc:
+        return 'VLC';
     }
   }
 
@@ -1230,20 +1275,105 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     }
   }
 
+  /// 处理退出播放页。
+  ///
+  /// 更实效的修改方案：
+  /// 1. 退出路径只走一次（通过 [_isExiting] 标记），避免 [_handleBack] 和 [dispose]
+  ///    重复执行方向恢复、播放器释放等耗时操作；
+  /// 2. 先保存记录、取消监听、从 widget 树移除 PlatformView（渲染为黑屏），
+  ///    让用户立刻看到即将返回的详情页；
+  /// 3. 暂停、方向恢复、系统 UI 恢复、播放器释放全部改为异步/带超时，
+  ///    不阻塞 pop 和页面转场动画；
+  /// 4. 播放器与 M3U8 代理的释放延迟到转场动画开始后再执行。
+  Future<void> _handleBack({bool forceExit = false}) async {
+    if (_isExiting) return;
+
+    // 非强制退出且控制栏可见时，先隐藏控制栏
+    if (!forceExit && _controlsVisible) {
+      _hideControls();
+      return;
+    }
+
+    _isExiting = true;
+
+    // 1. 保存播放记录并取消流监听，避免后续 setState 或回调在清理阶段触发
+    _savePlayRecordToLunaTV();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+
+    // 2. 捕获后端引用，并立即从 widget 树中移除 PlatformView（渲染为黑屏）
+    final backend = _backend;
+    _backend = null;
+    if (mounted) {
+      setState(() => _initialized = false);
+    }
+
+    // 3. 尝试暂停播放，但不阻塞退出流程
+    unawaited(
+      backend
+          ?.pause()
+          .timeout(const Duration(seconds: 1))
+          .catchError((e) {
+        debugPrint('MobilePlayerScreen: 暂停失败: $e');
+      }),
+    );
+
+    // 4. 立即恢复系统 UI 与方向，不等待完成
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+          .timeout(const Duration(seconds: 2))
+          .catchError((e) {
+        debugPrint('MobilePlayerScreen: 恢复系统 UI 模式失败: $e');
+      }),
+    );
+    unawaited(
+      _restoreOrientation(_originalOrientation)
+          .timeout(const Duration(seconds: 2))
+          .catchError((e) {
+        debugPrint('MobilePlayerScreen: 恢复方向失败/超时: $e');
+      }),
+    );
+
+    // 5. 下一帧执行 pop，确保黑屏已渲染、方向/UI 恢复已发起
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    });
+
+    // 6. 延迟异步释放播放器与代理，不阻塞 pop 和页面转场
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (backend != null) {
+        unawaited(
+          backend.dispose().timeout(const Duration(seconds: 5)).catchError((e) {
+            debugPrint('MobilePlayerScreen: 释放播放器后端失败/超时: $e');
+          }),
+        );
+      }
+      unawaited(
+        AdFilterEngine.dispose().timeout(const Duration(seconds: 5)).catchError(
+            (e) {
+          debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败/超时: $e');
+        }),
+      );
+    });
+  }
+
   @override
   void dispose() {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
     _controlsTimer?.cancel();
+    _lockIndicatorTimer?.cancel();
     _gestureIndicatorTimer?.cancel();
     _clockTimer?.cancel();
     _autoSwitchTimer?.cancel();
     for (final sub in _subscriptions) {
       sub.cancel();
     }
-
-    // 先暂停播放，立即切断音视频输出，避免退出过程中仍有声音。
-    _backend?.pause();
+    _subscriptions.clear();
 
     // 立即保存播放记录到 LunaTV（本地保存，异步上传不阻塞）
     _savePlayRecordToLunaTV();
@@ -1255,31 +1385,49 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
 
     widget.sourcesNotifier?.removeListener(_onSourcesChanged);
 
-    // 将后端释放、代理释放、方向恢复、系统 UI 恢复全部推迟到路由转场完成后执行。
-    // 这样可以避免在页面退出动画期间同时进行 PlatformView 销毁、网络连接关闭、
-    // 屏幕方向切换和系统 UI 模式切换，显著降低偶发卡死/ANR 的概率。
+    // 若已经由 [_handleBack] 触发退出，则所有资源释放、方向/UI 恢复均已在该路径中
+    // 调度，dispose 中不再重复执行，避免两次方向恢复、两次播放器释放竞争导致卡死。
+    if (_isExiting) {
+      _backend = null;
+      super.dispose();
+      return;
+    }
+
+    // 非用户主动退出（如路由被直接替换）时的兜底清理：将后端释放、代理释放、
+    // 方向恢复、系统 UI 恢复推迟到路由转场完成后异步执行，避免阻塞 dispose。
     final backend = _backend;
     _backend = null;
     final original = _originalOrientation;
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 300));
+      unawaited(
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+            .timeout(const Duration(seconds: 2))
+            .catchError((e) {
+          debugPrint('MobilePlayerScreen: 恢复系统 UI 模式失败: $e');
+        }),
+      );
+      unawaited(
+        _restoreOrientation(original)
+            .timeout(const Duration(seconds: 2))
+            .catchError((e) {
+          debugPrint('MobilePlayerScreen: 恢复方向失败/超时: $e');
+        }),
+      );
       if (backend != null) {
-        try {
-          await backend.dispose();
-        } catch (e) {
-          debugPrint('MobilePlayerScreen: 释放播放器后端失败: $e');
-        }
+        unawaited(
+          backend.dispose().timeout(const Duration(seconds: 5)).catchError((e) {
+            debugPrint('MobilePlayerScreen: 释放播放器后端失败/超时: $e');
+          }),
+        );
       }
-      try {
-        await AdFilterEngine.dispose();
-      } catch (e) {
-        debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败: $e');
-      }
-      try {
-        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      } catch (e) {
-        debugPrint('MobilePlayerScreen: 恢复系统 UI 模式失败: $e');
-      }
-      await _restoreOrientation(original);
+      unawaited(
+        AdFilterEngine.dispose().timeout(const Duration(seconds: 5)).catchError(
+            (e) {
+          debugPrint('MobilePlayerScreen: 释放 M3U8 代理失败/超时: $e');
+        }),
+      );
     });
 
     super.dispose();
@@ -1356,7 +1504,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         sourceName: _currentVideoDetail.source,
         cover: _currentVideoDetail.poster,
         year: _currentVideoDetail.year,
-        index: _currentEpisodeIndex + 1, // 1-based，与 OrionTV 一致
+        index: _currentEpisodeIndex + 1, // 1-based
         totalEpisodes: _currentVideoDetail.episodes.length,
         playTime: _position.inSeconds,
         totalTime: _duration.inSeconds,
@@ -1373,6 +1521,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   }
 
   Widget _buildVideo() {
+    if (_isExiting) {
+      return const ColoredBox(color: Colors.black);
+    }
     if (!_initialized || _backend == null) {
       return const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
@@ -1439,16 +1590,17 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     return Positioned.fill(
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
+        // 锁定时单击屏幕仍用于显示/隐藏解锁功能键，其他手势全部禁用。
         onTap: _onTapScreen,
-        onDoubleTap: _onDoubleTapScreen,
-        onLongPressStart: _onLongPressStart,
-        onLongPressEnd: _onLongPressEnd,
-        onVerticalDragStart: _onVerticalDragStart,
-        onVerticalDragUpdate: _onVerticalDragUpdate,
-        onVerticalDragEnd: _onVerticalDragEnd,
-        onHorizontalDragStart: _onHorizontalDragStart,
-        onHorizontalDragUpdate: _onHorizontalDragUpdate,
-        onHorizontalDragEnd: _onHorizontalDragEnd,
+        onDoubleTap: _controlsLocked ? null : _onDoubleTapScreen,
+        onLongPressStart: _controlsLocked ? null : _onLongPressStart,
+        onLongPressEnd: _controlsLocked ? null : _onLongPressEnd,
+        onVerticalDragStart: _controlsLocked ? null : _onVerticalDragStart,
+        onVerticalDragUpdate: _controlsLocked ? null : _onVerticalDragUpdate,
+        onVerticalDragEnd: _controlsLocked ? null : _onVerticalDragEnd,
+        onHorizontalDragStart: _controlsLocked ? null : _onHorizontalDragStart,
+        onHorizontalDragUpdate: _controlsLocked ? null : _onHorizontalDragUpdate,
+        onHorizontalDragEnd: _controlsLocked ? null : _onHorizontalDragEnd,
         child: Container(color: Colors.transparent),
       ),
     );
@@ -1472,7 +1624,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         child: Row(
           children: [
             IconButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => _handleBack(forceExit: true),
               icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
             ),
             const SizedBox(width: AppSpacing.md),
@@ -1699,6 +1851,12 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         icon: Icons.screen_rotation,
         label: '旋转',
       ),
+      _buildControlButton(
+        onTap: _toggleControlsLock,
+        icon: _controlsLocked ? Icons.lock : Icons.lock_open,
+        label: _controlsLocked ? '解锁' : '锁定',
+        active: _controlsLocked,
+      ),
     ];
   }
 
@@ -1757,10 +1915,10 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_controlsVisible,
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        _hideControls();
+        _handleBack();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -1805,6 +1963,31 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                 ),
               ),
             ),
+            // 锁定时点击屏幕显示解锁功能键，位于屏幕右侧中间，点击可解锁。
+            if (_controlsLocked && _lockIndicatorVisible)
+              Positioned(
+                right: AppSpacing.lg,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: _toggleControlsLock,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgOverlay.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Icon(
+                        Icons.lock_open,
+                        color: AppColors.textPrimary,
+                        size: 32,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             // 手势操作提示（亮度/音量/进度）
             _buildGestureIndicator(),
           ],

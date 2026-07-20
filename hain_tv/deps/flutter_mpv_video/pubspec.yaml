@@ -34,8 +34,7 @@ dev_dependencies:
 flutter:
   plugin:
     platforms:
-      windows:
-        pluginClass: FlutterMpvVideoPluginCApi
+      # Windows 端已改用 fvp / media_kit，不再注册 flutter_mpv_video。
       linux:
         pluginClass: FlutterMpvVideoPlugin
       macos:

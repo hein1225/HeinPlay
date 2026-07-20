@@ -186,7 +186,9 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   bool _doubanLoading = true;
   bool _speedTesting = false;
   bool _hasSpeedTested = false;
+  String _speedTestProgress = '';
   bool _searchingSources = false;
+  bool _pendingSpeedTestRestart = false;
   bool _isBangumiFallback = false;
   String? _error;
   VideoDetail? _videoDetail;
@@ -226,6 +228,23 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       return const SourceOption(source: '', sourceName: '', id: '', title: '');
     }
     return _sources[_selectedSourceIndex];
+  }
+
+  /// 无播放记录时，播放按钮是否可点击。
+  /// 搜索源中、测速中、或源数>=2但未完成测速时均不可点击。
+  bool get _canPlayWithoutRecord {
+    if (_searchingSources) return false;
+    if (_speedTesting) return false;
+    if (_sources.length >= 2 && !_hasSpeedTested) return false;
+    return true;
+  }
+
+  /// 无播放记录时，播放按钮显示的文案。
+  String get _playButtonTextWithoutRecord {
+    if (_searchingSources) return '搜索源中';
+    if (_speedTesting) return _speedTestProgress;
+    if (_sources.length >= 2 && !_hasSpeedTested) return '测速中';
+    return '播放';
   }
 
   @override
@@ -315,6 +334,13 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         if (applySelection && record != null) {
           _scrollToSelectedEpisode();
         }
+        // 播放记录加载完成后，若尚未开始测速则触发一次，确保原始源被优先测速。
+        if (record != null &&
+            _sources.length >= 2 &&
+            !_speedTesting &&
+            !_hasSpeedTested) {
+          unawaited(_runSpeedTest());
+        }
       }
     } catch (e) {
       debugPrint('查询播放记录失败: $e');
@@ -369,7 +395,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     super.dispose();
   }
 
-  /// 从年份字符串中提取 4 位数字年份，与 LunaTV 的 normalizeYearForMatch 对齐。
+  /// 从年份字符串中提取 4 位数字年份。
   String? _extractYear(String year) {
     final match = RegExp(r'\d{4}').firstMatch(year);
     return match?.group(0);
@@ -525,7 +551,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
     // 使用快速搜索（含变体），不走豆瓣 enrich，避免详情页等待过久。
     // Bangumi 每日放送条目直接使用严格模糊匹配，避免精确模式把带后缀
-    // 的源标题（如"名侦探柯南（1996）"）过滤掉，与 LunaTV 行为对齐。
+    // 的源标题（如"名侦探柯南（1996）"）过滤掉。
     final initialExactMatch = widget.bangumiId != null ? false : !fuzzy;
     // 手动模糊搜索时使用影视名基准名（首个空格/标点前），提升命中率
     final searchKeyword = fuzzy
@@ -570,7 +596,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     }
 
     // Bangumi 每日放送条目：精确匹配无结果时自动降级到严格模糊匹配
-    //（仅保留包含/高相似结果），避免 LunaTV 式宽泛匹配引入大量不相关源。
+    //（仅保留包含/高相似结果），避免引入大量不相关源。
     // 若仍无结果，用户可手动点击“尝试模糊搜索”使用更宽松的阈值。
     if ((!response.success ||
             response.data == null ||
@@ -710,9 +736,12 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       unawaited(_loadPlayRecord(force: true, applySelection: true));
     }
 
-    // 源列表发生变化时，后台触发测速；若正在测速中则自动跳过，
-    // 避免与当前测速任务冲突。
-    if (_sources.length >= 2 && !_speedTesting) {
+    // 搜索全部完成后，若存在多个源且未测速，执行一次自动测速择优。
+    // 有播放记录时也会测速，但不会改变当前选中的源。
+    if (isFinal &&
+        _sources.length >= 2 &&
+        !_speedTesting &&
+        !_hasSpeedTested) {
       unawaited(_runSpeedTest(force: true));
     }
   }
@@ -742,13 +771,37 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     }
 
     if (response.success && response.data != null) {
+      final detail = response.data!;
+      // 播放记录进入时原始源可能缺少 episodes，这里用详情接口补全，
+      // 使其能参与测速并显示速度/分辨率。
+      final currentKey = '${_currentSource.source}+${_currentSource.id}';
+      final sourceIdx = _sources.indexWhere(
+        (s) => '${s.source}+${s.id}' == currentKey,
+      );
+      var shouldRetest = false;
+      if (sourceIdx >= 0 && detail.episodes.isNotEmpty) {
+        final old = _sources[sourceIdx];
+        if (old.episodes.isEmpty) {
+          _sources[sourceIdx] = old.copyWith(episodes: detail.episodes);
+          _sourcesNotifier.value = List.unmodifiable(_sources);
+          shouldRetest = _sources.length >= 2;
+        }
+      }
+
       setState(() {
-        _videoDetail = response.data;
+        _videoDetail = detail;
         _detailLoading = false;
         if (_playRecord != null) {
           _applyPlayRecordSelection();
         }
       });
+
+      if (shouldRetest) {
+        // 当前源 episodes 刚补充完整，标记待补测；若正在测速中会在本轮结束后
+        // 仅对未测速源补测，避免全部源重测一遍。
+        _pendingSpeedTestRestart = true;
+      }
+
       if (_playRecord != null) {
         _scrollToSelectedEpisode();
       }
@@ -900,11 +953,20 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
     final others = sources.where((s) => s != recordSource).toList();
     others.sort((a, b) {
-      final aOk = (a.speed ?? 0) > 0;
-      final bOk = (b.speed ?? 0) > 0;
-      if (aOk && !bOk) return -1;
-      if (!aOk && bOk) return 1;
-      return (b.speed ?? 0).compareTo(a.speed ?? 0);
+      // speed=-1.0 表示源可用但速度未知，应排在真实高速源之后、不可用源之前。
+      int _speedRank(double? speed) {
+        if (speed == null || speed == 0) return 0;
+        if (speed == -1.0) return 1;
+        return 2;
+      }
+
+      final aRank = _speedRank(a.speed);
+      final bRank = _speedRank(b.speed);
+      if (aRank != bRank) return bRank.compareTo(aRank);
+      // 同等级时，未知速度统一按 0 比较，真实速度按实际值降序。
+      final aEffective = a.speed == -1.0 ? 0.0 : (a.speed ?? 0.0);
+      final bEffective = b.speed == -1.0 ? 0.0 : (b.speed ?? 0.0);
+      return bEffective.compareTo(aEffective);
     });
 
     if (recordSource != null) {
@@ -913,11 +975,17 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     return others;
   }
 
-  Future<void> _runSpeedTest({bool force = false}) async {
+  Future<void> _runSpeedTest({
+    bool force = false,
+    bool onlyUntested = false,
+  }) async {
     if (_sources.length < 2 || _speedTesting) return;
-    if (!force && _hasSpeedTested) return;
+    if (!force && !onlyUntested && _hasSpeedTested) return;
 
-    setState(() => _speedTesting = true);
+    setState(() {
+      _speedTesting = true;
+      _speedTestProgress = '测速中 0/${_sources.length}';
+    });
 
     // 记录当前选中的源标识，测速排序后优先保持不变。
     final previousSourceIndex = _selectedSourceIndex;
@@ -931,12 +999,42 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
     final tested = await SearchService.speedTestSources(
       _sources,
-      onProgress: (index, updated) {
+      playedSourceKey: _playRecord != null
+          ? '${_playRecord!.source}+${_playRecord!.id}'
+          : (_selectedSourceIndex >= 0 &&
+                  _selectedSourceIndex < _sources.length)
+              ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+              : null,
+      testAllSources: !onlyUntested,
+      onlyUntested: onlyUntested,
+      onProgressText: (completed, total) {
         if (mounted) {
           setState(() {
-            if (index >= 0 && index < _sources.length) {
-              _sources[index] = updated;
+            _speedTestProgress = '测速中 $completed/$total';
+          });
+        }
+      },
+      onProgress: (sortedSources) {
+        if (mounted) {
+          setState(() {
+            // 测速每完成一个源就回调一次已排序的完整列表，实时刷新 UI。
+            // 先记录当前选中的源标识，避免排序后索引错位。
+            final currentKey = _selectedSourceIndex >= 0 &&
+                    _selectedSourceIndex < _sources.length
+                ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+                : null;
+            _sources = sortedSources;
+            if (currentKey != null &&
+                currentKey.isNotEmpty &&
+                currentKey != '+') {
+              final newIndex = _sources.indexWhere(
+                (s) => '${s.source}+${s.id}' == currentKey,
+              );
+              if (newIndex >= 0) {
+                _selectedSourceIndex = newIndex;
+              }
             }
+            _sourcesNotifier.value = List.unmodifiable(sortedSources);
           });
         }
       },
@@ -946,8 +1044,8 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
     // 将测速结果合并到当前源列表（避免测速期间源列表被后台搜索更新后，
     // 这里用旧的 sorted 列表覆盖导致新增源丢失或用户手动选择被重置）。
-    final speedMap = {
-      for (final s in tested) '${s.source}+${s.id}': s.speed,
+    final testedMap = {
+      for (final s in tested) '${s.source}+${s.id}': s,
     };
 
     setState(() {
@@ -959,14 +1057,20 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
       for (var i = 0; i < _sources.length; i++) {
         final key = '${_sources[i].source}+${_sources[i].id}';
-        if (speedMap.containsKey(key)) {
-          _sources[i] = _sources[i].copyWith(speed: speedMap[key]);
+        final testedSource = testedMap[key];
+        if (testedSource != null) {
+          _sources[i] = _sources[i].copyWith(
+            speed: testedSource.speed,
+            responseTime: testedSource.responseTime,
+            resolution: testedSource.resolution ?? _sources[i].resolution,
+          );
         }
       }
       _sources = _sortSourcesBySpeed(_sources);
       _sourcesNotifier.value = List.unmodifiable(_sources);
       _speedTesting = false;
       _hasSpeedTested = true;
+      _speedTestProgress = '';
 
       final record = _playRecord;
       final recordIndex = record != null
@@ -1021,6 +1125,15 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       unawaited(_loadFavoriteStatus(localOnly: false));
       await _loadPlayerBackend();
       await _loadVideoDetail();
+    }
+
+    // 测速期间若有新源加入或当前源刚补充 episodes，仅对未测速源补测一次，
+    // 避免全部源重测一遍。
+    if (_pendingSpeedTestRestart) {
+      _pendingSpeedTestRestart = false;
+      if (mounted && _sources.length >= 2) {
+        unawaited(_runSpeedTest(onlyUntested: true));
+      }
     }
   }
 
@@ -1511,17 +1624,20 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
   String _formatSpeed(double? speedBps) {
     if (speedBps == null) return '';
+    if (speedBps == -1.0) return '可用';
     if (speedBps <= 0) return '不可用';
-    if (speedBps >= 1000 * 1000) {
-      return '${(speedBps / 1000 / 1000).toStringAsFixed(1)} Mbps';
+    if (speedBps >= 1024 * 1024) {
+      return '${(speedBps / 1024 / 1024).toStringAsFixed(2)} MB/s';
     }
-    return '${(speedBps / 1000).toStringAsFixed(1)} Kbps';
+    return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
   }
 
   Color _speedColor(double? speedBps) {
-    if (speedBps == null || speedBps <= 0) return AppColors.error;
-    if (speedBps >= 8 * 1000 * 1000) return AppColors.success;
-    if (speedBps >= 2 * 1000 * 1000) return AppColors.primary;
+    if (speedBps == null) return AppColors.error;
+    if (speedBps == -1.0) return AppColors.success;
+    if (speedBps <= 0) return AppColors.error;
+    if (speedBps >= 1 * 1024 * 1024) return AppColors.success;
+    if (speedBps >= 256 * 1024) return AppColors.primary;
     return AppColors.warning;
   }
 
@@ -1786,11 +1902,13 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           ),
         if (!hasRecord)
           ElevatedButton.icon(
-            onPressed: () => _playEpisode(_selectedEpisodeIndex),
+            onPressed: _canPlayWithoutRecord
+                ? () => _playEpisode(_selectedEpisodeIndex)
+                : null,
             icon: const Icon(Icons.play_arrow, color: Colors.white),
-            label: const Text(
-              '播放',
-              style: TextStyle(
+            label: Text(
+              _playButtonTextWithoutRecord,
+              style: const TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -1798,7 +1916,9 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
               ),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
+              backgroundColor: _canPlayWithoutRecord
+                  ? AppColors.primary
+                  : AppColors.textMuted,
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg,
                 vertical: AppSpacing.sm,
@@ -2029,7 +2149,10 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                   child: SizedBox(
                     width: 100,
                     child: GestureDetector(
-                      onTap: () => _playEpisode(originalIndex),
+                      onTap: (_playRecord == null &&
+                              !_canPlayWithoutRecord)
+                          ? null
+                          : () => _playEpisode(originalIndex),
                       child: Container(
                         alignment: Alignment.center,
                         padding: const EdgeInsets.symmetric(

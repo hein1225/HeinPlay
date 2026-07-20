@@ -8,7 +8,7 @@ import '../utils/windows_logger.dart';
 
 /// 本地 M3U8/TS 代理服务。
 ///
-/// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / flutter_mpv / 外部 mpv）
+/// 用于解决去广告后的 M3U8 在不同播放器后端（ExoPlayer / FVP / VLC）
 /// 中播放时头部透传不一致的问题。所有资源请求统一走本地代理，由代理补全头部。
 class LocalM3u8Proxy {
   HttpServer? _server;

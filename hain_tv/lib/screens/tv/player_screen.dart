@@ -21,7 +21,7 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:hain_tv/platform/windows_fullscreen_mixin.dart';
 
 class PlayerScreen extends StatefulWidget {
   final VideoDetail videoDetail;
@@ -47,7 +47,8 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
+class _PlayerScreenState extends State<PlayerScreen>
+    with WindowsFullscreenMixin<PlayerScreen> {
   late VideoDetail _currentVideoDetail;
   late int _currentSourceIndex;
   // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
@@ -65,10 +66,6 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
-
-  // Windows 桌面端当前是否处于窗口全屏状态。
-  bool _isFullScreen = false;
-  bool _togglingFullScreen = false;
 
   EpisodeSkipConfig? _skipConfig;
   bool _skipConfigLoading = false;
@@ -153,28 +150,12 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
       _initBrightnessAndVolume();
     }
     _startClock();
-    _initFullScreenState();
-    if (DeviceUtils.isWindows) {
-      windowManager.addListener(this);
-    }
+    initWindowsFullscreen();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
       }
     });
-  }
-
-  /// 初始化 Windows 桌面端全屏状态，用于控制栏图标显示。
-  Future<void> _initFullScreenState() async {
-    if (!DeviceUtils.isWindows) return;
-    try {
-      final fullScreen = await windowManager.isFullScreen();
-      if (mounted) {
-        setState(() => _isFullScreen = fullScreen);
-      }
-    } catch (e) {
-      debugPrint('初始化全屏状态失败: $e');
-    }
   }
 
   Future<void> _initWakelock() async {
@@ -973,11 +954,11 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
                     case PlayerBackendType.exo:
                       label = 'ExoPlayer';
                       break;
-                    case PlayerBackendType.flutterMpv:
-                      label = 'flutter_mpv';
-                      break;
                     case PlayerBackendType.fvp:
                       label = 'FVP';
+                      break;
+                    case PlayerBackendType.vlc:
+                      label = 'VLC';
                       break;
                   }
                   return FocusableWidget(
@@ -1334,13 +1315,8 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
           // 隐藏后再按才返回详情页。
           return true;
         }
-        // Windows：没有系统返回手势，需要在此处理 ESC。
-        // 统一走 maybePop 由 PopScope 控制返回，避免焦点系统与 PopScope 重复响应。
-        if (_isFullScreen) {
-          _toggleFullScreen();
-        } else {
-          Navigator.of(context).maybePop();
-        }
+        // Windows：独立处理 ESC，真实全屏时退出全屏，否则返回上一页。
+        handleWindowsEsc();
         return true;
       default:
         return false;
@@ -1368,49 +1344,13 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
 
   void _onDoubleTapScreen() {
     if (DeviceUtils.isWindows) {
-      _toggleFullScreen();
+      onWindowsDoubleTap();
     } else {
       _togglePlay();
       _showGestureIndicator(
         _playing ? '播放' : '暂停',
         _playing ? Icons.play_arrow : Icons.pause,
       );
-    }
-  }
-
-  /// Windows 桌面端切换窗口全屏/取消全屏。
-  Future<void> _toggleFullScreen() async {
-    if (!DeviceUtils.isWindows || _togglingFullScreen) return;
-    _togglingFullScreen = true;
-    try {
-      final next = !_isFullScreen;
-      await windowManager.setFullScreen(next);
-    } catch (e) {
-      debugPrint('切换全屏失败: $e');
-    } finally {
-      _togglingFullScreen = false;
-    }
-  }
-
-  /// 窗口进入全屏时由 [windowManager] 通知更新状态。
-  @override
-  void onWindowEnterFullScreen() {
-    if (mounted) {
-      setState(() {
-        _isFullScreen = true;
-      });
-      _showGestureIndicator('全屏', Icons.fullscreen);
-    }
-  }
-
-  /// 窗口退出全屏时由 [windowManager] 通知更新状态。
-  @override
-  void onWindowLeaveFullScreen() {
-    if (mounted) {
-      setState(() {
-        _isFullScreen = false;
-      });
-      _showGestureIndicator('退出全屏', Icons.fullscreen_exit);
     }
   }
 
@@ -1537,17 +1477,19 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
 
   String _formatSpeed(double? speedBps) {
     if (speedBps == null) return '';
+    if (speedBps == -1.0) return '可用';
     if (speedBps <= 0) return '不可用';
-    if (speedBps >= 1000 * 1000) {
-      return '${(speedBps / 1000 / 1000).toStringAsFixed(1)} Mbps';
+    if (speedBps >= 1024 * 1024) {
+      return '${(speedBps / 1024 / 1024).toStringAsFixed(2)} MB/s';
     }
-    return '${(speedBps / 1000).toStringAsFixed(1)} Kbps';
+    return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
   }
 
   Color _speedColor(double? speedBps) {
-    if (speedBps == null || speedBps <= 0) return AppColors.error;
-    if (speedBps >= 8 * 1000 * 1000) return AppColors.success;
-    if (speedBps >= 2 * 1000 * 1000) return AppColors.primary;
+    if (speedBps == null || speedBps == 0) return AppColors.error;
+    if (speedBps == -1.0) return AppColors.success;
+    if (speedBps >= 1 * 1024 * 1024) return AppColors.success;
+    if (speedBps >= 256 * 1024) return AppColors.primary;
     return AppColors.warning;
   }
 
@@ -1585,18 +1527,16 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
     switch (type) {
       case PlayerBackendType.exo:
         return 'ExoPlayer';
-      case PlayerBackendType.flutterMpv:
-        return 'flutter_mpv';
       case PlayerBackendType.fvp:
         return 'FVP';
+      case PlayerBackendType.vlc:
+        return 'VLC';
     }
   }
 
   @override
   void dispose() {
-    if (DeviceUtils.isWindows) {
-      windowManager.removeListener(this);
-    }
+    disposeWindowsFullscreen();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
@@ -1680,7 +1620,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
         sourceName: _currentVideoDetail.source,
         cover: _currentVideoDetail.poster,
         year: _currentVideoDetail.year,
-        index: _currentEpisodeIndex + 1, // 1-based，与 OrionTV 一致
+        index: _currentEpisodeIndex + 1, // 1-based
         totalEpisodes: _currentVideoDetail.episodes.length,
         playTime: _position.inSeconds,
         totalTime: _duration.inSeconds,
@@ -1932,7 +1872,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
                 const Spacer(),
                 if (DeviceUtils.isWindows)
                   FocusableWidget(
-                    onTap: _toggleFullScreen,
+                    onTap: toggleWindowsFullscreen,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
@@ -1947,7 +1887,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            _isFullScreen
+                            isWindowsFullScreen
                                 ? Icons.fullscreen_exit
                                 : Icons.fullscreen,
                             color: AppColors.textPrimary,
@@ -1955,7 +1895,7 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
                           ),
                           const SizedBox(width: AppSpacing.xs),
                           Text(
-                            _isFullScreen ? '退出全屏' : '全屏',
+                            isWindowsFullScreen ? '退出全屏' : '全屏',
                             style: const TextStyle(
                               fontFamily: 'NotoSansSC',
                               fontSize: 13,
@@ -2195,11 +2135,11 @@ class _PlayerScreenState extends State<PlayerScreen> with WindowListener {
       // - 全屏时先退出全屏；
       // - 控制栏显示时先隐藏控制栏；
       // - 两者都满足时优先退出全屏。
-      canPop: !_isFullScreen && !_controlsVisible,
+      canPop: !isWindowsFullScreen && !_controlsVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (_isFullScreen) {
-          _toggleFullScreen();
+        if (isWindowsFullScreen) {
+          toggleWindowsFullscreen();
         } else if (_controlsVisible) {
           _hideControls();
         }

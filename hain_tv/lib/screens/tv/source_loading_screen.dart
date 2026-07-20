@@ -62,7 +62,9 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
         MaterialPageRoute(
           builder: (_) => PlayerScreen(
             videoDetail: detail,
-            episodeIndex: widget.record.index > 0 ? widget.record.index - 1 : 0,
+            episodeIndex: widget.record.index > 0
+                ? widget.record.index - 1
+                : 0,
             sources: sources,
             initialPositionMs: widget.record.playTime * 1000,
           ),

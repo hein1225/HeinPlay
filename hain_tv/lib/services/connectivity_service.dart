@@ -71,7 +71,7 @@ class ConnectivityService {
             ),
             headers: {
               'Accept': 'application/json, text/plain, */*',
-              'User-Agent': 'HainTV/1.1.5 Flutter',
+              'User-Agent': 'HainTV/1.1.6 Flutter',
               if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
             },
           )

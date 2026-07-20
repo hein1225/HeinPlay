@@ -1,8 +1,0 @@
-﻿
-=== Windows 版 构建开始 2026-07-16 12:48:28 ===
-Building Windows application...                                 
-FVP_DEPS_LATEST=
-Nuget.exe not found, trying to download or use cached version.
-Building Windows application...                                    39.7s
-√ Built build\windows\x64\runner\Release\hain_tv.exe
-宸茬敓鎴? E:\code\HeinPlay\hain_tv\dist\heinplay-1.1.4-windows-portable.zip

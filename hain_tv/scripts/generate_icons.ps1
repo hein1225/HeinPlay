@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# 生成全平台图标与启动图
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# 生成全平台图标与启动图
 # 需要先确保网络可用，以便 flutter pub get 能拉取 flutter_launcher_icons
 Set-Location -Path "$PSScriptRoot\.."
 

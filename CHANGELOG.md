@@ -1,6 +1,61 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.1.6</h2></summary>
+
+## 1.1.6
+
+### 变更
+
+- **播放器后端重构（重点）**
+  - Windows 端彻底移除并抛弃长期不更新的 `flutter_mpv`（及其配套 `media_kit`），默认播放器后端切换为 `fvp`。
+  - Windows 端新增 `vlc_player: ^2.1.2` 作为备用后端，可在设置中切换，用于兼容部分 fvp 无法播放的源。
+  - 统一 Android / Windows 播放器代理与请求头补全逻辑，所有后端在打开 M3U8 时自动补齐 `User-Agent`、`Referer`、`Origin`、`Accept-Language` 等请求头。
+
+- **视频缓冲与测速优选优化（重点）**
+  - 详情页播放源测速策略重构：不再只测部分源，而是对所有播放源进行连通性与响应速度测试。
+  - 测速过程实时通过 `ValueNotifier` 同步到播放页，源列表按测速结果动态排序，用户进入播放页后仍会继续后台测速并刷新列表。
+  - 无播放记录时，「播放」按钮在测速完成前置灰并显示 `测速中 x/x`，避免选中不可用的源。
+  - 分辨率分析结果按 `source+id` 作为 key 加入本地缓存，命中缓存时跳过重复 M3U8 解析，加快二次进入速度。
+  - 新增分级缓冲配置入口，Android 端可针对不同网络环境调整 ExoPlayer / fvp 缓冲参数。
+
+- **M3U8 播放体验优化**
+  - 本地 M3U8 代理统一处理 playlist 与分片请求：playlist（`.m3u8` 或 `/hls/`）不传递 `Range` 头，强制完整请求并返回 200，避免 206 导致播放器时长与进度条异常。
+  - 仅对 `.ts`、`.jpeg` 等分片请求透传 `Range` 头，支持边下边播。
+  - 去广告引擎 `AdFilterEngine` 在播放退出时调用 `dispose()` 关闭本地代理，避免端口泄漏与资源占用。
+
+- **构建与依赖**
+  - `vlc_player` 改为仅 Windows 平台的本地依赖（`deps/vlc_player_windows`），pubspec 中仅声明 Windows 插件平台，避免 Android 构建引入 `libvlc-all` AAR。
+  - 解决 Android `mergeMobileReleaseNativeLibs` 阶段 `libc++_shared.so` 冲突：在 `android/app/build.gradle.kts` 中配置 `packaging.jniLibs.pickFirsts`。
+  - 解决跨盘符 Kotlin 增量编译缓存异常：在 `android/gradle.properties` 中关闭 `kotlin.incremental` 与 `kapt.incremental.apt`。
+  - 同步移除 `main_windows.dart` 与 `main.dart` 中已废弃的 `dart_vlc` 初始化代码。
+
+- **手机版播放手势**
+  - 手机版全屏播放时长按屏幕快进/快退速度由 1x 调整为 0.5x，降低误操作幅度。
+
+- **版本号统一**
+  - 全项目版本号统一更新至 `1.1.6`（build `+11`）。
+  - 各网络请求 `User-Agent`、`关于页`、设置页版本号同步更新。
+
+### 构建产物与适用设备
+
+| 文件名 | 适用设备 | 系统要求 | 说明 |
+| --- | --- | --- | --- |
+| `heinplay-1.1.6-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
+| `heinplay-1.1.6-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
+| `heinplay-1.1.6-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，默认 `fvp` 播放，可切换 `vlc_player`。 |
+
+### 1.1.5 → 1.1.6 主要差异
+
+- Windows 播放器后端由 `flutter_mpv` 切换为 `fvp`，并新增 `vlc_player` 备用。
+- 详情页测速策略改为全部源测速，实时排序并缓存分辨率分析结果。
+- M3U8 playlist 强制完整请求、分片透传 Range，统一处理代理与请求头。
+- 修复 Android 因引入 `vlc_player` 导致的 `.so` 冲突与 `minSdk` 抬升问题。
+- 全项目版本号统一为 `1.1.6`。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.1.5</h2></summary>
 
 ## 1.1.5

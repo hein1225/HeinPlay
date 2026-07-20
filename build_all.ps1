@@ -8,15 +8,9 @@ param(
     [switch]$SkipDoctor,
     [switch]$SkipMobile,
     [switch]$SkipTv,
-    [switch]$SkipWindows
+    [switch]$SkipWindows,
+    [switch]$Clean
 )
-
-# 全局编码设置为 UTF-8，确保中文输出和日志不乱码
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
-
-$ErrorActionPreference = 'Stop'
 
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $hainDir = Join-Path $rootDir 'hain_tv'
@@ -51,9 +45,23 @@ function Invoke-FlutterDoctor {
 }
 
 function Invoke-FlutterPubGet {
-    Write-Section 'Flutter 依赖检查 / flutter pub get'
+    param([switch]$Clean)
+
+    if ($Clean) {
+        Write-Section 'Flutter 依赖检查 / flutter clean + pub get'
+    }
+    else {
+        Write-Section 'Flutter 依赖检查 / flutter pub get'
+    }
+
     Push-Location $hainDir
     try {
+        if ($Clean) {
+            flutter clean
+            $cleanOk = ($LASTEXITCODE -eq 0)
+            if (-not $cleanOk) { Write-Warn 'flutter clean 返回非零，继续执行 pub get' }
+        }
+
         flutter pub get
         $ok = ($LASTEXITCODE -eq 0)
         if ($ok) { Write-Ok 'flutter pub get 成功' }
@@ -84,97 +92,70 @@ function Test-SevenZip {
 
 function Test-WindowsPlugin {
     Write-Section 'Windows 插件依赖检查'
-    $mpvFiles = Get-ChildItem -Path (Join-Path $hainDir 'build\windows\x64') -Filter 'mpv-dev-*.7z' -ErrorAction SilentlyContinue | Sort-Object Length -Descending
-    if ($mpvFiles) {
-        $f = $mpvFiles | Select-Object -First 1
-        $sizeMB = [math]::Round($f.Length / 1MB, 2)
-        if ($f.Length -gt 10MB) {
-            Write-Ok "Windows 原生依赖已下载: $($f.Name) (${sizeMB} MB)"
-            return $true
-        }
-        else {
-            Write-Warn "Windows 原生依赖文件可能损坏: $($f.FullName) (${sizeMB} MB)，建议删除后重新构建"
-            return $false
-        }
+    # Windows 播放器已改为 fvp + vlc，不再依赖 shinchiro mpv-dev。
+    # 仅检查构建目录是否存在；依赖由插件在构建时自行下载。
+    $depsDir = Join-Path $hainDir 'build\windows\x64'
+    if (Test-Path $depsDir) {
+        Write-Ok "Windows 构建目录已存在: $depsDir"
+        return $true
     }
-    else {
-        Write-Warn '未检测到 Windows 原生依赖（mpv-dev-*.7z）；首次构建 Windows 版时会自动下载，请确保网络稳定。'
-        return $false
-    }
+    Write-Warn '未检测到 Windows 构建目录；首次构建 Windows 版时插件会自动下载所需原生依赖，请确保网络稳定。'
+    return $false
 }
 
 function Repair-WindowsNativeDeps {
-    # 清理可能损坏或版本错误的 Windows 原生依赖缓存
     $depsDir = Join-Path $hainDir 'build\windows\x64'
 
-    # flutter_mpv_libs_windows_video 依赖包的已知正确 MD5（与本地修正后的 CMakeLists.txt 一致）
     $expectedHashes = @{
-        'ANGLE.7z'                                = 'E866F13E8D552348058AFAAFE869B1ED'
-        'mpv-dev-x86_64-20241021-git-0f78584.7z'  = '6ECF18E85B093C3F7EDB16F3EE6603F3'
-        'mpv-dev-aarch64-20241021-git-0f78584.7z' = '5B507A35DB13EEE6CB7EB21E8BE7C83D'
+        'ANGLE.7z' = 'E866F13E8D552348058AFAAFE869B1ED'
     }
 
-    if (Test-Path $depsDir) {
-        # 删除任何非当前期望版本的 mpv-dev 压缩包，避免旧版 shinchiro 等构建残留
-        $mpvArchives = Get-ChildItem -Path $depsDir -Filter 'mpv-dev-*.7z' -ErrorAction SilentlyContinue
-        foreach ($f in $mpvArchives) {
-            if ($f.Length -lt 1MB) {
-                $sizeKB = [math]::Round($f.Length / 1KB, 2)
-                Write-Warn "检测到疑似损坏的 Windows 原生依赖: $($f.Name) (${sizeKB} KB)，已删除，构建时将重新下载。"
-                Remove-Item $f.FullName -Force
-                continue
-            }
+    if (-not (Test-Path $depsDir)) {
+        New-Item -ItemType Directory -Path $depsDir -Force | Out-Null
+    }
 
-            $expectedHash = $expectedHashes[$f.Name]
-            if ($expectedHash) {
-                $actualHash = (Get-FileHash $f.FullName -Algorithm MD5).Hash
-                if ($actualHash -ne $expectedHash) {
-                    $sizeMB = [math]::Round($f.Length / 1MB, 2)
-                    Write-Warn "检测到 MD5 不匹配的 Windows 原生依赖: $($f.Name) (${sizeMB} MB)`n  实际=$actualHash`n  预期=$expectedHash，已删除，构建时将重新下载。"
-                    Remove-Item $f.FullName -Force
-                }
-            }
-            else {
+    # Windows 播放器已改为 fvp + vlc，不再依赖 shinchiro mpv-dev。
+    # 清理残留的 mpv 缓存与解压目录，避免旧文件干扰新构建。
+    $mpvArchives = Get-ChildItem -Path $depsDir -Filter 'mpv-dev-*.7z' -ErrorAction SilentlyContinue
+    foreach ($f in $mpvArchives) {
+        Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+    }
+    $targetMpv = Join-Path $depsDir 'shinchiro-mpv-dev-x86_64.7z'
+    if (Test-Path $targetMpv) {
+        Remove-Item $targetMpv -Force -ErrorAction SilentlyContinue
+    }
+    $assetMarker = Join-Path $depsDir 'shinchiro-mpv-dev-x86_64.asset.txt'
+    if (Test-Path $assetMarker) {
+        Remove-Item $assetMarker -Force -ErrorAction SilentlyContinue
+    }
+    $libmpvSrc = Join-Path $depsDir 'libmpv'
+    if (Test-Path $libmpvSrc) {
+        Remove-Item $libmpvSrc -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $otherArchives = Get-ChildItem -Path $depsDir -Filter '*.7z' -ErrorAction SilentlyContinue
+    foreach ($f in $otherArchives) {
+        if ($f.Length -lt 1MB) {
+            $sizeKB = [math]::Round($f.Length / 1KB, 2)
+            Write-Warn "检测到疑似损坏的 Windows 原生依赖: $($f.Name) (${sizeKB} KB)，已删除，构建时将重新下载。"
+            Remove-Item $f.FullName -Force
+            continue
+        }
+
+        $expectedHash = $expectedHashes[$f.Name]
+        if ($expectedHash) {
+            $actualHash = (Get-FileHash $f.FullName -Algorithm MD5).Hash
+            if ($actualHash -ne $expectedHash) {
                 $sizeMB = [math]::Round($f.Length / 1MB, 2)
-                Write-Warn "检测到非预期版本的 Windows mpv-dev 依赖: $($f.Name) (${sizeMB} MB)，已删除，构建时将重新下载当前匹配版本。"
+                Write-Warn "检测到 MD5 不匹配的 Windows 原生依赖: $($f.Name) (${sizeMB} MB)`n  实际=$actualHash`n  预期=$expectedHash，已删除，构建时将重新下载。"
                 Remove-Item $f.FullName -Force
             }
-        }
-
-        # 同时清理 ANGLE 等其他 .7z 的损坏/不匹配缓存
-        $otherArchives = Get-ChildItem -Path $depsDir -Filter '*.7z' -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'mpv-dev-*.7z' }
-        foreach ($f in $otherArchives) {
-            if ($f.Length -lt 1MB) {
-                $sizeKB = [math]::Round($f.Length / 1KB, 2)
-                Write-Warn "检测到疑似损坏的 Windows 原生依赖: $($f.Name) (${sizeKB} KB)，已删除，构建时将重新下载。"
-                Remove-Item $f.FullName -Force
-                continue
-            }
-
-            $expectedHash = $expectedHashes[$f.Name]
-            if ($expectedHash) {
-                $actualHash = (Get-FileHash $f.FullName -Algorithm MD5).Hash
-                if ($actualHash -ne $expectedHash) {
-                    $sizeMB = [math]::Round($f.Length / 1MB, 2)
-                    Write-Warn "检测到 MD5 不匹配的 Windows 原生依赖: $($f.Name) (${sizeMB} MB)`n  实际=$actualHash`n  预期=$expectedHash，已删除，构建时将重新下载。"
-                    Remove-Item $f.FullName -Force
-                }
-            }
-        }
-
-        # 删除已解压的旧版 libmpv 目录，强制 CMake 使用新下载的压缩包重新解压
-        $libmpvSrc = Join-Path $depsDir 'libmpv'
-        if (Test-Path $libmpvSrc) {
-            Write-Warn "清理已解压的 libmpv 目录，确保使用新版 mpv-dev 重新解压..."
-            Remove-Item $libmpvSrc -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    # 确保 Windows 插件 symlink 指向本地修正后的依赖包
     $localPlugins = @{
-        'flutter_mpv_libs_windows_video' = 'deps\flutter_mpv_libs_windows_video'
-        'flutter_mpv_video'              = 'deps\flutter_mpv_video'
-        'permission_handler_windows'     = 'deps\permission_handler_windows'
+        # Windows 播放器已改为 fvp + vlc；flutter_mpv / media_kit 不再使用。
+        'permission_handler_windows' = 'deps\permission_handler_windows'
     }
 
     $anySymlinkInvalid = $false
@@ -230,7 +211,6 @@ function Test-AndroidSigning {
             return $false
         }
 
-        # build.gradle.kts 中 file(it) 以 android/app 为基准解析相对路径
         $storePath = Join-Path $androidAppDir $storeFile
         if (-not (Test-Path $storePath)) {
             Write-Err "$label keystore 文件不存在: $storePath（在 $propFile 中配置为 $storeFile）"
@@ -255,7 +235,7 @@ function Get-ProjectVersion {
     $pubspecPath = Join-Path $hainDir 'pubspec.yaml'
     $pubspec = Get-Content -Path $pubspecPath -Raw
     if ($pubspec -notmatch 'version:\s*([^\s]+)') {
-        throw "无法从 pubspec.yaml 读取 version"
+        throw '无法从 pubspec.yaml 读取 version'
     }
     return $Matches[1].Split('+')[0]
 }
@@ -275,29 +255,17 @@ function Invoke-BuildScript($name, $scriptPath) {
     $oldEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
 
-    # 统一控制台与 PowerShell 输出编码为 UTF-8，避免子进程中文输出被解码为 GBK 导致日志乱码
-    $oldOutputEncoding = [Console]::OutputEncoding
-    $oldInputEncoding = [Console]::InputEncoding
-    $oldOutputEncodingVar = $OutputEncoding
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    [Console]::InputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding = [System.Text.Encoding]::UTF8
-
     Push-Location $hainDir
     try {
-        # 以 UTF-8（带 BOM）写入日志，避免 Windows 记事本/默认编辑器打开时中文乱码
         $utf8Bom = New-Object System.Text.UTF8Encoding $true
-        # 首次写入若文件不存在，AppendAllText 会自动写入 BOM
         [System.IO.File]::AppendAllText($logPath, "`n=== $name 构建开始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`n", $utf8Bom)
 
-        # 实时显示输出并逐行追加到日志，避免内容截断
         & $scriptPath 2>&1 | ForEach-Object {
             $line = $_
             Write-Host $line
             [System.IO.File]::AppendAllText($logPath, "$line`n", $utf8Bom)
         }
 
-        # PowerShell 管道会保留子进程（子脚本 exit N）的 $LASTEXITCODE
         $ok = ($LASTEXITCODE -eq 0)
     }
     catch {
@@ -309,9 +277,6 @@ function Invoke-BuildScript($name, $scriptPath) {
     finally {
         Pop-Location
         $ErrorActionPreference = $oldEAP
-        [Console]::OutputEncoding = $oldOutputEncoding
-        [Console]::InputEncoding = $oldInputEncoding
-        $OutputEncoding = $oldOutputEncodingVar
     }
 
     if ($ok) {
@@ -333,44 +298,44 @@ function Invoke-SelectedBuilds {
         [switch]$SkipDoctor,
         [switch]$SkipMobile,
         [switch]$SkipTv,
-        [switch]$SkipWindows
+        [switch]$SkipWindows,
+        [switch]$Clean
     )
 
     Write-Host "`nHeinPlay 全平台构建脚本" -ForegroundColor Cyan
     Write-Host "项目根目录: $rootDir" -ForegroundColor Cyan
     Write-Host "Flutter 项目目录: $hainDir" -ForegroundColor Cyan
+    if ($Clean) { Write-Host '本次构建将执行 flutter clean' -ForegroundColor Yellow }
 
-    # 1. flutter doctor
     if (-not $SkipDoctor) {
         Invoke-FlutterDoctor | Out-Null
     }
 
-    # 2. flutter pub get
-    $depsOk = Invoke-FlutterPubGet
+    $depsOk = Invoke-FlutterPubGet -Clean:$Clean
     if (-not $depsOk) {
         Write-Err '依赖准备失败，停止构建。'
         return @{ Success = $false; Results = @() }
     }
 
-    # 3. Windows 插件检查（仅提示，不阻断）
     if (-not $SkipWindows) {
         Test-WindowsPlugin | Out-Null
     }
 
-    # 4. Android 签名检查
     if ((-not $SkipMobile) -or (-not $SkipTv)) {
         Test-AndroidSigning | Out-Null
     }
 
-    # 5. 读取版本号
     $version = Get-ProjectVersion
     Write-Host "`n当前构建版本: $version" -ForegroundColor Cyan
 
-    # 6. 依次构建
     $results = @()
 
     if (-not $SkipMobile) {
         if ($mobileKeyOk) {
+            Get-Item (Join-Path $distDir 'heinplay-*-mobile.apk') -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Warn "删除旧版手机版产物: $($_.Name)"
+                Remove-Item $_.FullName -Force
+            }
             $r = Invoke-BuildScript '手机版' (Join-Path $hainDir 'scripts\build_mobile.ps1')
             $results += [PSCustomObject]@{
                 Platform     = '手机版'
@@ -387,6 +352,10 @@ function Invoke-SelectedBuilds {
 
     if (-not $SkipTv) {
         if ($tvKeyOk) {
+            Get-Item (Join-Path $distDir 'heinplay-*-tv.apk') -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Warn "删除旧版 TV 产物: $($_.Name)"
+                Remove-Item $_.FullName -Force
+            }
             $r = Invoke-BuildScript 'TV 版' (Join-Path $hainDir 'scripts\build_tv.ps1')
             $results += [PSCustomObject]@{
                 Platform     = 'TV 版'
@@ -402,18 +371,30 @@ function Invoke-SelectedBuilds {
     }
 
     if (-not $SkipWindows) {
+        Get-Item (Join-Path $distDir 'heinplay-*-windows-portable.zip') -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Warn "删除旧版 Windows 产物: $($_.Name)"
+            Remove-Item $_.FullName -Force
+        }
         Test-SevenZip | Out-Null
         Repair-WindowsNativeDeps
         $r = Invoke-BuildScript 'Windows 版' (Join-Path $hainDir 'scripts\build_windows.ps1')
+        $artifactZip = Join-Path $distDir "heinplay-${version}-windows-portable.zip"
+        $artifactDir = Join-Path $distDir "heinplay-${version}-windows-portable"
+        if ($r.Success -and (Test-Path $artifactZip)) {
+            if (-not (Test-Path $artifactDir)) {
+                New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+            }
+            Write-Ok "覆盖解压 Windows 产物到 $artifactDir（保留目录内现有数据）"
+            Expand-Archive -Path $artifactZip -DestinationPath $artifactDir -Force
+        }
         $results += [PSCustomObject]@{
             Platform     = 'Windows 版'
             Status       = if ($r.Success) { '成功' } else { '失败' }
-            ArtifactPath = Join-Path $distDir "heinplay-${version}-windows-portable.zip"
+            ArtifactPath = $artifactZip
             LogPath      = $r.LogPath
         }
     }
 
-    # 7. 汇总
     $allSuccess = $true
     if ($results) {
         Write-Section '构建结果汇总'
@@ -428,7 +409,6 @@ function Invoke-SelectedBuilds {
     $distUri = [System.Uri]::new((Resolve-Path $distDir).Path).AbsoluteUri
     Write-Host "产物输出目录: $distUri" -ForegroundColor Cyan
 
-    # 输出每个成功产物的可点击链接，便于直接打开 apk/zip/exe
     foreach ($r in $results) {
         if ($r.Status -eq '成功' -and $r.ArtifactPath -ne 'N/A' -and (Test-Path $r.ArtifactPath)) {
             $artifactUri = [System.Uri]::new((Resolve-Path $r.ArtifactPath).Path).AbsoluteUri
@@ -461,7 +441,12 @@ function Show-MainMenu {
     Write-Host '4. 仅构建 Windows 版'
     Write-Host '5. 运行 flutter doctor'
     Write-Host '6. 运行 flutter pub get'
+    Write-Host '7. 清理构建缓存 (flutter clean)'
     Write-Host '0. 退出'
+    Write-Host ''
+    Write-Host '命令行参数示例:' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipWindows          跳过 Windows 构建' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -Clean                构建前执行 flutter clean' -ForegroundColor DarkGray
     Write-Host ''
     return Read-Host '请输入选项编号'
 }
@@ -472,22 +457,16 @@ function Read-ReturnOrExit {
 }
 
 function Exit-Script($code = 0) {
-    # 构建子进程（flutter/gradle/dart 等）可能仍在后台运行句柄；
-    # 正常 exit 会等待它们并导致窗口卡住，因此强制结束当前 PowerShell 进程。
     [Environment]::Exit($code)
 }
 
-# ==================== 主流程 ====================
-
-# 如果通过参数调用（如 -SkipWindows），保持原有非交互式行为
-$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipWindows
+$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipWindows -or $Clean
 
 if ($nonInteractive) {
-    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipWindows:$SkipWindows
+    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipWindows:$SkipWindows -Clean:$Clean
     if ($buildResult.Success) { Exit-Script 0 } else { Exit-Script 1 }
 }
 
-# 交互式菜单模式
 do {
     $choice = Show-MainMenu
     $continueMenu = $true
@@ -498,6 +477,7 @@ do {
         '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv | Out-Null }
         '5' { Invoke-FlutterDoctor | Out-Null }
         '6' { Invoke-FlutterPubGet | Out-Null }
+        '7' { Invoke-FlutterPubGet -Clean | Out-Null }
         '0' { $continueMenu = $false; Exit-Script 0 }
         default { Write-Warn "无效选项: $choice" }
     }

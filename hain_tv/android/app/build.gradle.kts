@@ -87,6 +87,18 @@ android {
             else -> signingConfigs.getByName("tv")
         }
     }
+
+    // 多个依赖可能同时携带 libc++_shared.so，打包时只保留一份避免冲突。
+    packaging {
+        jniLibs {
+            pickFirsts += listOf(
+                "lib/armeabi-v7a/libc++_shared.so",
+                "lib/arm64-v8a/libc++_shared.so",
+                "lib/x86/libc++_shared.so",
+                "lib/x86_64/libc++_shared.so",
+            )
+        }
+    }
 }
 
 kotlin {

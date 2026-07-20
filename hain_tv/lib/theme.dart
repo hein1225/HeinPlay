@@ -146,5 +146,15 @@ ThemeData buildAppTheme() {
         ),
       ),
     ),
+    // 全局滚动条样式：细、圆角、半透明，适配深色主题。
+    scrollbarTheme: ScrollbarThemeData(
+      thickness: WidgetStateProperty.all(4.0),
+      radius: const Radius.circular(AppRadius.full),
+      thumbVisibility: WidgetStateProperty.all(true),
+      trackVisibility: WidgetStateProperty.all(false),
+      thumbColor: WidgetStateProperty.all(
+        AppColors.textMuted.withValues(alpha: 0.4),
+      ),
+    ),
   );
 }

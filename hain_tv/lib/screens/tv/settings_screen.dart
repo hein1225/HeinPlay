@@ -4,6 +4,7 @@ import 'package:hain_tv/services/ad_filter_service.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/cache_service.dart';
 import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/player/buffer_profile_config.dart';
 import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
@@ -26,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _m3u8ProxyUrl = '';
   bool _adFilterEnabled = false;
   bool _hardwareDecoding = true;
+  BufferProfile _bufferProfile = BufferProfile.standard;
   BangumiApiProxyType _bangumiApiProxyType = BangumiApiProxyType.cmliussss;
   String _bangumiApiProxyUrl = '';
   BangumiImageProxyType _bangumiImageProxyType =
@@ -49,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
+    final bufferProfile = await UserDataService.getBufferProfile();
     final bangumiApiProxyType = await UserDataService.getBangumiApiProxyType();
     final bangumiApiProxyUrl = await UserDataService.getBangumiApiProxyUrl();
     final bangumiImageProxyType =
@@ -66,6 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _m3u8ProxyUrl = m3u8ProxyUrl;
       _adFilterEnabled = adFilterEnabled;
       _hardwareDecoding = hardwareDecoding;
+      _bufferProfile = bufferProfile;
       _bangumiApiProxyType = bangumiApiProxyType;
       _bangumiApiProxyUrl = bangumiApiProxyUrl;
       _bangumiImageProxyType = bangumiImageProxyType;
@@ -164,6 +168,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _hardwareDecoding = value);
   }
 
+  Future<void> _setBufferProfile(BufferProfile value) async {
+    await UserDataService.saveBufferProfile(value);
+    setState(() => _bufferProfile = value);
+    _showSnackBar('已切换为 ${bufferProfileLabel(value)}');
+  }
+
   Future<void> _setBangumiApiProxyType(BangumiApiProxyType value) async {
     await UserDataService.saveBangumiApiProxyType(value);
     await BangumiService.loadProxySettings();
@@ -251,10 +261,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _buildSwitchTile(
             title: '硬件解码',
-            subtitle: 'flutter_mpv 播放器生效；关闭后使用软件解码',
+            subtitle: '开启后优先使用硬件解码（播放器支持时生效）',
             value: _hardwareDecoding,
             onChanged: _setHardwareDecoding,
           ),
+          _buildBufferProfileTile(),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('Bangumi 数据源'),
           _buildBangumiApiProxyTile(),
@@ -282,7 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('关于'),
-          _buildInfoTile(title: '版本', value: '1.1.5'),
+          _buildInfoTile(title: '版本', value: '1.1.6'),
           _buildInfoTile(title: '作者', value: '海因茨'),
         ],
       ),
@@ -311,10 +322,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     switch (type) {
       case PlayerBackendType.exo:
         return isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
-      case PlayerBackendType.flutterMpv:
-        return isDefault ? 'flutter_mpv（默认）' : 'flutter_mpv';
       case PlayerBackendType.fvp:
         return isDefault ? 'FVP（默认）' : 'FVP';
+      case PlayerBackendType.vlc:
+        return isDefault ? 'VLC（默认）' : 'VLC';
     }
   }
 
@@ -322,10 +333,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     switch (type) {
       case PlayerBackendType.exo:
         return 'Android 原生播放器，硬解能力强';
-      case PlayerBackendType.flutterMpv:
-        return '基于 libmpv，兼容性较强';
       case PlayerBackendType.fvp:
-        return '基于 libmdk，桌面端兼容性好';
+        return '基于 libmdk，兼容性较好';
+      case PlayerBackendType.vlc:
+        return '基于 libvlc，格式兼容性最强';
     }
   }
 
@@ -344,6 +355,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChanged: _setPlayerBackend,
         ),
       );
+    }
+
+    return _buildCard(child: Column(children: tiles));
+  }
+
+  Widget _buildBufferProfileTile() {
+    final tiles = <Widget>[
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Text(
+          '当前：${bufferProfileLabel(_bufferProfile)}',
+          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+        ),
+      ),
+      const Divider(height: 1, color: AppColors.border),
+    ];
+
+    for (final profile in BufferProfile.values) {
+      tiles.add(
+        _buildRadioTile<BufferProfile>(
+          title: bufferProfileLabel(profile),
+          subtitle: bufferProfileSubtitle(profile),
+          value: profile,
+          groupValue: _bufferProfile,
+          onChanged: _setBufferProfile,
+        ),
+      );
+      if (profile != BufferProfile.values.last) {
+        tiles.add(const Divider(height: 1, color: AppColors.border));
+      }
     }
 
     return _buildCard(child: Column(children: tiles));

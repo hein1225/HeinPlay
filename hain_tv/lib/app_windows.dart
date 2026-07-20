@@ -2,11 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:hain_tv/screens/tv/login_screen.dart';
+import 'package:hain_tv/screens/windows/login_screen.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/windows_logger.dart';
-import 'package:hain_tv/widgets/tv/tv_shell.dart';
+import 'package:hain_tv/widgets/windows/windows_shell.dart';
 import 'package:window_manager/window_manager.dart';
 
 class HainWindowsApp extends StatefulWidget {
@@ -77,7 +77,7 @@ class _HainWindowsAppState extends State<HainWindowsApp>
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       routes: {
-        '/home': (context) => const TvShell(),
+        '/home': (context) => const WindowsShell(),
         '/login': (context) => const LoginScreen(),
       },
       home: FutureBuilder<bool>(
@@ -92,7 +92,7 @@ class _HainWindowsAppState extends State<HainWindowsApp>
             );
           }
           final loggedIn = snapshot.data ?? false;
-          return loggedIn ? const TvShell() : const LoginScreen();
+          return loggedIn ? const WindowsShell() : const LoginScreen();
         },
       ),
     );

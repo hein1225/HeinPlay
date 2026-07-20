@@ -34,13 +34,12 @@ class AdFilterEngine {
       return null;
     }
 
-    // 参照 Selene 播放源处理方式：仅当去广告开启时才走本地 HTTP 代理。
-    // Windows 端直接播放原始 URL，由 flutter_mpv/FVP 自身处理 HLS。
-    final needsProxy = enabled;
-    if (!needsProxy) {
+    // 全平台统一：仅当去广告开启时才走本地代理；去广告关闭时直接播放原始 URL，
+    // 与 Selene 保持一致，避免 Windows 端在关闭去广告后仍被代理引入额外问题。
+    if (!enabled) {
       WindowsLogger.log(
         'AdFilterEngine',
-        ' 去广告已关闭，直接播放原始 URL (Windows=$isWindows)',
+        ' 去广告已关闭，直接播放原始 URL',
       );
       return null;
     }

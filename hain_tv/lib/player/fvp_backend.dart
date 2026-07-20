@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:fvp/fvp.dart';
+import '../utils/windows_logger.dart';
+import 'buffer_profile_config.dart';
 import 'video_player_backend.dart';
 import 'video_player_backend_impl.dart';
 
@@ -24,18 +27,45 @@ class FvpBackend implements VideoPlayerBackend {
     Duration? startAt,
     Map<String, String>? headers,
     bool proxyMode = false,
+    BufferProfileConfig? bufferConfig,
   }) async {
     debugPrint('FvpBackend open: $url');
+    WindowsLogger.log('FvpBackend', 'open url=$url proxyMode=$proxyMode');
     try {
       await _impl.open(
         url,
         startAt: startAt,
         headers: headers,
         proxyMode: proxyMode,
+        bufferConfig: bufferConfig,
       );
+      final effectiveConfig = bufferConfig ?? await BufferProfileConfig.current();
+      final controller = _impl.controller;
+      if (controller != null) {
+        try {
+          controller.setBufferRange(
+            min: effectiveConfig.fvpMinMs,
+            max: effectiveConfig.fvpMaxMs,
+            drop: effectiveConfig.fvpDrop,
+          );
+          debugPrint(
+            'FvpBackend 已应用缓冲配置: min=${effectiveConfig.fvpMinMs}ms max=${effectiveConfig.fvpMaxMs}ms drop=${effectiveConfig.fvpDrop}',
+          );
+          WindowsLogger.log(
+            'FvpBackend',
+            '缓冲配置已应用: min=${effectiveConfig.fvpMinMs}ms max=${effectiveConfig.fvpMaxMs}ms',
+          );
+        } catch (e) {
+          debugPrint('FvpBackend setBufferRange 失败: $e');
+          WindowsLogger.log('FvpBackend', 'setBufferRange 失败: $e');
+        }
+      }
+      WindowsLogger.log('FvpBackend', 'open 成功: $url');
     } catch (e, stack) {
       debugPrint('FvpBackend open error: $e');
       debugPrint('$stack');
+      WindowsLogger.log('FvpBackend', 'open 失败: $e');
+      WindowsLogger.log('FvpBackend', 'stack: $stack');
       rethrow;
     }
   }
