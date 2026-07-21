@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -251,7 +252,7 @@ class UpdateService {
     }
   }
 
-  /// Windows 便携版自动更新脚本。
+  /// Windows 便携版自动更新脚本（英文日志，便于 bat 显示）。
   /// 等待主进程退出后解压 zip 并替换应用目录内文件，保留 data 目录。
   static const String _windowsUpdaterScript = r'''
 param(
@@ -265,61 +266,169 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# 等待主进程退出
-while ($true) {
-    $parent = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
-    if (-not $parent) { break }
-    Start-Sleep -Milliseconds 500
+function Write-Log {
+    param([string]$Message)
+    $logDir = Join-Path $AppDir 'update'
+    if (-not (Test-Path $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+    $logPath = Join-Path $logDir 'update.log'
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    "$timestamp $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
 }
 
-$updateDir = Join-Path $AppDir 'update'
-$extractedDir = Join-Path $updateDir 'extracted'
-$zipPath = Join-Path $updateDir 'download.zip'
-
 try {
-    if (-not (Test-Path $zipPath)) {
-        throw "未找到更新包: $zipPath"
+    Write-Log "Updater started. Parent PID=$ParentPid, AppDir=$AppDir, ExeName=$ExeName"
+
+    # Wait for parent process to exit, up to 30 seconds
+    $waitStart = Get-Date
+    while ($true) {
+        $parent = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
+        if (-not $parent) {
+            Write-Log "Parent process exited"
+            break
+        }
+        if ((Get-Date) - $waitStart -gt [TimeSpan]::FromSeconds(30)) {
+            Write-Log "Timeout waiting for parent process, continue anyway"
+            break
+        }
+        Start-Sleep -Milliseconds 500
     }
+
+    $updateDir = Join-Path $AppDir 'update'
+    $extractedDir = Join-Path $updateDir 'extracted'
+    $zipPath = Join-Path $updateDir 'download.zip'
+
+    if (-not (Test-Path $zipPath)) {
+        throw "Update package not found: $zipPath"
+    }
+    Write-Log "Found update package: $zipPath, size=$((Get-Item $zipPath).Length) bytes"
 
     if (Test-Path $extractedDir) {
-        Remove-Item -Recurse -Force $extractedDir
+        Write-Log "Cleaning old extracted directory: $extractedDir"
+        Remove-Item -Recurse -Force $extractedDir -ErrorAction SilentlyContinue
     }
-    Expand-Archive -Path $zipPath -DestinationPath $extractedDir -Force
 
-    # 如果压缩包内只有一个文件夹且根目录没有文件，则视为外层包装目录
+    Write-Log "Extracting update package..."
+    Expand-Archive -Path $zipPath -DestinationPath $extractedDir -Force
+    Write-Log "Extraction completed"
+
+    # If archive root contains only one folder, treat it as wrapper directory
     $newRoot = $extractedDir
     $files = Get-ChildItem $extractedDir -File
     $dirs = Get-ChildItem $extractedDir -Directory
     if ($files.Count -eq 0 -and $dirs.Count -eq 1) {
         $newRoot = $dirs[0].FullName
+        Write-Log "Detected wrapper directory, actual root=$newRoot"
     }
 
-    # 复制新文件到应用目录，保留 data 与 update 目录
+    # Copy new files into app directory, keep data and update folders
     $exclude = @('data', 'update')
-    Get-ChildItem $newRoot | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
-        $dest = Join-Path $AppDir $_.Name
-        if (Test-Path $dest) {
-            Remove-Item -Recurse -Force $dest
+    $items = Get-ChildItem $newRoot | Where-Object { $exclude -notcontains $_.Name }
+    Write-Log "Copying $($items.Count) items"
+
+    foreach ($item in $items) {
+        $dest = Join-Path $AppDir $item.Name
+        Write-Log "Copying $($item.Name) -> $dest"
+
+        $retry = 0
+        $maxRetry = 10
+        while ($retry -lt $maxRetry) {
+            try {
+                if (Test-Path $dest) {
+                    Remove-Item -Recurse -Force $dest -ErrorAction Stop
+                }
+                Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
+                Write-Log "Copy $($item.Name) succeeded"
+                break
+            } catch {
+                $retry++
+                Write-Log "Copy $($item.Name) failed (retry $retry/$maxRetry): $_"
+                if ($retry -ge $maxRetry) { throw }
+                Start-Sleep -Milliseconds 500
+            }
         }
-        Copy-Item -Path $_.FullName -Destination $dest -Recurse -Force
+    }
+
+    Write-Log "All files copied successfully"
+} catch {
+    Write-Log "Update failed: $_"
+    if ($_.ScriptStackTrace) {
+        Write-Log $_.ScriptStackTrace
     }
 } finally {
+    $updateDir = Join-Path $AppDir 'update'
     if (Test-Path $updateDir) {
-        Remove-Item -Recurse -Force $updateDir -ErrorAction SilentlyContinue
+        # Keep log for diagnosis, remove other temp files
+        $logPath = Join-Path $updateDir 'update.log'
+        Get-ChildItem $updateDir -Exclude 'update.log' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Log "Temp files cleaned"
     }
 }
 
-# 重启应用
+# Restart app
 $exePath = Join-Path $AppDir $ExeName
 if (Test-Path $exePath) {
+    Write-Log "Restarting app: $exePath"
     Start-Process -FilePath $exePath -WorkingDirectory $AppDir
+} else {
+    Write-Log "Executable not found: $exePath"
 }
+''';
+
+  /// Windows 更新进度显示批处理脚本。
+  /// 启动后显示更新进度，后台调用 PowerShell 完成实际更新。
+  static const String _windowsUpdaterBatch = r'''
+@echo off
+chcp 65001 >nul
+setlocal enabledelayedexpansion
+
+set "APP_DIR=%~2"
+set "PID=%~1"
+set "EXE_NAME=%~3"
+set "PS_FILE=%APP_DIR%\update\update.ps1"
+set "LOG_FILE=%APP_DIR%\update\update.log"
+
+cls
+echo ========================================
+echo   HeinPlay Updater
+echo ========================================
+echo.
+echo Updating HeinPlay, please wait...
+echo Do not close this window.
+echo.
+
+:: Clean old log
+if exist "%LOG_FILE%" del /f /q "%LOG_FILE%" >nul 2>&1
+
+:: Start PowerShell updater in background
+start /min "" powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "%PS_FILE%" -ParentPid %PID% -AppDir "%APP_DIR%" -ExeName "%EXE_NAME%"
+
+set "LAST_LINE="
+:loop
+if exist "%LOG_FILE%" (
+    for /f "delims=" %%a in ('type "%LOG_FILE%" 2^>nul') do (
+        set "LINE=%%a"
+    )
+    if not "!LINE!"=="!LAST_LINE!" (
+        set "LAST_LINE=!LINE!"
+        echo [Update] !LINE!
+    )
+)
+timeout /t 1 /nobreak >nul
+:: Loop until the update directory is removed (except log)
+if exist "%PS_FILE%" goto loop
+
+echo.
+echo Update process finished.
+echo.
+timeout /t 2 /nobreak >nul
 ''';
 
   /// Windows 便携版自动更新。
   ///
-  /// 下载新版 zip，生成 PowerShell 更新脚本，启动脚本后退出当前应用，
-  /// 由脚本完成文件替换并自动重启。
+  /// 下载新版 zip，生成 PowerShell 更新脚本与 BAT 进度窗口，启动 bat 后退出当前应用，
+  /// 由 bat 调用 PowerShell 完成文件替换并自动重启。
   static Future<void> downloadAndUpdateWindows(
     UpdateInfo info, {
     required void Function(double progress) onProgress,
@@ -340,6 +449,7 @@ if (Test-Path $exePath) {
 
     final zipPath = p.join(updateDir.path, 'download.zip');
     final scriptPath = p.join(updateDir.path, 'update.ps1');
+    final batchPath = p.join(updateDir.path, 'update.bat');
 
     final dio = Dio();
     try {
@@ -356,29 +466,32 @@ if (Test-Path $exePath) {
       throw Exception('下载更新包失败: $e');
     }
 
-    await File(scriptPath).writeAsString(_windowsUpdaterScript);
+    // PowerShell 5.1 需要 UTF-8 BOM 才能正确识别含中文路径/参数的脚本。
+    final scriptBytes = Uint8List.fromList([
+      0xEF,
+      0xBB,
+      0xBF,
+      ...utf8.encode(_windowsUpdaterScript),
+    ]);
+    await File(scriptPath).writeAsBytes(scriptBytes);
+    await File(batchPath).writeAsString(_windowsUpdaterBatch);
 
     final exeName = p.basename(Platform.resolvedExecutable);
     await Process.start(
-      'powershell.exe',
+      'cmd.exe',
       [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        scriptPath,
-        '-ParentPid',
+        '/c',
+        'start',
+        '',
+        batchPath,
         pid.toString(),
-        '-AppDir',
         appDir,
-        '-ExeName',
         exeName,
       ],
       workingDirectory: appDir,
     );
 
-    // 等待 PowerShell 启动后退出当前应用，让脚本接管更新。
+    // 等待 bat 窗口启动后退出当前应用，让脚本接管更新。
     await Future.delayed(const Duration(seconds: 1));
     exit(0);
   }

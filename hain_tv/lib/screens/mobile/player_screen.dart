@@ -1851,12 +1851,6 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         icon: Icons.screen_rotation,
         label: '旋转',
       ),
-      _buildControlButton(
-        onTap: _toggleControlsLock,
-        icon: _controlsLocked ? Icons.lock : Icons.lock_open,
-        label: _controlsLocked ? '解锁' : '锁定',
-        active: _controlsLocked,
-      ),
     ];
   }
 
@@ -1963,6 +1957,31 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                 ),
               ),
             ),
+            // 未锁定时将锁定按钮放在右侧中间，与解锁图标位置一致。
+            if (_controlsVisible && !_controlsLocked)
+              Positioned(
+                right: AppSpacing.lg,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: _toggleControlsLock,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgOverlay.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Icon(
+                        Icons.lock,
+                        color: AppColors.textPrimary,
+                        size: 32,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             // 锁定时点击屏幕显示解锁功能键，位于屏幕右侧中间，点击可解锁。
             if (_controlsLocked && _lockIndicatorVisible)
               Positioned(

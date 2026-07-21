@@ -69,6 +69,8 @@ class DetailScreen extends StatefulWidget {
       doubanId: result.doubanId,
       initialEpisodeIndex: initialEpisodeIndex,
       initialPlayTime: initialPlayTime,
+      // 搜索页点选后进入详情页，默认选中该源并同时搜索其他源进行测速排序。
+      searchOnLoad: true,
     );
   }
 
@@ -210,6 +212,9 @@ class _DetailScreenState extends State<DetailScreen> {
   // 仅当用户主动手动切换源时为 true，用于区分“自动选中记录源”和“用户手动切源”。
   bool _sourceSwitchedByUser = false;
 
+  /// 从搜索页点进来时，记录用户点击的源 key，确保搜索/合并其他源后仍优先选中该源。
+  String? _initialSelectedSourceKey;
+
   bool _isFavorite = false;
   bool _fuzzySearchEnabled = false;
   PlayerBackendType _playerBackend = PlayerBackendFactory.platformDefault;
@@ -262,6 +267,11 @@ class _DetailScreenState extends State<DetailScreen> {
       0,
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
+    if (_sources.isNotEmpty &&
+        _selectedSourceIndex < _sources.length) {
+      final s = _sources[_selectedSourceIndex];
+      _initialSelectedSourceKey = '${s.source}+${s.id}';
+    }
     _playRecord = widget.playRecord;
     // 首帧渲染后再过滤源并加载数据，让详情页先显示出来。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -280,6 +290,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   /// 过滤掉与影片标题不精确匹配的源，避免传入的模糊结果污染列表。
+  /// 从搜索页点选的源始终保留，避免被精确匹配过滤掉导致无法选中。
   void _filterSources() {
     if (widget.sources.isEmpty || widget.title.isEmpty) return;
     final variants = SearchService.generateSearchVariants(widget.title);
@@ -292,6 +303,16 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
         )
         .toList();
+    // 保留搜索页点选的初始源
+    if (_initialSelectedSourceKey != null &&
+        !filtered.any(
+          (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+        )) {
+      final initialSource = widget.sources.firstWhere(
+        (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+      );
+      filtered.insert(0, initialSource);
+    }
     if (!mounted) return;
     setState(() {
       _sources = filtered;
@@ -717,10 +738,10 @@ class _DetailScreenState extends State<DetailScreen> {
     final seen = <String>{};
     final mergedSources = <SourceOption>[];
 
-    // 1. 优先保留原始源
+    // 1. 优先保留原始源或搜索页点选的初始源
     for (final s in _sources) {
       final key = '${s.source}+${s.id}';
-      if (key == originalSource) {
+      if (key == originalSource || key == _initialSelectedSourceKey) {
         seen.add(key);
         mergedSources.add(s);
         break;
@@ -777,10 +798,14 @@ class _DetailScreenState extends State<DetailScreen> {
         );
         if (originalIndex >= 0) {
           _selectedSourceIndex = originalIndex;
-    
         } else {
           _selectedSourceIndex = 0;
         }
+      } else if (_initialSelectedSourceKey != null) {
+        final initialIndex = mergedSources.indexWhere(
+          (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+        );
+        _selectedSourceIndex = initialIndex >= 0 ? initialIndex : 0;
       } else {
         _selectedSourceIndex = 0;
       }
