@@ -1,6 +1,9 @@
 name: Build Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -12,6 +15,9 @@ on:
         required: true
         default: true
         type: boolean
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build-tv:
@@ -57,12 +63,12 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-tv-release.apk "dist/heinplay-${VERSION}-tv.apk"
 
       - name: Upload TV APK
-        if: ${{ inputs.upload-artifacts }}
+        if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-tv-apk
@@ -112,12 +118,12 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-oldtv-release.apk "dist/heinplay-${VERSION}-oldtv.apk"
 
       - name: Upload OldTV APK
-        if: ${{ inputs.upload-artifacts }}
+        if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-oldtv-apk
@@ -167,12 +173,12 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-mobile-release.apk "dist/heinplay-${VERSION}-mobile.apk"
 
       - name: Upload Mobile APK
-        if: ${{ inputs.upload-artifacts }}
+        if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-mobile-apk
@@ -249,12 +255,12 @@ jobs:
       - name: Rename artifact
         shell: pwsh
         run: |
-          $pubspec = Get-Content -Path pubspec.yaml -Raw
-          if ($pubspec -notmatch 'version:\s*([^\s]+)') {
-            Write-Error "无法从 pubspec.yaml 读取 version"
-            exit 1
+          $tag = $env:RELEASE_TAG
+          if ($tag -match '^v') {
+            $version = $tag.Substring(1)
+          } else {
+            $version = $tag
           }
-          $version = $Matches[1].Split('+')[0]
           $distDir = "dist"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           $sourceDir = "build\windows\x64\runner\Release"
@@ -264,7 +270,7 @@ jobs:
           Write-Output "已生成: $destZip"
 
       - name: Upload Windows artifact
-        if: ${{ inputs.upload-artifacts }}
+        if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-windows-portable
@@ -275,9 +281,11 @@ jobs:
     name: Create Release
     needs: [build-tv, build-oldtv, build-mobile, build-windows]
     runs-on: ubuntu-latest
-    if: ${{ inputs.upload-artifacts }}
+    if: ${{ inputs.upload-artifacts != false }}
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -291,8 +299,8 @@ jobs:
       - name: Create or update Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
-          name: HeinPlay-${{ inputs.tag }}
-          body: "更新日志详见 e:\\code\\HeinPlay/CHANGELOG.md"
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: HeinPlay-${{ env.RELEASE_TAG }}
+          body: "更新日志详见 CHANGELOG.md"
           files: artifacts/*
           fail_on_unmatched_files: true
