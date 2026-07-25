@@ -24,6 +24,8 @@ class DeviceUtils {
 
   static bool get isTv {
     if (_tvOverride != null) return _tvOverride!;
-    return isAndroid || isLinux;
+    // 默认不视为 TV，避免 Android 手机被误判为 TV。
+    // TV/Windows 入口需在 main 中显式设置 isTvOverride = true。
+    return false;
   }
 }

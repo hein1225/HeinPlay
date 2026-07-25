@@ -12,6 +12,7 @@ import '../models/play_record.dart';
 import '../models/search_result.dart';
 import '../models/skip_segment.dart';
 import '../models/video_detail.dart';
+import 'app_info_service.dart';
 import 'cache_service.dart';
 import 'm3u8_utils.dart';
 import 'user_data_service.dart';
@@ -41,15 +42,23 @@ class LunaTVService {
   }
 
   static Future<String?> _baseUrl() async {
+    final last = await UserDataService.getLastSelectedServerUrl();
+    if (last != null && last.trim().isNotEmpty) {
+      return last.trim().replaceAll(RegExp(r'/+$'), '');
+    }
     final url = await UserDataService.getServerUrl();
-    if (url == null || url.trim().isEmpty) return null;
-    return url.trim().replaceAll(RegExp(r'/+$'), '');
+    if (url != null && url.trim().isNotEmpty) {
+      return url.trim().replaceAll(RegExp(r'/+$'), '');
+    }
+    final backup = await UserDataService.getBackupServerUrl();
+    if (backup.trim().isEmpty) return null;
+    return backup.trim().replaceAll(RegExp(r'/+$'), '');
   }
 
   static Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'HainTV/1.1.6 Flutter',
+      'User-Agent': AppInfoService.userAgent,
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -174,7 +183,7 @@ class LunaTVService {
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Content-Type': 'application/json',
-              'User-Agent': 'HainTV/1.1.6 Flutter',
+              'User-Agent': AppInfoService.userAgent,
             },
             body: json.encode(body),
           )

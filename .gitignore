@@ -51,6 +51,7 @@ local.properties
 # Signing keys and passwords should never be committed
 /hain_tv/android/key.properties
 /hain_tv/android/key-mobile.properties
+/hain_tv/android/key-oldtv.properties
 /hain_tv/android/*.keystore
 /hain_tv/android/*.jks
 

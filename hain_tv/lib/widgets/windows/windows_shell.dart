@@ -10,8 +10,10 @@ import '../../screens/windows/profile_screen.dart';
 import '../../screens/windows/search_screen.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/update_service.dart';
+import '../../services/user_data_service.dart';
 import '../../theme.dart';
 import '../../utils/back_interceptor.dart';
+import '../../widgets/connection_status_badge.dart';
 
 class _NavItem {
   final String label;
@@ -59,10 +61,14 @@ class _WindowsShellState extends State<WindowsShell> {
   }
 
   Future<void> _checkUpdate() async {
+    final channel = await UserDataService.getDefaultUpdateChannel();
+    final updateChannel = channel == 'github'
+        ? UpdateChannel.github
+        : UpdateChannel.domestic;
     await UpdateService.checkAndPrompt(
       context,
       silent: true,
-      channel: UpdateChannel.domestic,
+      channel: updateChannel,
       platform: 'windows',
     );
   }
@@ -217,33 +223,7 @@ class _WindowsShellState extends State<WindowsShell> {
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
-                    ValueListenableBuilder<bool>(
-                      valueListenable:
-                          ConnectivityService.instance.isServerConnected,
-                      builder: (context, connected, child) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.sm,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: connected
-                                ? AppColors.success
-                                : AppColors.error,
-                            borderRadius: BorderRadius.circular(AppRadius.sm),
-                          ),
-                          child: Text(
-                            connected ? '已连接服务器' : '服务器未连接',
-                            style: const TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                    const ConnectionStatusBadge(),
                     const Spacer(),
                     ..._items.asMap().entries.map((entry) {
                       return _buildNavItem(entry.value, entry.key);

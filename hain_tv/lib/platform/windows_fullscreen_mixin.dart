@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../services/user_data_service.dart';
 import 'device_utils.dart';
 
 /// Windows 桌面端播放页全屏/ESC/双击操作隔离。
@@ -20,6 +21,13 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
 
   /// 当前是否处于窗口全屏状态，供 UI 图标/PopScope 判断使用。
   bool get isWindowsFullScreen => _isFullScreen;
+
+  /// 供外部在显式调用 [windowManager.setFullScreen] 后同步本地状态。
+  void setWindowsFullScreenState(bool value) {
+    if (mounted) {
+      setState(() => _isFullScreen = value);
+    }
+  }
 
   /// 初始化 Windows 全屏监听与状态。
   Future<void> initWindowsFullscreen() async {
@@ -53,6 +61,19 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
       final next = !actual;
       debugPrint('Windows 切换全屏: actual=$actual next=$next');
       await windowManager.setFullScreen(next);
+
+      // 根据用户设置同步置顶状态
+      final alwaysOnTop = await UserDataService.getWindowsFullscreenAlwaysOnTop();
+      if (alwaysOnTop) {
+        await windowManager.setAlwaysOnTop(next);
+      } else {
+        // 设置已关闭但当前仍是置顶状态时，取消置顶
+        final currentTopmost = await windowManager.isAlwaysOnTop();
+        if (!next && currentTopmost) {
+          await windowManager.setAlwaysOnTop(false);
+        }
+      }
+
       // 以窗口事件为主要驱动；若事件未触发，补充同步一次状态。
       if (mounted) {
         setState(() => _isFullScreen = next);
@@ -78,6 +99,10 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
       debugPrint('Windows ESC: actualFullScreen=$actual');
       if (actual) {
         await windowManager.setFullScreen(false);
+        final alwaysOnTop = await UserDataService.getWindowsFullscreenAlwaysOnTop();
+        if (alwaysOnTop || await windowManager.isAlwaysOnTop()) {
+          await windowManager.setAlwaysOnTop(false);
+        }
         if (mounted) {
           setState(() => _isFullScreen = false);
         }

@@ -16,13 +16,18 @@ linter:
   # or a specific dart file by using the `// ignore: name_of_lint` and
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
-  rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
-
 analyzer:
+  errors:
+    unused_import: warning
+    unused_local_variable: warning
+    unused_field: warning
+    unused_element: warning
+    dead_code: warning
+    duplicate_import: warning
   exclude:
     - deps/**
+    - build/**
+    - dist/**
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

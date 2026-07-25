@@ -39,6 +39,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
   VideoPlayerController? _controller;
   final _positionController = StreamController<Duration>.broadcast();
   final _durationController = StreamController<Duration>.broadcast();
+  final _bufferedController = StreamController<Duration>.broadcast();
   final _playingController = StreamController<bool>.broadcast();
   Timer? _timer;
   BoxFit _fit = BoxFit.contain;
@@ -229,6 +230,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       if (value == null) return;
       _positionController.add(value.position);
       _durationController.add(value.duration);
+      _bufferedController.add(
+        value.buffered.isNotEmpty ? value.buffered.last.end : value.position,
+      );
       _playingController.add(value.isPlaying);
     });
   }
@@ -266,6 +270,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
 
   @override
   Stream<Duration> get durationStream => _durationController.stream;
+
+  @override
+  Stream<Duration> get bufferedStream => _bufferedController.stream;
 
   @override
   Stream<bool> get playingStream => _playingController.stream;

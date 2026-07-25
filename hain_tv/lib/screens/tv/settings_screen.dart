@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:flutter/services.dart';
 import 'package:hain_tv/services/ad_filter_service.dart';
+import 'package:hain_tv/services/app_info_service.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/cache_service.dart';
 import 'package:hain_tv/services/hain_tv_cache_manager.dart';
@@ -9,6 +12,7 @@ import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -34,10 +38,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       BangumiImageProxyType.cmliussss;
   String _bangumiImageProxyUrl = '';
 
+  // Windows 全屏置顶
+  bool _windowsFullscreenAlwaysOnTop = false;
+
+  // 应用版本号
+  String _appVersion = '';
+
   @override
   void initState() {
     super.initState();
     _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   Future<void> _loadSettings() async {
@@ -58,7 +73,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await UserDataService.getBangumiImageProxyType();
     final bangumiImageProxyUrl =
         await UserDataService.getBangumiImageProxyUrl();
+    final windowsFullscreenAlwaysOnTop =
+        await UserDataService.getWindowsFullscreenAlwaysOnTop();
     await BangumiService.loadProxySettings();
+    final appVersion = AppInfoService.version;
     setState(() {
       _playerBackend = backend;
       _doubanSource = douban;
@@ -74,6 +92,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _bangumiApiProxyUrl = bangumiApiProxyUrl;
       _bangumiImageProxyType = bangumiImageProxyType;
       _bangumiImageProxyUrl = bangumiImageProxyUrl;
+      _windowsFullscreenAlwaysOnTop = windowsFullscreenAlwaysOnTop;
+      _appVersion = appVersion;
     });
   }
 
@@ -204,19 +224,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _showSnackBar('切换源超时时间已设为 $seconds 秒');
   }
 
+  Future<void> _setWindowsFullscreenAlwaysOnTop(bool value) async {
+    await UserDataService.setWindowsFullscreenAlwaysOnTop(value);
+    setState(() => _windowsFullscreenAlwaysOnTop = value);
+  }
+
   Future<void> _clearCache() async {
     final cacheService = CacheService();
     await cacheService.init();
     await cacheService.clearPrefix('douban_');
     await HainTvCacheManager().emptyCache();
     _showSnackBar('图片与豆瓣数据缓存已清除');
-  }
-
-  Future<void> _logout() async {
-    await UserDataService.clearUserData();
-    if (mounted) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
-    }
   }
 
   @override
@@ -261,10 +279,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _buildSwitchTile(
             title: '硬件解码',
-            subtitle: '开启后优先使用硬件解码（播放器支持时生效）',
+            subtitle: '关闭后可能解决部分花屏问题',
             value: _hardwareDecoding,
             onChanged: _setHardwareDecoding,
           ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildSectionTitle('缓冲模式'),
           _buildBufferProfileTile(),
           const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('Bangumi 数据源'),
@@ -283,17 +303,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _clearCache,
           ),
           const SizedBox(height: AppSpacing.lg),
-          _buildSectionTitle('账户'),
-          _buildActionTile(
-            title: '退出登录',
-            subtitle: '清除本地登录信息并返回登录页',
-            icon: Icons.logout_outlined,
-            onTap: _logout,
-            danger: true,
-          ),
-          const SizedBox(height: AppSpacing.lg),
+          if (DeviceUtils.isWindows) ...[
+            _buildSectionTitle('Windows'),
+            _buildSwitchTile(
+              title: '全屏时窗口置顶',
+              subtitle: '全屏播放时自动将窗口置顶',
+              value: _windowsFullscreenAlwaysOnTop,
+              onChanged: _setWindowsFullscreenAlwaysOnTop,
+            ),
+            const SizedBox(height: AppSpacing.lg),
+          ],
           _buildSectionTitle('关于'),
-          _buildInfoTile(title: '版本', value: '1.1.6'),
+          _buildInfoTile(title: '版本', value: _appVersion.isEmpty ? '-' : _appVersion),
           _buildInfoTile(title: '作者', value: '海因茨'),
         ],
       ),
@@ -525,33 +546,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context) => FocusableWidget(
           onTap: () async {
             final controller = TextEditingController(text: _m3u8ProxyUrl);
+            final fieldNode = FocusNode();
+            final cancelNode = FocusNode();
+            final saveNode = FocusNode();
+
             final confirmed = await showDialog<bool>(
               context: context,
-              builder: (context) => AlertDialog(
-                backgroundColor: AppColors.bgSurface,
-                title: const Text('M3U8 代理地址'),
-                content: TextField(
-                  controller: controller,
-                  autofocus: true,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    hintText: '例如 http://127.0.0.1:8080/proxy?url=',
-                    hintStyle: TextStyle(color: AppColors.textMuted),
-                    border: OutlineInputBorder(),
+              builder: (dialogContext) {
+                void closeDialog(bool value) {
+                  if (Navigator.of(dialogContext).canPop()) {
+                    Navigator.of(dialogContext).pop(value);
+                  }
+                }
+
+                return FocusScope(
+                  child: AlertDialog(
+                    backgroundColor: AppColors.bgSurface,
+                    title: const Text('M3U8 代理地址'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Focus(
+                          onKeyEvent: (node, event) {
+                            if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                              return KeyEventResult.ignored;
+                            }
+                            final key = event.logicalKey;
+                            if (key == LogicalKeyboardKey.arrowDown ||
+                                key == LogicalKeyboardKey.select ||
+                                key == LogicalKeyboardKey.enter ||
+                                key == LogicalKeyboardKey.numpadEnter) {
+                              cancelNode.requestFocus();
+                              return KeyEventResult.handled;
+                            }
+                            if (key == LogicalKeyboardKey.goBack ||
+                                key == LogicalKeyboardKey.escape) {
+                              closeDialog(false);
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: TextField(
+                            controller: controller,
+                            focusNode: fieldNode,
+                            autofocus: true,
+                            style: const TextStyle(color: AppColors.textPrimary),
+                            decoration: const InputDecoration(
+                              hintText: '例如 http://127.0.0.1:8080/proxy?url=',
+                              hintStyle: TextStyle(color: AppColors.textMuted),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.lg),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            FocusableWidget(
+                              focusNode: cancelNode,
+                              onTap: () => closeDialog(false),
+                              onKeyEvent: (node, event) {
+                                if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                                  return KeyEventResult.ignored;
+                                }
+                                final key = event.logicalKey;
+                                if (key == LogicalKeyboardKey.arrowUp) {
+                                  fieldNode.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                if (key == LogicalKeyboardKey.goBack ||
+                                    key == LogicalKeyboardKey.escape) {
+                                  closeDialog(false);
+                                  return KeyEventResult.handled;
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                                child: Text(
+                                  '取消',
+                                  style: TextStyle(
+                                    fontFamily: 'NotoSansSC',
+                                    fontSize: 14,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            FocusableWidget(
+                              focusNode: saveNode,
+                              onTap: () => closeDialog(true),
+                              onKeyEvent: (node, event) {
+                                if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                                  return KeyEventResult.ignored;
+                                }
+                                final key = event.logicalKey;
+                                if (key == LogicalKeyboardKey.arrowUp) {
+                                  fieldNode.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                if (key == LogicalKeyboardKey.goBack ||
+                                    key == LogicalKeyboardKey.escape) {
+                                  closeDialog(false);
+                                  return KeyEventResult.handled;
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                                child: Text(
+                                  '保存',
+                                  style: TextStyle(
+                                    fontFamily: 'NotoSansSC',
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('取消'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('保存'),
-                  ),
-                ],
-              ),
+                );
+              },
             );
+            fieldNode.dispose();
+            cancelNode.dispose();
+            saveNode.dispose();
             if (confirmed == true) {
               await _setM3u8ProxyUrl(controller.text);
             }
@@ -836,33 +960,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required ValueChanged<String> onSave,
   }) async {
     final controller = TextEditingController(text: current);
+    final fieldNode = FocusNode();
+    final cancelNode = FocusNode();
+    final saveNode = FocusNode();
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.bgSurface,
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(color: AppColors.textPrimary),
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: const TextStyle(color: AppColors.textMuted),
-            border: const OutlineInputBorder(),
+      builder: (dialogContext) {
+        void closeDialog(bool value) {
+          if (Navigator.of(dialogContext).canPop()) {
+            Navigator.of(dialogContext).pop(value);
+          }
+        }
+
+        return FocusScope(
+          child: AlertDialog(
+            backgroundColor: AppColors.bgSurface,
+            title: Text(title),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Focus(
+                  onKeyEvent: (node, event) {
+                    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                      return KeyEventResult.ignored;
+                    }
+                    final key = event.logicalKey;
+                    if (key == LogicalKeyboardKey.arrowDown ||
+                        key == LogicalKeyboardKey.select ||
+                        key == LogicalKeyboardKey.enter ||
+                        key == LogicalKeyboardKey.numpadEnter) {
+                      cancelNode.requestFocus();
+                      return KeyEventResult.handled;
+                    }
+                    if (key == LogicalKeyboardKey.goBack ||
+                        key == LogicalKeyboardKey.escape) {
+                      closeDialog(false);
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: TextField(
+                    controller: controller,
+                    focusNode: fieldNode,
+                    autofocus: true,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      hintText: hint,
+                      hintStyle: const TextStyle(color: AppColors.textMuted),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    FocusableWidget(
+                      focusNode: cancelNode,
+                      onTap: () => closeDialog(false),
+                      onKeyEvent: (node, event) {
+                        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                          return KeyEventResult.ignored;
+                        }
+                        final key = event.logicalKey;
+                        if (key == LogicalKeyboardKey.arrowUp) {
+                          fieldNode.requestFocus();
+                          return KeyEventResult.handled;
+                        }
+                        if (key == LogicalKeyboardKey.goBack ||
+                            key == LogicalKeyboardKey.escape) {
+                          closeDialog(false);
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                        child: Text(
+                          '取消',
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 14,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    FocusableWidget(
+                      focusNode: saveNode,
+                      onTap: () => closeDialog(true),
+                      onKeyEvent: (node, event) {
+                        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                          return KeyEventResult.ignored;
+                        }
+                        final key = event.logicalKey;
+                        if (key == LogicalKeyboardKey.arrowUp) {
+                          fieldNode.requestFocus();
+                          return KeyEventResult.handled;
+                        }
+                        if (key == LogicalKeyboardKey.goBack ||
+                            key == LogicalKeyboardKey.escape) {
+                          closeDialog(false);
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                        child: Text(
+                          '保存',
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+        );
+      },
     );
+    fieldNode.dispose();
+    cancelNode.dispose();
+    saveNode.dispose();
     if (confirmed == true) {
       onSave(controller.text);
     }

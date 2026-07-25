@@ -69,6 +69,61 @@ jobs:
           path: hain_tv/dist/heinplay-*-tv.apk
           if-no-files-found: error
 
+  build-oldtv:
+    name: Build OldTV APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: 'stable'
+
+      - name: Decode OldTV keystore
+        run: |
+          echo "${{ secrets.OLDTV_KEYSTORE_BASE64 }}" | base64 -d > android/app/heinplay-oldtv.jks
+
+      - name: Write OldTV key-oldtv.properties
+        run: |
+          cat > android/key-oldtv.properties <<EOF
+          storeFile=heinplay-oldtv.jks
+          storePassword=${{ secrets.OLDTV_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.OLDTV_KEY_ALIAS }}
+          keyPassword=${{ secrets.OLDTV_KEY_PASSWORD }}
+          EOF
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build OldTV APK
+        run: flutter build apk --target lib/main_tv.dart --flavor oldtv --release
+
+      - name: Rename artifact
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]+([^+]+).*/\1/')
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-oldtv-release.apk "dist/heinplay-${VERSION}-oldtv.apk"
+
+      - name: Upload OldTV APK
+        if: ${{ inputs.upload-artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-oldtv-apk
+          path: hain_tv/dist/heinplay-*-oldtv.apk
+          if-no-files-found: error
+
   build-mobile:
     name: Build Mobile APK
     runs-on: ubuntu-latest
@@ -218,7 +273,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-tv, build-mobile, build-windows]
+    needs: [build-tv, build-oldtv, build-mobile, build-windows]
     runs-on: ubuntu-latest
     if: ${{ inputs.upload-artifacts }}
     permissions:

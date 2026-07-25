@@ -3,20 +3,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:hain_tv/models/account_info.dart';
 import 'package:hain_tv/models/favorite.dart';
 import 'package:hain_tv/models/play_record.dart' as models;
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/screens/tv/settings_screen.dart';
+import 'package:hain_tv/screens/tv/account_management_screen.dart';
+import 'package:hain_tv/screens/tv/server_management_screen.dart';
+import 'package:hain_tv/screens/tv/update_screen.dart';
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
 import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/profile_refresh_notifier.dart';
+import 'package:hain_tv/services/app_info_service.dart';
 import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/record_manage_view.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
-import 'package:hain_tv/widgets/tv/update_channel_dialog.dart';
 
 class MobileProfileScreen extends StatefulWidget {
   const MobileProfileScreen({super.key});
@@ -28,14 +33,22 @@ class MobileProfileScreen extends StatefulWidget {
 class _MobileProfileScreenState extends State<MobileProfileScreen> {
   List<Favorite> _favorites = [];
   List<models.PlayRecord> _history = [];
+  AccountInfo? _currentAccount;
+  String _currentServerUrl = '';
 
   @override
   void initState() {
     super.initState();
+    _initVersion();
     _loadData();
     ProfileRefreshNotifier.instance.addListener(_onProfileRefresh);
     PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
     FavoriteRefreshNotifier.instance.addListener(_onFavoriteRefresh);
+  }
+
+  Future<void> _initVersion() async {
+    await AppInfoService.init();
+    if (mounted) setState(() {});
   }
 
   @override
@@ -68,6 +81,19 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
     // 首次进入首页时已强制全量刷新并缓存，这里直接读取本地。
     await _loadFavorites();
     await _loadHistory();
+    await _loadAccountAndServer();
+  }
+
+  Future<void> _loadAccountAndServer() async {
+    final account = await UserDataService.getCurrentAccount();
+    final serverUrl = await UserDataService.getLastSelectedServerUrl() ??
+        await UserDataService.getServerUrl() ??
+        await UserDataService.getBackupServerUrl();
+    if (!mounted) return;
+    setState(() {
+      _currentAccount = account;
+      _currentServerUrl = serverUrl;
+    });
   }
 
   Future<void> _loadFavorites() async {
@@ -112,16 +138,22 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
     ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
-  Future<void> _checkUpdate() async {
-    final channel = await showUpdateChannelDialog(context);
-    if (channel != null && context.mounted) {
-      await UpdateService.checkAndPrompt(
-        context,
-        force: true,
-        channel: channel,
-        platform: 'mobile',
-      );
-    }
+  void _openAccountManagement() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AccountManagementScreen()));
+  }
+
+  void _openServerManagement() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ServerManagementScreen()));
+  }
+
+  void _openUpdateScreen() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const UpdateScreen()));
   }
 
   void _showFavorites() {
@@ -201,6 +233,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    Widget? trailing,
   }) {
     return Card(
       color: AppColors.bgElevated,
@@ -228,10 +261,11 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
             color: AppColors.textSecondary,
           ),
         ),
-        trailing: const Icon(
-          Icons.chevron_right,
-          color: AppColors.textSecondary,
-        ),
+        trailing: trailing ??
+            const Icon(
+              Icons.chevron_right,
+              color: AppColors.textSecondary,
+            ),
         onTap: onTap,
       ),
     );
@@ -373,6 +407,27 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 _buildMenuTile(
+                  icon: Icons.person_outline,
+                  title: '账号管理',
+                  subtitle: _currentAccount != null &&
+                          _currentAccount!.password.isNotEmpty
+                      ? (_currentAccount!.username.isEmpty
+                          ? '当前账号已配置'
+                          : _currentAccount!.username)
+                      : '未配置，点击填写',
+                  onTap: _openAccountManagement,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuTile(
+                  icon: Icons.dns_outlined,
+                  title: '服务器管理',
+                  subtitle: _currentServerUrl.isEmpty
+                      ? '未配置，点击填写'
+                      : _currentServerUrl,
+                  onTap: _openServerManagement,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuTile(
                   icon: Icons.settings_outlined,
                   title: '软件设置',
                   subtitle: '播放器、数据源、缓存',
@@ -381,9 +436,9 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
                 const SizedBox(height: AppSpacing.md),
                 _buildMenuTile(
                   icon: Icons.system_update,
-                  title: '检测更新',
+                  title: '更新设置',
                   subtitle: '当前版本 ${UpdateService.currentVersion}',
-                  onTap: _checkUpdate,
+                  onTap: _openUpdateScreen,
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 _buildFooter(),

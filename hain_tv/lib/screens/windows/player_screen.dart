@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/play_record.dart';
 import 'package:hain_tv/models/source_option.dart';
@@ -61,11 +62,18 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   bool _playing = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  Duration _buffered = Duration.zero;
   bool _initialized = false;
   String? _error;
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
+
+  // Windows 小窗播放状态
+  bool _isMiniPlayer = false;
+  Rect? _previousWindowBounds;
+  TitleBarStyle _previousTitleBarStyle = TitleBarStyle.normal;
+  bool _isAlwaysOnTop = false;
 
   EpisodeSkipConfig? _skipConfig;
   bool _skipConfigLoading = false;
@@ -288,6 +296,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         }),
       )
       ..add(backend.durationStream.listen(_onDurationUpdate))
+      ..add(
+        backend.bufferedStream.listen((buffered) {
+          if (mounted) setState(() => _buffered = buffered);
+        }),
+      )
       ..add(
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
@@ -661,6 +674,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           }),
         )
         ..add(backend.durationStream.listen(_onDurationUpdate))
+        ..add(
+          backend.bufferedStream.listen((buffered) {
+            if (mounted) setState(() => _buffered = buffered);
+          }),
+        )
         ..add(
           backend.playingStream.listen((playing) {
             if (mounted) setState(() => _playing = playing);
@@ -1338,7 +1356,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
   void _onDoubleTapScreen() {
     if (DeviceUtils.isWindows) {
-      onWindowsDoubleTap();
+      if (_isMiniPlayer) {
+        _toggleMiniPlayer();
+      } else {
+        onWindowsDoubleTap();
+      }
     } else {
       _togglePlay();
       _showGestureIndicator(
@@ -1528,9 +1550,90 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     }
   }
 
+  Future<void> _toggleMiniPlayer() async {
+    if (!DeviceUtils.isWindows) return;
+    try {
+      if (_isMiniPlayer) {
+        // 恢复普通窗口
+        if (_previousWindowBounds != null) {
+          await windowManager.setBounds(_previousWindowBounds, animate: true);
+        }
+        await windowManager.setMinimumSize(const Size(900, 600));
+        await windowManager.setMaximumSize(Size.infinite);
+        await windowManager.setResizable(true);
+        await windowManager.setTitleBarStyle(_previousTitleBarStyle);
+        await windowManager.setAlwaysOnTop(false);
+        if (mounted) setState(() => _isMiniPlayer = false);
+      } else {
+        // 进入小窗前若处于全屏，先退出全屏
+        if (await windowManager.isFullScreen()) {
+          await windowManager.setFullScreen(false);
+          await windowManager.setAlwaysOnTop(false);
+          setWindowsFullScreenState(false);
+        }
+        // 保存当前窗口尺寸、位置和标题栏样式（退出全屏后重新读取，避免保存全屏尺寸）
+        _previousWindowBounds = await windowManager.getBounds();
+        _previousTitleBarStyle = TitleBarStyle.normal;
+        // 计算屏幕右下角位置
+        final screenSize = MediaQuery.of(context).size;
+        const miniSize = Size(480, 270);
+        final position = Offset(
+          screenSize.width - miniSize.width - 20,
+          screenSize.height - miniSize.height - 40,
+        );
+        // 设置最小和最大尺寸允许一定范围内的拖拽调整
+        await windowManager.setMinimumSize(const Size(320, 180));
+        await windowManager.setMaximumSize(const Size(960, 540));
+        await windowManager.setResizable(true);
+        await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+        await windowManager.setBounds(
+          Rect.fromLTWH(
+            position.dx,
+            position.dy,
+            miniSize.width,
+            miniSize.height,
+          ),
+          animate: true,
+        );
+        if (mounted) setState(() => _isMiniPlayer = true);
+      }
+    } catch (e) {
+      debugPrint('小窗播放切换失败: $e');
+    }
+  }
+
+  Future<void> _toggleAlwaysOnTop() async {
+    if (!DeviceUtils.isWindows) return;
+    try {
+      final current = await windowManager.isAlwaysOnTop();
+      final next = !current;
+      await windowManager.setAlwaysOnTop(next);
+      if (mounted) setState(() => _isAlwaysOnTop = next);
+    } catch (e) {
+      debugPrint('切换置顶失败: $e');
+    }
+  }
+
+  Future<void> _restoreNormalWindowIfMini() async {
+    if (!DeviceUtils.isWindows || !_isMiniPlayer) return;
+    try {
+      if (_previousWindowBounds != null) {
+        await windowManager.setBounds(_previousWindowBounds, animate: true);
+      }
+      await windowManager.setMinimumSize(const Size(900, 600));
+      await windowManager.setMaximumSize(Size.infinite);
+      await windowManager.setResizable(true);
+      await windowManager.setTitleBarStyle(_previousTitleBarStyle);
+      await windowManager.setAlwaysOnTop(false);
+    } catch (e) {
+      debugPrint('恢复普通窗口失败: $e');
+    }
+  }
+
   @override
   void dispose() {
     disposeWindowsFullscreen();
+    _restoreNormalWindowIfMini();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
@@ -1631,6 +1734,10 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Widget _buildVideo() {
+    // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
+    if (_switchingSource) {
+      return const ColoredBox(color: Colors.black);
+    }
     if (!_initialized || _backend == null) {
       return const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
@@ -1824,14 +1931,30 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                 color: Colors.transparent,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(AppRadius.sm),
-                  child: LinearProgressIndicator(
-                    value: _duration.inMilliseconds > 0
-                        ? _position.inMilliseconds / _duration.inMilliseconds
-                        : 0.0,
-                    backgroundColor: AppColors.border,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.primary,
-                    ),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _buffered.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: AppColors.border,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white24,
+                        ),
+                      ),
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _position.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: Colors.transparent,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1890,6 +2013,80 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                           const SizedBox(width: AppSpacing.xs),
                           Text(
                             isWindowsFullScreen ? '退出全屏' : '全屏',
+                            style: const TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isWindows)
+                  FocusableWidget(
+                    onTap: _toggleMiniPlayer,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isMiniPlayer
+                                ? Icons.picture_in_picture_alt
+                                : Icons.picture_in_picture_alt_outlined,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            _isMiniPlayer ? '恢复窗口' : '小窗播放',
+                            style: const TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isWindows)
+                  FocusableWidget(
+                    onTap: _toggleAlwaysOnTop,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.bgElevated,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isAlwaysOnTop
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                            color: AppColors.textPrimary,
+                            size: 18,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            _isAlwaysOnTop ? '取消置顶' : '置顶',
                             style: const TextStyle(
                               fontFamily: 'NotoSansSC',
                               fontSize: 13,

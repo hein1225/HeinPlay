@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/update_info.dart';
 import 'package:hain_tv/widgets/tv/update_dialog.dart';
+import 'app_info_service.dart';
 import 'permission_service.dart';
 import 'user_data_service.dart';
 
@@ -20,7 +21,7 @@ class UpdateService {
       'https://gitcode.com/api/v5/repos/gcw_QbmhmbO8/HeinPlay/releases/latest';
   static const String _githubReleasesUrl =
       'https://api.github.com/repos/hein1225/HeinPlay/releases/latest';
-  static const String currentVersion = '1.1.6';
+  static String get currentVersion => AppInfoService.version;
 
   static String _channelName(UpdateChannel channel) {
     switch (channel) {
@@ -124,10 +125,12 @@ class UpdateService {
 
     debugPrint('UpdateService: downloadUrl=$downloadUrl');
 
-    // Android/TV 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
+    // Android/TV/OldTV 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
     if (downloadUrl == null || downloadUrl.isEmpty) {
       final lowerPlatform = platform.toLowerCase();
-      if (lowerPlatform == 'tv' || lowerPlatform == 'mobile') {
+      if (lowerPlatform == 'tv' ||
+          lowerPlatform == 'mobile' ||
+          lowerPlatform == 'oldtv') {
         debugPrint(
           'UpdateService: $platform 平台未找到对应 APK，跳过本次更新提示',
         );
@@ -148,6 +151,7 @@ class UpdateService {
   }
 
   static bool _isNewer(String latest, String current) {
+    if (latest.isEmpty || current.isEmpty) return false;
     final l = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
     final c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 

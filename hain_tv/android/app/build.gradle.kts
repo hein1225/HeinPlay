@@ -19,6 +19,12 @@ if (mobileKeystorePropertiesFile.exists()) {
     mobileKeystoreProperties.load(FileInputStream(mobileKeystorePropertiesFile))
 }
 
+val oldtvKeystorePropertiesFile = rootProject.file("key-oldtv.properties")
+val oldtvKeystoreProperties = Properties()
+if (oldtvKeystorePropertiesFile.exists()) {
+    oldtvKeystoreProperties.load(FileInputStream(oldtvKeystorePropertiesFile))
+}
+
 android {
     namespace = "com.heinplay.hain_tv"
     compileSdk = flutter.compileSdkVersion
@@ -47,6 +53,11 @@ android {
             applicationId = "com.heinplay.hain_tv"
             versionNameSuffix = "-tv"
         }
+        create("oldtv") {
+            applicationId = "com.heinplay.hain_tv"
+            versionNameSuffix = "-oldtv"
+            minSdk = flutter.minSdkVersion
+        }
         create("mobile") {
             applicationId = "com.heinplay.mobile"
             versionNameSuffix = "-mobile"
@@ -66,6 +77,12 @@ android {
             storeFile = mobileKeystoreProperties["storeFile"]?.let { file(it as String) }
             storePassword = mobileKeystoreProperties["storePassword"] as String?
         }
+        create("oldtv") {
+            keyAlias = oldtvKeystoreProperties["keyAlias"] as String?
+            keyPassword = oldtvKeystoreProperties["keyPassword"] as String?
+            storeFile = oldtvKeystoreProperties["storeFile"]?.let { file(it as String) }
+            storePassword = oldtvKeystoreProperties["storePassword"] as String?
+        }
     }
 
     buildTypes {
@@ -84,6 +101,7 @@ android {
         signingConfig = when (name) {
             "tv" -> signingConfigs.getByName("tv")
             "mobile" -> signingConfigs.getByName("mobile")
+            "oldtv" -> signingConfigs.getByName("oldtv")
             else -> signingConfigs.getByName("tv")
         }
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'app_info_service.dart';
 import 'user_data_service.dart';
 
 /// 服务器连接有效判定：
@@ -20,7 +21,11 @@ class ConnectivityService {
   static const Duration _checkInterval = Duration(seconds: 30);
   static const Duration _requestTimeout = Duration(seconds: 5);
 
+  /// 当前是否已与 LunaTV 服务器建立有效连接。
   final ValueNotifier<bool> isServerConnected = ValueNotifier<bool>(true);
+
+  /// 当前连接的服务器类型：'internet' | 'lan' | 'none'。
+  final ValueNotifier<String> serverType = ValueNotifier<String>('none');
 
   Timer? _timer;
   bool _checking = false;
@@ -46,16 +51,25 @@ class ConnectivityService {
     _checking = true;
 
     try {
-      final serverUrl = await UserDataService.getServerUrl();
+      // 优先使用当前选中的服务器地址（测速/手动选择后保存的地址），
+      // 其次互联网服务器，最后 fallback 到局域网服务器。
+      final primary = await UserDataService.getServerUrl();
+      final backup = await UserDataService.getBackupServerUrl();
+      final selected = await UserDataService.getLastSelectedServerUrl();
+      final serverUrl = (selected != null && selected.trim().isNotEmpty)
+          ? selected
+          : (primary != null && primary.trim().isNotEmpty)
+              ? primary
+              : (backup.trim().isNotEmpty ? backup : null);
       if (serverUrl == null || serverUrl.trim().isEmpty) {
-        _updateStatus(false);
+        _updateStatus(false, 'internet');
         return;
       }
 
       // 必须已登录才算有效连接
       final loggedIn = await UserDataService.isLoggedIn();
       if (!loggedIn) {
-        _updateStatus(false);
+        _updateStatus(false, 'internet');
         return;
       }
 
@@ -71,22 +85,27 @@ class ConnectivityService {
             ),
             headers: {
               'Accept': 'application/json, text/plain, */*',
-              'User-Agent': 'HainTV/1.1.6 Flutter',
+              'User-Agent': AppInfoService.userAgent,
               if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
             },
           )
           .timeout(_requestTimeout);
 
       // 只有登录态有效且接口返回 200 才算连接成功
-      _updateStatus(response.statusCode == 200);
+      final connected = response.statusCode == 200;
+      final serverType = await UserDataService.getCurrentServerType();
+      _updateStatus(connected, serverType);
     } catch (e) {
-      _updateStatus(false);
+      _updateStatus(false, 'internet');
     } finally {
       _checking = false;
     }
   }
 
-  void _updateStatus(bool connected) {
+  void _updateStatus(bool connected, String type) {
+    if (serverType.value != type) {
+      serverType.value = type;
+    }
     if (isServerConnected.value != connected) {
       isServerConnected.value = connected;
     }

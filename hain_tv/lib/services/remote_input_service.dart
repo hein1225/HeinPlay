@@ -26,7 +26,20 @@ class RemoteInputService {
   final _loginController = StreamController<Map<String, String>>.broadcast();
   Stream<Map<String, String>> get onLogin => _loginController.stream;
 
-  String _getRemotePageHTML(String serverUrl, {bool loginMode = false}) {
+  final _serverConfigController =
+      StreamController<Map<String, String>>.broadcast();
+  Stream<Map<String, String>> get onServerConfig =>
+      _serverConfigController.stream;
+
+  final _subAccountController = StreamController<Map<String, String>>.broadcast();
+  Stream<Map<String, String>> get onSubAccount => _subAccountController.stream;
+
+  String _getRemotePageHTML(
+    String serverUrl, {
+    bool loginMode = false,
+    bool serverConfigMode = false,
+    bool subAccountMode = false,
+  }) {
     if (loginMode) {
       return '''
 <!DOCTYPE html>
@@ -54,8 +67,12 @@ class RemoteInputService {
     <h3>电视端登录</h3>
     <p>输入服务器地址、用户名和密码，电视将自动登录</p>
     <div class="field">
-      <label>服务器地址</label>
+      <label>互联网服务器地址</label>
       <input id="server" placeholder="https://your-lunatv-server.com" />
+    </div>
+    <div class="field">
+      <label>局域网服务器地址（选填）</label>
+      <input id="backupServer" placeholder="http://192.168.1.100:3000" />
     </div>
     <div class="field">
       <label>用户名（选填）</label>
@@ -76,10 +93,11 @@ class RemoteInputService {
     }
     function sendLogin() {
       const server = document.getElementById("server").value.trim();
+      const backupServer = document.getElementById("backupServer").value.trim();
       const username = document.getElementById("username").value.trim();
       const password = document.getElementById("password").value.trim();
-      if (!server) {
-        setStatus("请输入服务器地址", "#FF6B6B");
+      if (!server && !backupServer) {
+        setStatus("请至少填写一个服务器地址", "#FF6B6B");
         return;
       }
       if (!password) {
@@ -90,7 +108,7 @@ class RemoteInputService {
       fetch("/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverUrl: server, username: username, password: password })
+        body: JSON.stringify({ serverUrl: server, backupServerUrl: backupServer, username: username, password: password })
       })
       .then(r => r.json())
       .then(data => {
@@ -106,6 +124,155 @@ class RemoteInputService {
     }
     document.getElementById("password").addEventListener("keypress", function(e) {
       if (e.key === "Enter") sendLogin();
+    });
+  </script>
+</body>
+</html>
+''';
+    }
+    if (serverConfigMode) {
+      return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <title>海因影视 - 修改服务器地址</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #121212; color: white; padding: 20px 0; box-sizing: border-box; }
+    h3 { color: #eee; margin-bottom: 8px; }
+    p { color: #888; font-size: 14px; margin-bottom: 20px; }
+    #container { display: flex; flex-direction: column; align-items: center; width: 90%; max-width: 400px; }
+    .field { width: 100%; margin-bottom: 16px; }
+    label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
+    input { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
+    input::placeholder { color: #666; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
+    button:active { background-color: #b20710; }
+    #status { margin-top: 16px; font-size: 14px; color: #888; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h3>修改服务器地址</h3>
+    <p>输入互联网/局域网服务器地址后，电视将自动保存</p>
+    <div class="field">
+      <label>互联网服务器地址</label>
+      <input id="server" placeholder="https://your-lunatv-server.com" />
+    </div>
+    <div class="field">
+      <label>局域网服务器地址（选填）</label>
+      <input id="backupServer" placeholder="http://192.168.1.100:3000" />
+    </div>
+    <button onclick="sendConfig()">保存</button>
+    <div id="status"></div>
+  </div>
+  <script>
+    function setStatus(msg, color) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.style.color = color || "#888";
+    }
+    function sendConfig() {
+      const server = document.getElementById("server").value.trim();
+      const backupServer = document.getElementById("backupServer").value.trim();
+      if (!server && !backupServer) {
+        setStatus("请至少填写一个服务器地址", "#FF6B6B");
+        return;
+      }
+      setStatus("保存中...", "#888");
+      fetch("/server_config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverUrl: server, backupServerUrl: backupServer })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "ok") {
+          setStatus("已保存", "#4CAF50");
+        } else {
+          setStatus("保存失败: " + (data.error || ""), "#FF6B6B");
+        }
+      })
+      .catch(err => {
+        setStatus("保存失败，请检查网络", "#FF6B6B");
+      });
+    }
+  </script>
+</body>
+</html>
+''';
+    }
+    if (subAccountMode) {
+      return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <title>海因影视 - 输入子账号</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #121212; color: white; padding: 20px 0; box-sizing: border-box; }
+    h3 { color: #eee; margin-bottom: 8px; }
+    p { color: #888; font-size: 14px; margin-bottom: 20px; }
+    #container { display: flex; flex-direction: column; align-items: center; width: 90%; max-width: 400px; }
+    .field { width: 100%; margin-bottom: 16px; }
+    label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
+    input { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
+    input::placeholder { color: #666; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
+    button:active { background-color: #b20710; }
+    #status { margin-top: 16px; font-size: 14px; color: #888; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h3>输入子账号</h3>
+    <p>输入用户名和密码，电视将保存并切换到子账号</p>
+    <div class="field">
+      <label>用户名</label>
+      <input id="username" placeholder="数据库模式需填写" />
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input id="password" type="password" placeholder="LunaTV 登录密码" />
+    </div>
+    <button onclick="sendSubAccount()">保存</button>
+    <div id="status"></div>
+  </div>
+  <script>
+    function setStatus(msg, color) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.style.color = color || "#888";
+    }
+    function sendSubAccount() {
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value.trim();
+      if (!username || !password) {
+        setStatus("请输入用户名和密码", "#FF6B6B");
+        return;
+      }
+      setStatus("保存中...", "#888");
+      fetch("/sub_account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username, password: password })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "ok") {
+          setStatus("已保存", "#4CAF50");
+        } else {
+          setStatus("保存失败: " + (data.error || ""), "#FF6B6B");
+        }
+      })
+      .catch(err => {
+        setStatus("保存失败，请检查网络", "#FF6B6B");
+      });
+    }
+    document.getElementById("password").addEventListener("keypress", function(e) {
+      if (e.key === "Enter") sendSubAccount();
     });
   </script>
 </body>
@@ -199,7 +366,16 @@ class RemoteInputService {
           }
           if (request.method == 'GET' && request.uri.path == '/') {
             final loginMode = request.uri.queryParameters['mode'] == 'login';
-            final html = _getRemotePageHTML(_serverUrl!, loginMode: loginMode);
+            final serverConfigMode =
+                request.uri.queryParameters['mode'] == 'server_config';
+            final subAccountMode =
+                request.uri.queryParameters['mode'] == 'sub_account';
+            final html = _getRemotePageHTML(
+              _serverUrl!,
+              loginMode: loginMode,
+              serverConfigMode: serverConfigMode,
+              subAccountMode: subAccountMode,
+            );
             _setCorsHeaders(request.response);
             request.response
               ..statusCode = 200
@@ -224,11 +400,15 @@ class RemoteInputService {
             final body = await utf8.decoder.bind(request).join();
             final data = jsonDecode(body) as Map<String, dynamic>;
             final serverUrl = (data['serverUrl'] as String?)?.trim() ?? '';
+            final backupServerUrl =
+                (data['backupServerUrl'] as String?)?.trim() ?? '';
             final username = (data['username'] as String?)?.trim() ?? '';
             final password = (data['password'] as String?)?.trim() ?? '';
-            if (serverUrl.isNotEmpty && password.isNotEmpty) {
+            if ((serverUrl.isNotEmpty || backupServerUrl.isNotEmpty) &&
+                password.isNotEmpty) {
               _loginController.add({
                 'serverUrl': serverUrl,
+                'backupServerUrl': backupServerUrl,
                 'username': username,
                 'password': password,
               });
@@ -244,6 +424,57 @@ class RemoteInputService {
                 ..statusCode = 400
                 ..headers.contentType = ContentType.json
                 ..write(jsonEncode({'status': 'error', 'error': '缺少服务器地址或密码'}))
+                ..close();
+            }
+          } else if (request.method == 'POST' &&
+              request.uri.path == '/server_config') {
+            final body = await utf8.decoder.bind(request).join();
+            final data = jsonDecode(body) as Map<String, dynamic>;
+            final serverUrl = (data['serverUrl'] as String?)?.trim() ?? '';
+            final backupServerUrl =
+                (data['backupServerUrl'] as String?)?.trim() ?? '';
+            if (serverUrl.isNotEmpty || backupServerUrl.isNotEmpty) {
+              _serverConfigController.add({
+                'serverUrl': serverUrl,
+                'backupServerUrl': backupServerUrl,
+              });
+              _setCorsHeaders(request.response);
+              request.response
+                ..statusCode = 200
+                ..headers.contentType = ContentType.json
+                ..write(jsonEncode({'status': 'ok'}))
+                ..close();
+            } else {
+              _setCorsHeaders(request.response);
+              request.response
+                ..statusCode = 400
+                ..headers.contentType = ContentType.json
+                ..write(jsonEncode({'status': 'error', 'error': '缺少服务器地址'}))
+                ..close();
+            }
+          } else if (request.method == 'POST' &&
+              request.uri.path == '/sub_account') {
+            final body = await utf8.decoder.bind(request).join();
+            final data = jsonDecode(body) as Map<String, dynamic>;
+            final username = (data['username'] as String?)?.trim() ?? '';
+            final password = (data['password'] as String?)?.trim() ?? '';
+            if (username.isNotEmpty && password.isNotEmpty) {
+              _subAccountController.add({
+                'username': username,
+                'password': password,
+              });
+              _setCorsHeaders(request.response);
+              request.response
+                ..statusCode = 200
+                ..headers.contentType = ContentType.json
+                ..write(jsonEncode({'status': 'ok'}))
+                ..close();
+            } else {
+              _setCorsHeaders(request.response);
+              request.response
+                ..statusCode = 400
+                ..headers.contentType = ContentType.json
+                ..write(jsonEncode({'status': 'error', 'error': '缺少用户名或密码'}))
                 ..close();
             }
           } else {

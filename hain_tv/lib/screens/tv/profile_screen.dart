@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:hain_tv/models/account_info.dart';
 import 'package:hain_tv/models/favorite.dart';
 import 'package:hain_tv/models/play_record.dart' as models;
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
@@ -11,13 +12,16 @@ import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/profile_refresh_notifier.dart';
+import 'package:hain_tv/services/app_info_service.dart';
 import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
-import 'package:hain_tv/widgets/tv/update_channel_dialog.dart';
-import 'package:hain_tv/platform/device_utils.dart';
 import 'detail_screen.dart';
 import 'settings_screen.dart';
+import 'account_management_screen.dart';
+import 'server_management_screen.dart';
+import 'update_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -29,14 +33,20 @@ class ProfileScreen extends StatefulWidget {
 class ProfileScreenState extends State<ProfileScreen> {
   List<Favorite> _favorites = [];
   List<models.PlayRecord> _history = [];
-  final List<FocusNode> _menuFocusNodes = List.generate(4, (_) => FocusNode());
+  AccountInfo? _currentAccount;
+  String _currentServerUrl = '';
+  final List<FocusNode> _menuRow1FocusNodes = List.generate(3, (_) => FocusNode());
+  final List<FocusNode> _menuRow2FocusNodes = List.generate(3, (_) => FocusNode());
 
   @override
   void dispose() {
     ProfileRefreshNotifier.instance.removeListener(_onProfileRefresh);
     PlayRecordRefreshNotifier.instance.removeListener(_onPlayRecordRefresh);
     FavoriteRefreshNotifier.instance.removeListener(_onFavoriteRefresh);
-    for (final node in _menuFocusNodes) {
+    for (final node in _menuRow1FocusNodes) {
+      node.dispose();
+    }
+    for (final node in _menuRow2FocusNodes) {
       node.dispose();
     }
     super.dispose();
@@ -45,10 +55,16 @@ class ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _initVersion();
     _loadData();
     ProfileRefreshNotifier.instance.addListener(_onProfileRefresh);
     PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
     FavoriteRefreshNotifier.instance.addListener(_onFavoriteRefresh);
+  }
+
+  Future<void> _initVersion() async {
+    await AppInfoService.init();
+    if (mounted) setState(() {});
   }
 
   void _onProfileRefresh() {
@@ -73,6 +89,19 @@ class ProfileScreenState extends State<ProfileScreen> {
     // 首次进入首页时已强制全量刷新并缓存，这里直接读取本地。
     await _loadFavorites();
     await _loadHistory();
+    await _loadAccountAndServer();
+  }
+
+  Future<void> _loadAccountAndServer() async {
+    final account = await UserDataService.getCurrentAccount();
+    final serverUrl = await UserDataService.getLastSelectedServerUrl() ??
+        await UserDataService.getServerUrl() ??
+        await UserDataService.getBackupServerUrl();
+    if (!mounted) return;
+    setState(() {
+      _currentAccount = account;
+      _currentServerUrl = serverUrl;
+    });
   }
 
   Future<void> _loadFavorites() async {
@@ -113,9 +142,30 @@ class ProfileScreenState extends State<ProfileScreen> {
     ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
-  int? get _currentMenuIndex {
-    for (int i = 0; i < _menuFocusNodes.length; i++) {
-      if (_menuFocusNodes[i].hasFocus) return i;
+  void _openAccountManagement() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AccountManagementScreen()));
+  }
+
+  void _openServerManagement() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ServerManagementScreen()));
+  }
+
+  void _openUpdateScreen() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const UpdateScreen()));
+  }
+
+  ({int row, int index})? get _currentMenuIndex {
+    for (int row = 0; row < 2; row++) {
+      final nodes = row == 0 ? _menuRow1FocusNodes : _menuRow2FocusNodes;
+      for (int i = 0; i < nodes.length; i++) {
+        if (nodes[i].hasFocus) return (row: row, index: i);
+      }
     }
     return null;
   }
@@ -123,24 +173,45 @@ class ProfileScreenState extends State<ProfileScreen> {
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
-    final menuIndex = _currentMenuIndex;
-    if (menuIndex != null) {
-      if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-        if (menuIndex < _menuFocusNodes.length - 1) {
-          _menuFocusNodes[menuIndex + 1].requestFocus();
-        }
+    final pos = _currentMenuIndex;
+    if (pos == null) return KeyEventResult.ignored;
+
+    final currentRow = pos.row;
+    final currentIndex = pos.index;
+    final rowNodes = currentRow == 0 ? _menuRow1FocusNodes : _menuRow2FocusNodes;
+    final otherRowNodes = currentRow == 0 ? _menuRow2FocusNodes : _menuRow1FocusNodes;
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      if (currentIndex < rowNodes.length - 1) {
+        rowNodes[currentIndex + 1].requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      if (currentIndex > 0) {
+        rowNodes[currentIndex - 1].requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (currentRow == 0) {
+        final newIndex = currentIndex < otherRowNodes.length
+            ? currentIndex
+            : otherRowNodes.length - 1;
+        otherRowNodes[newIndex].requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      if (currentRow == 1) {
+        final newIndex = currentIndex < otherRowNodes.length
+            ? currentIndex
+            : otherRowNodes.length - 1;
+        otherRowNodes[newIndex].requestFocus();
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-        if (menuIndex > 0) {
-          _menuFocusNodes[menuIndex - 1].requestFocus();
-        }
-        return KeyEventResult.handled;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-        // 我的页面菜单下方没有可聚焦内容，禁止按下丢失焦点
-        return KeyEventResult.handled;
-      }
+      // 第一行按上键不拦截，让框架默认焦点 traversal 回到顶部导航栏“我的”。
+      return KeyEventResult.ignored;
     }
     return KeyEventResult.ignored;
   }
@@ -154,7 +225,7 @@ class ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 第一行：播放记录和收藏夹
+            // 第一行
             Row(
               children: [
                 Expanded(
@@ -165,7 +236,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                         ? '暂无播放记录'
                         : '${_history.length} 部',
                     onTap: () => _showRecords(_history),
-                    focusNode: _menuFocusNodes[0],
+                    focusNode: _menuRow1FocusNodes[0],
                     autofocus: true,
                   ),
                 ),
@@ -178,7 +249,39 @@ class ProfileScreenState extends State<ProfileScreen> {
                         ? '暂无收藏'
                         : '${_favorites.length} 部',
                     onTap: () => _showFavorites(_favorites),
-                    focusNode: _menuFocusNodes[1],
+                    focusNode: _menuRow1FocusNodes[1],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: _buildMenuCard(
+                    icon: Icons.person_outline,
+                    title: '账号管理',
+                    subtitle: _currentAccount != null &&
+                            _currentAccount!.password.isNotEmpty
+                        ? (_currentAccount!.username.isEmpty
+                            ? '当前账号已配置'
+                            : _currentAccount!.username)
+                        : '未配置，点击填写',
+                    onTap: _openAccountManagement,
+                    focusNode: _menuRow1FocusNodes[2],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            // 第二行
+            Row(
+              children: [
+                Expanded(
+                  child: _buildMenuCard(
+                    icon: Icons.dns_outlined,
+                    title: '服务器管理',
+                    subtitle: _currentServerUrl.isEmpty
+                        ? '未配置，点击填写'
+                        : _currentServerUrl,
+                    onTap: _openServerManagement,
+                    focusNode: _menuRow2FocusNodes[0],
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -188,27 +291,17 @@ class ProfileScreenState extends State<ProfileScreen> {
                     title: '软件设置',
                     subtitle: '播放器、数据源、缓存',
                     onTap: _openSettings,
-                    focusNode: _menuFocusNodes[2],
+                    focusNode: _menuRow2FocusNodes[1],
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: _buildMenuCard(
                     icon: Icons.system_update,
-                    title: '检测更新',
+                    title: '更新设置',
                     subtitle: '当前版本 ${UpdateService.currentVersion}',
-                    onTap: () async {
-                      final channel = await showUpdateChannelDialog(context);
-                      if (channel != null && context.mounted) {
-                        await UpdateService.checkAndPrompt(
-                          context,
-                          force: true,
-                          channel: channel,
-                          platform: DeviceUtils.isWindows ? 'windows' : 'tv',
-                        );
-                      }
-                    },
-                    focusNode: _menuFocusNodes[3],
+                    onTap: _openUpdateScreen,
+                    focusNode: _menuRow2FocusNodes[2],
                   ),
                 ),
               ],
@@ -596,36 +689,54 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppColors.bgElevated,
-          title: Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          content: Text(
-            message,
-            style: const TextStyle(color: AppColors.textSecondary),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text(
-                '取消',
-                style: TextStyle(color: AppColors.textSecondary),
+        return FocusScope(
+          child: AlertDialog(
+            backgroundColor: AppColors.bgElevated,
+            title: Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text(
-                '确定',
-                style: TextStyle(color: AppColors.primary),
+            content: Text(
+              message,
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+            actions: [
+            FocusableWidget(
+              autofocus: true,
+              onTap: () => Navigator.of(context).pop(false),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                child: Text(
+                  '取消',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 14,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+            FocusableWidget(
+              onTap: () => Navigator.of(context).pop(true),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                child: Text(
+                  '确定',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
+                  ),
+                ),
               ),
             ),
           ],
+        ),
         );
       },
     );

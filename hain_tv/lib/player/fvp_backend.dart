@@ -92,6 +92,9 @@ class FvpBackend implements VideoPlayerBackend {
   Stream<Duration> get durationStream => _impl.durationStream;
 
   @override
+  Stream<Duration> get bufferedStream => _impl.bufferedStream;
+
+  @override
   Stream<bool> get playingStream => _impl.playingStream;
 
   @override

@@ -4,6 +4,7 @@ import 'package:hain_tv/screens/mobile/home_screen.dart';
 import 'package:hain_tv/screens/mobile/profile_screen.dart';
 import 'package:hain_tv/screens/mobile/search_screen.dart';
 import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 
 class MobileShell extends StatefulWidget {
@@ -25,10 +26,14 @@ class _MobileShellState extends State<MobileShell> {
   }
 
   Future<void> _checkUpdate() async {
+    final channel = await UserDataService.getDefaultUpdateChannel();
+    final updateChannel = channel == 'github'
+        ? UpdateChannel.github
+        : UpdateChannel.domestic;
     await UpdateService.checkAndPrompt(
       context,
       silent: true,
-      channel: UpdateChannel.domestic,
+      channel: updateChannel,
       platform: 'mobile',
     );
   }

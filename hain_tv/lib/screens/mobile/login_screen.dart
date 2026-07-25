@@ -12,6 +12,7 @@ class MobileLoginScreen extends StatefulWidget {
 
 class _MobileLoginScreenState extends State<MobileLoginScreen> {
   final _serverController = TextEditingController();
+  final _backupServerController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -22,37 +23,51 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedServer();
+    _loadSavedData();
   }
 
-  Future<void> _loadSavedServer() async {
+  Future<void> _loadSavedData() async {
     final serverUrl = await UserDataService.getServerUrl();
     if (serverUrl != null && serverUrl.isNotEmpty) {
       _serverController.text = serverUrl;
+    }
+    final backupServerUrl = await UserDataService.getBackupServerUrl();
+    if (backupServerUrl.isNotEmpty) {
+      _backupServerController.text = backupServerUrl;
+    }
+    final account = await UserDataService.getCurrentAccount();
+    if (account != null) {
+      _usernameController.text = account.username;
+      _passwordController.text = account.password;
     }
   }
 
   @override
   void dispose() {
     _serverController.dispose();
+    _backupServerController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
-    final serverUrl = _serverController.text.trim();
+    final primaryUrl = _serverController.text.trim();
+    final backupUrl = _backupServerController.text.trim();
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (serverUrl.isEmpty) {
-      setState(() => _error = '请输入服务器地址');
+    if (primaryUrl.isEmpty && backupUrl.isEmpty) {
+      setState(() => _error = '请至少填写一个服务器地址');
       return;
     }
     if (password.isEmpty) {
       setState(() => _error = '请输入密码');
       return;
     }
+
+    // 优先使用互联网服务器（主服务器），未填写时使用局域网服务器。
+    final serverUrl = primaryUrl.isNotEmpty ? primaryUrl : backupUrl;
 
     FocusScope.of(context).unfocus();
     setState(() {
@@ -67,8 +82,12 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
     );
 
     if (response.success) {
+      final normalized = UserDataService.classifyServerUrls(primaryUrl, backupUrl);
+      await UserDataService.saveServerUrl(normalized.internet);
+      await UserDataService.saveBackupServerUrl(normalized.lan);
+      await UserDataService.clearLastSelectedServerUrl();
       await UserDataService.saveUserData(
-        serverUrl: serverUrl,
+        serverUrl: normalized.internet,
         username: username,
         password: password,
         cookies: response.data ?? '',
@@ -132,7 +151,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
                       ],
                       const SizedBox(height: AppSpacing.lg),
                       const Text(
-                        '首次使用请输入 LunaTV 服务器地址进行连接',
+                        '后续可在“我的-设置”中补充或修改服务器地址。',
                         style: TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 13,
@@ -189,9 +208,26 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
       children: [
         _buildInputField(
           controller: _serverController,
-          label: '服务器地址',
-          hint: 'https://your-lunatv-server.com',
+          label: '互联网服务器地址',
+          hint: 'https://your-lunatv-server.com（建议公网域名）',
           icon: Icons.link,
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        const Text(
+          '至少填写一个服务器地址，主域名建议公网域名，备用域名建议局域网地址',
+          style: TextStyle(
+            color: AppColors.textMuted,
+            fontSize: 12,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _buildInputField(
+          controller: _backupServerController,
+          label: '局域网服务器地址',
+          hint: '例如 http://192.168.1.100:3000（局域网地址）',
+          icon: Icons.link_outlined,
           textInputAction: TextInputAction.next,
         ),
         const SizedBox(height: AppSpacing.md),

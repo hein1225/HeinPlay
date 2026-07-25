@@ -41,6 +41,7 @@ class VlcBackend implements VideoPlayerBackend {
   VlcPlayerController? _controller;
   final _positionController = StreamController<Duration>.broadcast();
   final _durationController = StreamController<Duration>.broadcast();
+  final _bufferedController = StreamController<Duration>.broadcast();
   final _playingController = StreamController<bool>.broadcast();
   VoidCallback? _valueListener;
   BoxFit _fit = BoxFit.contain;
@@ -141,6 +142,15 @@ class VlcBackend implements VideoPlayerBackend {
         final value = controller.value;
         _positionController.add(value.position);
         _durationController.add(value.duration);
+        _bufferedController.add(
+          value.bufferingProgress != null && value.duration > Duration.zero
+              ? Duration(
+                  milliseconds: (value.duration.inMilliseconds *
+                          value.bufferingProgress!)
+                      .round(),
+                )
+              : value.position,
+        );
         _playingController.add(value.isPlaying);
       };
       controller.addListener(_valueListener!);
@@ -196,6 +206,9 @@ class VlcBackend implements VideoPlayerBackend {
 
   @override
   Stream<Duration> get durationStream => _durationController.stream;
+
+  @override
+  Stream<Duration> get bufferedStream => _bufferedController.stream;
 
   @override
   Stream<bool> get playingStream => _playingController.stream;

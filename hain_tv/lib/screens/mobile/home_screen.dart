@@ -14,6 +14,7 @@ import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/connection_status_badge.dart';
 import 'package:hain_tv/widgets/mobile/mobile_horizontal_list.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 
@@ -263,31 +264,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
-                ValueListenableBuilder<bool>(
-                  valueListenable:
-                      ConnectivityService.instance.isServerConnected,
-                  builder: (context, connected, child) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.sm,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: connected ? AppColors.success : AppColors.error,
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                      ),
-                      child: Text(
-                        connected ? '已连接服务器' : '服务器未连接',
-                        style: const TextStyle(
-                          fontFamily: 'NotoSansSC',
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                const ConnectionStatusBadge(),
               ],
             ),
           ),

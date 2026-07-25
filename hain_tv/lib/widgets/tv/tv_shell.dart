@@ -5,11 +5,13 @@ import 'package:hain_tv/screens/tv/category_screen.dart';
 import 'package:hain_tv/screens/tv/home_screen.dart';
 import 'package:hain_tv/screens/tv/profile_screen.dart';
 import 'package:hain_tv/screens/tv/search_screen.dart';
+import 'package:hain_tv/services/app_info_service.dart';
 import 'package:hain_tv/services/connectivity_service.dart';
 import 'package:hain_tv/services/update_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/back_interceptor.dart';
-import 'package:hain_tv/platform/device_utils.dart';
+import 'package:hain_tv/widgets/connection_status_badge.dart';
 
 class _NavItem {
   final String label;
@@ -62,12 +64,15 @@ class _TvShellState extends State<TvShell> {
   }
 
   Future<void> _checkUpdate() async {
-    final platform = DeviceUtils.isWindows ? 'windows' : 'tv';
+    final channel = await UserDataService.getDefaultUpdateChannel();
+    final updateChannel = channel == 'github'
+        ? UpdateChannel.github
+        : UpdateChannel.domestic;
     await UpdateService.checkAndPrompt(
       context,
       silent: true,
-      channel: UpdateChannel.domestic,
-      platform: platform,
+      channel: updateChannel,
+      platform: AppInfoService.platform,
     );
   }
 
@@ -385,33 +390,7 @@ class _TvShellState extends State<TvShell> {
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
-                    ValueListenableBuilder<bool>(
-                      valueListenable:
-                          ConnectivityService.instance.isServerConnected,
-                      builder: (context, connected, child) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.sm,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: connected
-                                ? AppColors.success
-                                : AppColors.error,
-                            borderRadius: BorderRadius.circular(AppRadius.sm),
-                          ),
-                          child: Text(
-                            connected ? '已连接服务器' : '服务器未连接',
-                            style: const TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                    const ConnectionStatusBadge(),
                     const Spacer(),
                     ..._items.asMap().entries.map((entry) {
                       return _buildNavItem(entry.value, entry.key);

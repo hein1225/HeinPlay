@@ -61,6 +61,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _playing = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  Duration _buffered = Duration.zero;
   bool _initialized = false;
   String? _error;
   bool _switchingSource = false;
@@ -292,6 +293,11 @@ class _PlayerScreenState extends State<PlayerScreen>
         }),
       )
       ..add(backend.durationStream.listen(_onDurationUpdate))
+      ..add(
+        backend.bufferedStream.listen((buffered) {
+          if (mounted) setState(() => _buffered = buffered);
+        }),
+      )
       ..add(
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
@@ -667,6 +673,11 @@ class _PlayerScreenState extends State<PlayerScreen>
           }),
         )
         ..add(backend.durationStream.listen(_onDurationUpdate))
+        ..add(
+          backend.bufferedStream.listen((buffered) {
+            if (mounted) setState(() => _buffered = buffered);
+          }),
+        )
         ..add(
           backend.playingStream.listen((playing) {
             if (mounted) setState(() => _playing = playing);
@@ -1637,6 +1648,10 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   Widget _buildVideo() {
+    // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
+    if (_switchingSource) {
+      return const ColoredBox(color: Colors.black);
+    }
     if (!_initialized || _backend == null) {
       return const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
@@ -1830,14 +1845,30 @@ class _PlayerScreenState extends State<PlayerScreen>
                 color: Colors.transparent,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(AppRadius.sm),
-                  child: LinearProgressIndicator(
-                    value: _duration.inMilliseconds > 0
-                        ? _position.inMilliseconds / _duration.inMilliseconds
-                        : 0.0,
-                    backgroundColor: AppColors.border,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.primary,
-                    ),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _buffered.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: AppColors.border,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white24,
+                        ),
+                      ),
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _position.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: Colors.transparent,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

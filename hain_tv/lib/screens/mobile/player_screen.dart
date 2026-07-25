@@ -60,6 +60,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   bool _playing = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  Duration _buffered = Duration.zero;
   bool _initialized = false;
   String? _error;
   bool _switchingSource = false;
@@ -116,6 +117,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   bool get _canSwitchSource => _sources.isNotEmpty;
 
   /// 根据物理尺寸记录进入播放页时的设备方向。
+  /// 默认视频缩放模式始终使用 contain，保持视频原始比例，
+  /// 由手机屏幕比例与视频比例自然决定是否出现黑边，避免拉伸或裁剪。
   void _captureOriginalOrientation() {
     final view = WidgetsBinding.instance.platformDispatcher.views.firstOrNull;
     if (view == null) return;
@@ -123,6 +126,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     _originalOrientation = size.width < size.height
         ? Orientation.portrait
         : Orientation.landscape;
+    _videoFit = BoxFit.contain;
   }
 
   @override
@@ -283,6 +287,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         }),
       )
       ..add(backend.durationStream.listen(_onDurationUpdate))
+      ..add(
+        backend.bufferedStream.listen((buffered) {
+          if (mounted) setState(() => _buffered = buffered);
+        }),
+      )
       ..add(
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
@@ -647,6 +656,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
           }),
         )
         ..add(backend.durationStream.listen(_onDurationUpdate))
+        ..add(
+          backend.bufferedStream.listen((buffered) {
+            if (mounted) setState(() => _buffered = buffered);
+          }),
+        )
         ..add(
           backend.playingStream.listen((playing) {
             if (mounted) setState(() => _playing = playing);
@@ -1524,6 +1538,10 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     if (_isExiting) {
       return const ColoredBox(color: Colors.black);
     }
+    // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
+    if (_switchingSource) {
+      return const ColoredBox(color: Colors.black);
+    }
     if (!_initialized || _backend == null) {
       return const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
@@ -1702,14 +1720,30 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                 color: Colors.transparent,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(AppRadius.sm),
-                  child: LinearProgressIndicator(
-                    value: _duration.inMilliseconds > 0
-                        ? _position.inMilliseconds / _duration.inMilliseconds
-                        : 0.0,
-                    backgroundColor: AppColors.border,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.primary,
-                    ),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _buffered.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: AppColors.border,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white24,
+                        ),
+                      ),
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _position.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: Colors.transparent,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

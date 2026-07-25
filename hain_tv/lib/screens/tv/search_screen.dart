@@ -181,11 +181,12 @@ class SearchScreenState extends State<SearchScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
+        return FocusScope(
+          child: AlertDialog(
+            backgroundColor: AppColors.bgSurface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+            ),
           title: const Text(
             '手机扫码输入',
             style: TextStyle(
@@ -280,6 +281,7 @@ class SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ],
+        ),
         );
       },
     );

@@ -19,13 +19,21 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _serverController = TextEditingController();
+  final _backupServerController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _serverFocusNode = FocusNode();
+  final _backupServerFocusNode = FocusNode();
   final _usernameFocusNode = FocusNode();
   final _passwordFocusNode = FocusNode();
   final _loginButtonFocusNode = FocusNode();
   final _qrButtonFocusNode = FocusNode();
+  final _qrButtonKey = GlobalKey();
+  final _serverKey = GlobalKey();
+  final _backupServerKey = GlobalKey();
+  final _usernameKey = GlobalKey();
+  final _passwordKey = GlobalKey();
+  final _loginButtonKey = GlobalKey();
   bool _loading = false;
   String? _error;
   // Windows 电脑版不需要二维码登录；TV 版默认焦点在扫码登录，电脑版默认焦点在服务器地址输入框。
@@ -39,7 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedServer();
+    _loadSavedData();
     if (_hasQrLogin) {
       _setupQrLogin();
     }
@@ -52,10 +60,12 @@ class _LoginScreenState extends State<LoginScreen> {
         case 1:
           _serverFocusNode.requestFocus();
         case 2:
-          _usernameFocusNode.requestFocus();
+          _backupServerFocusNode.requestFocus();
         case 3:
-          _passwordFocusNode.requestFocus();
+          _usernameFocusNode.requestFocus();
         case 4:
+          _passwordFocusNode.requestFocus();
+        case 5:
           _loginButtonFocusNode.requestFocus();
       }
     });
@@ -65,14 +75,16 @@ class _LoginScreenState extends State<LoginScreen> {
     _qrLoginSub = _remoteInputService.onLogin.listen((data) {
       if (!mounted) return;
       final serverUrl = data['serverUrl'] ?? '';
+      final backupServerUrl = data['backupServerUrl'] ?? '';
       final username = data['username'] ?? '';
       final password = data['password'] ?? '';
-      if (serverUrl.isEmpty || password.isEmpty) return;
+      if ((serverUrl.isEmpty && backupServerUrl.isEmpty) || password.isEmpty) return;
 
       _serverController.text = serverUrl;
+      _backupServerController.text = backupServerUrl;
       _usernameController.text = username;
       _passwordController.text = password;
-      setState(() => _focusedIndex = 4);
+      setState(() => _focusedIndex = 5);
 
       if (_qrDialogShowing && Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
@@ -83,10 +95,19 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  Future<void> _loadSavedServer() async {
+  Future<void> _loadSavedData() async {
     final serverUrl = await UserDataService.getServerUrl();
     if (serverUrl != null && serverUrl.isNotEmpty) {
       _serverController.text = serverUrl;
+    }
+    final backupServerUrl = await UserDataService.getBackupServerUrl();
+    if (backupServerUrl.isNotEmpty) {
+      _backupServerController.text = backupServerUrl;
+    }
+    final account = await UserDataService.getCurrentAccount();
+    if (account != null) {
+      _usernameController.text = account.username;
+      _passwordController.text = account.password;
     }
   }
 
@@ -95,9 +116,11 @@ class _LoginScreenState extends State<LoginScreen> {
     _qrLoginSub?.cancel();
     _remoteInputService.dispose();
     _serverController.dispose();
+    _backupServerController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     _serverFocusNode.dispose();
+    _backupServerFocusNode.dispose();
     _usernameFocusNode.dispose();
     _passwordFocusNode.dispose();
     _loginButtonFocusNode.dispose();
@@ -107,7 +130,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _moveFocus(int direction) {
     final minIndex = _hasQrLogin ? 0 : 1;
-    final newIndex = (_focusedIndex + direction).clamp(minIndex, 4);
+    final newIndex = (_focusedIndex + direction).clamp(minIndex, 5);
     setState(() => _focusedIndex = newIndex);
 
     // 请求对应焦点
@@ -117,12 +140,39 @@ class _LoginScreenState extends State<LoginScreen> {
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
-        _usernameFocusNode.requestFocus();
+        _backupServerFocusNode.requestFocus();
       case 3:
-        _passwordFocusNode.requestFocus();
+        _usernameFocusNode.requestFocus();
       case 4:
+        _passwordFocusNode.requestFocus();
+      case 5:
         _loginButtonFocusNode.requestFocus();
     }
+
+    _ensureFocusedVisible(newIndex);
+  }
+
+  void _ensureFocusedVisible(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final key = switch (index) {
+        0 => _qrButtonKey,
+        1 => _serverKey,
+        2 => _backupServerKey,
+        3 => _usernameKey,
+        4 => _passwordKey,
+        5 => _loginButtonKey,
+        _ => null,
+      };
+      final context = key?.currentContext;
+      if (context != null) {
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 200),
+        );
+      }
+    });
   }
 
   void _onConfirm() {
@@ -132,27 +182,33 @@ class _LoginScreenState extends State<LoginScreen> {
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
-        _usernameFocusNode.requestFocus();
+        _backupServerFocusNode.requestFocus();
       case 3:
-        _passwordFocusNode.requestFocus();
+        _usernameFocusNode.requestFocus();
       case 4:
+        _passwordFocusNode.requestFocus();
+      case 5:
         if (!_loading) _login();
     }
   }
 
   Future<void> _login() async {
-    final serverUrl = _serverController.text.trim();
+    final primaryUrl = _serverController.text.trim();
+    final backupUrl = _backupServerController.text.trim();
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (serverUrl.isEmpty) {
-      setState(() => _error = '请输入服务器地址');
+    if (primaryUrl.isEmpty && backupUrl.isEmpty) {
+      setState(() => _error = '请至少填写一个服务器地址');
       return;
     }
     if (password.isEmpty) {
       setState(() => _error = '请输入密码');
       return;
     }
+
+    // 优先使用互联网服务器（主服务器），未填写时使用局域网服务器。
+    final serverUrl = primaryUrl.isNotEmpty ? primaryUrl : backupUrl;
 
     setState(() {
       _loading = true;
@@ -166,8 +222,12 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     if (response.success) {
+      final normalized = UserDataService.classifyServerUrls(primaryUrl, backupUrl);
+      await UserDataService.saveServerUrl(normalized.internet);
+      await UserDataService.saveBackupServerUrl(normalized.lan);
+      await UserDataService.clearLastSelectedServerUrl();
       await UserDataService.saveUserData(
-        serverUrl: serverUrl,
+        serverUrl: normalized.internet,
         username: username,
         password: password,
         cookies: response.data ?? '',
@@ -262,7 +322,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                       const SizedBox(height: AppSpacing.lg),
                       const Text(
-                        '首次使用请输入 LunaTV 服务器地址进行连接',
+                        '后续可在“我的-设置”中补充或修改服务器地址。',
                         style: TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 13,
@@ -315,20 +375,41 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildForm() {
-    // 索引与 _focusedIndex 对齐：1=服务器, 2=用户名, 3=密码
+    // 索引与 _focusedIndex 对齐：0=扫码, 1=主服务器, 2=备用服务器, 3=用户名, 4=密码, 5=登录
     return Column(
       children: [
         _buildTvInputField(
+          key: _serverKey,
           index: 1,
           controller: _serverController,
           focusNode: _serverFocusNode,
-          label: '服务器地址',
-          hint: 'https://your-lunatv-server.com',
+          label: '互联网服务器地址',
+          hint: 'https://your-lunatv-server.com（建议填写公网可访问域名）',
           icon: Icons.link,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        const Text(
+          '至少填写一个服务器地址，主域名建议公网域名，备用域名建议局域网地址',
+          style: TextStyle(
+            color: AppColors.textMuted,
+            fontSize: 12,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _buildTvInputField(
+          key: _backupServerKey,
+          index: 2,
+          controller: _backupServerController,
+          focusNode: _backupServerFocusNode,
+          label: '局域网服务器地址',
+          hint: '例如 http://192.168.1.100:3000（局域网地址）',
+          icon: Icons.link_outlined,
         ),
         const SizedBox(height: AppSpacing.md),
         _buildTvInputField(
-          index: 2,
+          key: _usernameKey,
+          index: 3,
           controller: _usernameController,
           focusNode: _usernameFocusNode,
           label: '用户名',
@@ -337,7 +418,8 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
         _buildTvInputField(
-          index: 3,
+          key: _passwordKey,
+          index: 4,
           controller: _passwordController,
           focusNode: _passwordFocusNode,
           label: '密码',
@@ -350,6 +432,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildTvInputField({
+    required Key key,
     required int index,
     required TextEditingController controller,
     required FocusNode focusNode,
@@ -361,12 +444,14 @@ class _LoginScreenState extends State<LoginScreen> {
     final isFocused = _focusedIndex == index;
 
     return FocusableWidget(
+      key: key,
       // 统一由 initState 中的 postFrameCallback 设置唯一初始焦点，
       // 避免此处 autofocus 与扫码登录按钮冲突导致双焦点。
       autofocus: false,
       onTap: () {
         setState(() => _focusedIndex = index);
         focusNode.requestFocus();
+        _ensureFocusedVisible(index);
       },
       padding: EdgeInsets.zero,
       child: Container(
@@ -409,13 +494,19 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginButton() {
-    final isFocused = _focusedIndex == 4;
+    final isFocused = _focusedIndex == 5;
 
     return FocusableWidget(
+      key: _loginButtonKey,
       focusNode: _loginButtonFocusNode,
       // 统一由 initState 设置初始焦点，避免 autofocus 冲突。
       autofocus: false,
-      onTap: _loading ? null : _login,
+      onTap: _loading
+          ? null
+          : () {
+              _ensureFocusedVisible(5);
+              _login();
+            },
       child: Container(
         width: double.infinity,
         height: 48,
@@ -456,10 +547,16 @@ class _LoginScreenState extends State<LoginScreen> {
     final isFocused = _focusedIndex == 0;
 
     return FocusableWidget(
+      key: _qrButtonKey,
       focusNode: _qrButtonFocusNode,
       // 统一由 initState 中的 postFrameCallback 设置唯一初始焦点。
       autofocus: false,
-      onTap: _loading ? null : _showQrLoginDialog,
+      onTap: _loading
+          ? null
+          : () {
+              _ensureFocusedVisible(0);
+              _showQrLoginDialog();
+            },
       child: Container(
         width: double.infinity,
         height: 48,
@@ -518,11 +615,12 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
+        return FocusScope(
+          child: AlertDialog(
+            backgroundColor: AppColors.bgSurface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+            ),
           title: const Text(
             '手机扫码登录',
             style: TextStyle(
@@ -627,6 +725,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ],
+        ),
         );
       },
     );

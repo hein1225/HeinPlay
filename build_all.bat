@@ -2,10 +2,14 @@
 chcp 65001 >nul
 setlocal
 
-rem HeinPlay 全平台一键构建入口
-rem 实际逻辑在 build_all.ps1 中，本批处理仅负责以 Bypass 执行策略调用 PowerShell。
-
 cd /d "%~dp0"
+
+rem Convert all PowerShell scripts to UTF-8 BOM before execution.
+rem This prevents Chinese characters from being parsed incorrectly in PowerShell 5.1.
+set CONVERTER=%~dp0convert_to_bom.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CONVERTER%" -Path "%CONVERTER%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CONVERTER%" -Path "%~dp0build_all.ps1" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CONVERTER%" -Path "%~dp0hain_tv\scripts" >nul 2>&1
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_all.ps1" %*
 

@@ -1,13 +1,14 @@
 ﻿#Requires -Version 5.1
 # HeinPlay 全平台构建脚本
 # 功能：菜单选择 flutter doctor、依赖检查、Windows 插件检查、Android 签名完整性检查
-#       构建 TV / 手机 / Windows / 全部版本，汇总结果、日志路径与产物路径
+#       构建 TV / OldTV / 手机 / Windows / 全部版本，汇总结果、日志路径与产物路径
 
 [CmdletBinding()]
 param(
     [switch]$SkipDoctor,
     [switch]$SkipMobile,
     [switch]$SkipTv,
+    [switch]$SkipOldtv,
     [switch]$SkipWindows,
     [switch]$Clean
 )
@@ -224,11 +225,12 @@ function Test-AndroidSigning {
 
     $script:tvKeyOk = Test-OneKey 'TV 版' 'key.properties'
     $script:mobileKeyOk = Test-OneKey '手机版' 'key-mobile.properties'
+    $script:oldtvKeyOk = Test-OneKey 'OldTV 版' 'key-oldtv.properties'
 
-    if (-not ($tvKeyOk -and $mobileKeyOk)) {
+    if (-not ($tvKeyOk -and $mobileKeyOk -and $oldtvKeyOk)) {
         Write-Warn 'Android 签名文件不完整，将跳过相关 Android 构建。请按 BUILD_GUIDE.md 第 4.1 节配置签名。'
     }
-    return ($tvKeyOk -and $mobileKeyOk)
+    return ($tvKeyOk -and $mobileKeyOk -and $oldtvKeyOk)
 }
 
 function Get-ProjectVersion {
@@ -298,6 +300,7 @@ function Invoke-SelectedBuilds {
         [switch]$SkipDoctor,
         [switch]$SkipMobile,
         [switch]$SkipTv,
+        [switch]$SkipOldtv,
         [switch]$SkipWindows,
         [switch]$Clean
     )
@@ -321,7 +324,7 @@ function Invoke-SelectedBuilds {
         Test-WindowsPlugin | Out-Null
     }
 
-    if ((-not $SkipMobile) -or (-not $SkipTv)) {
+    if ((-not $SkipMobile) -or (-not $SkipTv) -or (-not $SkipOldtv)) {
         Test-AndroidSigning | Out-Null
     }
 
@@ -332,10 +335,6 @@ function Invoke-SelectedBuilds {
 
     if (-not $SkipMobile) {
         if ($mobileKeyOk) {
-            Get-Item (Join-Path $distDir 'heinplay-*-mobile.apk') -ErrorAction SilentlyContinue | ForEach-Object {
-                Write-Warn "删除旧版手机版产物: $($_.Name)"
-                Remove-Item $_.FullName -Force
-            }
             $r = Invoke-BuildScript '手机版' (Join-Path $hainDir 'scripts\build_mobile.ps1')
             $results += [PSCustomObject]@{
                 Platform     = '手机版'
@@ -352,10 +351,6 @@ function Invoke-SelectedBuilds {
 
     if (-not $SkipTv) {
         if ($tvKeyOk) {
-            Get-Item (Join-Path $distDir 'heinplay-*-tv.apk') -ErrorAction SilentlyContinue | ForEach-Object {
-                Write-Warn "删除旧版 TV 产物: $($_.Name)"
-                Remove-Item $_.FullName -Force
-            }
             $r = Invoke-BuildScript 'TV 版' (Join-Path $hainDir 'scripts\build_tv.ps1')
             $results += [PSCustomObject]@{
                 Platform     = 'TV 版'
@@ -370,11 +365,23 @@ function Invoke-SelectedBuilds {
         }
     }
 
-    if (-not $SkipWindows) {
-        Get-Item (Join-Path $distDir 'heinplay-*-windows-portable.zip') -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Warn "删除旧版 Windows 产物: $($_.Name)"
-            Remove-Item $_.FullName -Force
+    if (-not $SkipOldtv) {
+        if ($oldtvKeyOk) {
+            $r = Invoke-BuildScript 'OldTV 版' (Join-Path $hainDir 'scripts\build_oldtv.ps1')
+            $results += [PSCustomObject]@{
+                Platform     = 'OldTV 版'
+                Status       = if ($r.Success) { '成功' } else { '失败' }
+                ArtifactPath = Join-Path $distDir "heinplay-${version}-oldtv.apk"
+                LogPath      = $r.LogPath
+            }
         }
+        else {
+            Write-Warn '跳过 OldTV 版构建：签名文件不完整'
+            $results += [PSCustomObject]@{ Platform = 'OldTV 版'; Status = '跳过'; ArtifactPath = 'N/A'; LogPath = 'N/A' }
+        }
+    }
+
+    if (-not $SkipWindows) {
         Test-SevenZip | Out-Null
         Repair-WindowsNativeDeps
         $r = Invoke-BuildScript 'Windows 版' (Join-Path $hainDir 'scripts\build_windows.ps1')
@@ -438,14 +445,16 @@ function Show-MainMenu {
     Write-Host '1. 构建全部版本'
     Write-Host '2. 仅构建手机版'
     Write-Host '3. 仅构建 TV 版'
-    Write-Host '4. 仅构建 Windows 版'
-    Write-Host '5. 运行 flutter doctor'
-    Write-Host '6. 运行 flutter pub get'
-    Write-Host '7. 清理构建缓存 (flutter clean)'
+    Write-Host '4. 仅构建 OldTV 版'
+    Write-Host '5. 仅构建 Windows 版'
+    Write-Host '6. 运行 flutter doctor'
+    Write-Host '7. 运行 flutter pub get'
+    Write-Host '8. 清理构建缓存 (flutter clean)'
     Write-Host '0. 退出'
     Write-Host ''
     Write-Host '命令行参数示例:' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -SkipWindows          跳过 Windows 构建' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipOldtv            跳过 OldTV 构建' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -Clean                构建前执行 flutter clean' -ForegroundColor DarkGray
     Write-Host ''
     return Read-Host '请输入选项编号'
@@ -460,10 +469,10 @@ function Exit-Script($code = 0) {
     [Environment]::Exit($code)
 }
 
-$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipWindows -or $Clean
+$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipOldtv -or $SkipWindows -or $Clean
 
 if ($nonInteractive) {
-    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipWindows:$SkipWindows -Clean:$Clean
+    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipOldtv:$SkipOldtv -SkipWindows:$SkipWindows -Clean:$Clean
     if ($buildResult.Success) { Exit-Script 0 } else { Exit-Script 1 }
 }
 
@@ -472,12 +481,13 @@ do {
     $continueMenu = $true
     switch ($choice) {
         '1' { Invoke-SelectedBuilds | Out-Null }
-        '2' { Invoke-SelectedBuilds -SkipDoctor -SkipTv -SkipWindows | Out-Null }
-        '3' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipWindows | Out-Null }
-        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv | Out-Null }
-        '5' { Invoke-FlutterDoctor | Out-Null }
-        '6' { Invoke-FlutterPubGet | Out-Null }
-        '7' { Invoke-FlutterPubGet -Clean | Out-Null }
+        '2' { Invoke-SelectedBuilds -SkipDoctor -SkipTv -SkipOldtv -SkipWindows | Out-Null }
+        '3' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipOldtv -SkipWindows | Out-Null }
+        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipWindows | Out-Null }
+        '5' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipOldtv | Out-Null }
+        '6' { Invoke-FlutterDoctor | Out-Null }
+        '7' { Invoke-FlutterPubGet | Out-Null }
+        '8' { Invoke-FlutterPubGet -Clean | Out-Null }
         '0' { $continueMenu = $false; Exit-Script 0 }
         default { Write-Warn "无效选项: $choice" }
     }

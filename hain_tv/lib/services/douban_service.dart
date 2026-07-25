@@ -163,8 +163,9 @@ class DoubanService {
     );
     if (cached != null) return ApiResponse.success(cached);
 
-    final serverUrl = await UserDataService.getServerUrl();
-    if (serverUrl == null || serverUrl.trim().isEmpty) {
+    final serverUrl = await UserDataService.getServerUrl() ??
+        await UserDataService.getBackupServerUrl();
+    if (serverUrl.trim().isEmpty) {
       return _fallbackToRecentHot(
         type: type,
         tag: tag,

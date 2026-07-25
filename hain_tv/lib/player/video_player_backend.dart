@@ -25,6 +25,7 @@ abstract class VideoPlayerBackend {
 
   Stream<Duration> get positionStream;
   Stream<Duration> get durationStream;
+  Stream<Duration> get bufferedStream;
   Stream<bool> get playingStream;
 
   Future<void> dispose();
