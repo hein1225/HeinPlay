@@ -94,14 +94,18 @@ class UpdateService {
           break;
         }
       } else {
-        // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk。
-        // 为避免文件名同时包含 tv/mobile 导致误匹配，增加互斥校验。
+        // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk，tvLegacy 匹配 tvlegacy.apk。
+        // 为避免文件名同时包含 tv/mobile/tvlegacy 导致误匹配，增加互斥校验。
         final lowerPlatform = platform.toLowerCase();
         final matched = lowerPlatform == 'tv'
-            ? name.endsWith('tv.apk') && !name.contains('mobile')
+            ? name.endsWith('tv.apk') &&
+                !name.contains('mobile') &&
+                !name.contains('tvlegacy')
             : lowerPlatform == 'mobile'
                 ? name.endsWith('mobile.apk') && !name.contains('tv')
-                : name.endsWith('$lowerPlatform.apk');
+                : lowerPlatform == 'tvlegacy'
+                    ? name.endsWith('tvlegacy.apk')
+                    : name.endsWith('$lowerPlatform.apk');
         if (matched && url != null && url.isNotEmpty) {
           downloadUrl = url;
           break;
@@ -125,12 +129,12 @@ class UpdateService {
 
     debugPrint('UpdateService: downloadUrl=$downloadUrl');
 
-    // Android/TV/OldTV 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
+    // Android/TV/tvLegacy 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
     if (downloadUrl == null || downloadUrl.isEmpty) {
       final lowerPlatform = platform.toLowerCase();
       if (lowerPlatform == 'tv' ||
           lowerPlatform == 'mobile' ||
-          lowerPlatform == 'oldtv') {
+          lowerPlatform == 'tvlegacy') {
         debugPrint(
           'UpdateService: $platform 平台未找到对应 APK，跳过本次更新提示',
         );

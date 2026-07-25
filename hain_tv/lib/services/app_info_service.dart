@@ -20,12 +20,12 @@ class AppInfoService {
   /// 应用版本号（例如 1.1.6），读取失败时返回兜底版本号。
   static String get version => _version.isEmpty ? _fallbackVersion : _version;
 
-  /// 原始版本名（可能包含 flavor 后缀，例如 "1.1.6-oldtv"）。
+  /// 原始版本名（可能包含 flavor 后缀，例如 "1.1.6-tvlegacy"）。
   static String get rawVersion => _rawVersion.isEmpty ? _fallbackVersion : _rawVersion;
 
   /// 当前平台标识，用于更新检测匹配对应 APK：
   /// - windows
-  /// - oldtv（versionName 包含 -oldtv）
+  /// - tvLegacy（versionName 包含 -tvlegacy）
   /// - mobile（versionName 包含 -mobile）
   /// - tv（默认）
   static String get platform {
@@ -76,7 +76,7 @@ class AppInfoService {
   static String _resolvePlatform(String rawVersion) {
     if (Platform.isWindows) return 'windows';
     final lower = rawVersion.toLowerCase();
-    if (lower.contains('-oldtv')) return 'oldtv';
+    if (lower.contains('-tvlegacy')) return 'tvLegacy';
     if (lower.contains('-mobile')) return 'mobile';
     return 'tv';
   }

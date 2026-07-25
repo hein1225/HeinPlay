@@ -19,12 +19,12 @@
   - TV 端支持手机扫码快速配置子账号，配置完成后立即切换并刷新数据。
   - v1.2.0 首次启动时自动将旧版单一账号迁移为主账号。
 
-- **OldTV 版本（Android 5.0+）**
-  - 新增独立的 `oldtv` Android Flavor，最低支持 API 21，兼容低版本 Android TV / 电视盒子。
-  - 功能与 TV 版保持一致，使用独立的签名密钥（`heinplay-oldtv.jks`），可与 TV 版并行安装。
-  - 产物命名为 `heinplay-{version}-oldtv.apk`，versionName 附加 `-oldtv` 后缀。
-  - 更新 AppInfoService 平台识别逻辑，OldTV 版更新检测时匹配 `-oldtv.apk` 文件。
-  - 一键构建脚本（`build_all.bat` / `build_all.ps1`）与 GitHub Actions 工作流均已集成 OldTV 构建。
+- **tvLegacy 版本（Android 5.0+）**
+  - 新增独立的 `tvlegacy` Android Flavor，最低支持 API 21，兼容低版本 Android TV / 电视盒子。
+  - 功能与 TV 版保持一致，使用独立的签名密钥（`heinplay-tvlegacy.jks`），可与 TV 版并行安装。
+  - 产物命名为 `heinplay-{version}-tvLegacy.apk`，versionName 附加 `-tvlegacy` 后缀。
+  - 更新 AppInfoService 平台识别逻辑，tvLegacy 版更新检测时匹配 `-tvlegacy.apk` 文件。
+  - 一键构建脚本（`build_all.bat` / `build_all.ps1`）与 GitHub Actions 工作流均已集成 tvLegacy 构建。
 
 ### 变更
 
@@ -61,7 +61,7 @@
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
 | `heinplay-1.2.0-tv.apk` | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。 |
-| `heinplay-1.2.0-oldtv.apk` | Android TV / 电视盒子 | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致。 |
+| `heinplay-1.2.0-tvLegacy.apk` | Android TV / 电视盒子 | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致。 |
 | `heinplay-1.2.0-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
 | `heinplay-1.2.0-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，默认 `fvp` 播放，可切换 `vlc_player`。 |
 
@@ -69,7 +69,7 @@
 
 - 新增互联网/局域网双服务器配置与自动测速切换，首页实时展示连接状态。
 - 新增主/子双账号管理，支持一键快速切换与扫码配置子账号。
-- 新增 OldTV 版本，支持 Android 5.0+ 电视设备。
+- 新增 tvLegacy 版本，支持 Android 5.0+ 电视设备。
 - 播放控制栏新增缓冲条，修复切换源时双加载图标问题。
 - 修复版本号显示异常，统一全平台版本号为 `1.2.0`。
 - 默认更新渠道改为国内渠道。

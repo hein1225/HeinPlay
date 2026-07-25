@@ -1,4 +1,4 @@
-﻿chcp 65001 | Out-Null
+chcp 65001 | Out-Null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 # 不将 stderr 输出直接视为终止错误，避免 Flutter 输出到 stderr 的提示性信息被误判为构建失败。
@@ -21,10 +21,10 @@ $version = $versionFull.Split('+')[0]
 
 Push-Location $projectDir
 try {
-    flutter build apk --target lib/main_tv.dart --flavor oldtv --release
+    flutter build apk --target lib/main_tv.dart --flavor tvlegacy --release
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-        Write-Error "flutter build apk (oldtv) 失败 (exit code: $exitCode)"
+        Write-Error "flutter build apk (tvlegacy) 失败 (exit code: $exitCode)"
         exit $exitCode
     }
 }
@@ -32,8 +32,8 @@ finally {
     Pop-Location
 }
 
-$sourceApk = Join-Path $projectDir "build\app\outputs\flutter-apk\app-oldtv-release.apk"
-$destApk = Join-Path $distDir "heinplay-${version}-oldtv.apk"
+$sourceApk = Join-Path $projectDir "build\app\outputs\flutter-apk\app-tvlegacy-release.apk"
+$destApk = Join-Path $distDir "heinplay-${version}-tvLegacy.apk"
 
 if (-not (Test-Path $sourceApk)) {
     Write-Error "未找到构建产物: $sourceApk"

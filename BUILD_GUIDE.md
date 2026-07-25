@@ -26,11 +26,11 @@ hain_tv/
 │   ├── focus/                    # TV 焦点策略（手机版不引用）
 │   ├── platform/                 # 平台相关工具
 │   └── theme.dart                # 共享设计 token
-├── android/app/build.gradle.kts  # 已配置 tv / oldtv / mobile 三个 flavor
+├── android/app/build.gradle.kts  # 已配置 tv / tvlegacy / mobile 三个 flavor
 ├── windows/                       # Windows 桌面端平台目录
 └── scripts/
     ├── build_tv.ps1              # TV 版 release 打包脚本
-    ├── build_oldtv.ps1           # OldTV 版 release 打包脚本（Android 5.0+）
+    ├── build_tvlegacy.ps1           # tvLegacy 版 release 打包脚本（Android 5.0+）
     ├── build_mobile.ps1          # 手机版 release 打包脚本
     └── build_windows.ps1         # Windows 桌面端 release 打包脚本
 ```
@@ -43,12 +43,12 @@ hain_tv/
 flutter run -t lib/main_tv.dart --flavor tv
 ```
 
-### OldTV 版（Android 5.0+）
+### tvLegacy 版（Android 5.0+）
 
-OldTV 版与 TV 版共用入口，但使用独立的 `oldtv` flavor，最低支持 API 21。
+tvLegacy 版与 TV 版共用入口，但使用独立的 `tvlegacy` flavor，最低支持 API 21。
 
 ```powershell
-flutter run -t lib/main_tv.dart --flavor oldtv
+flutter run -t lib/main_tv.dart --flavor tvlegacy
 ```
 
 ### 手机版
@@ -124,19 +124,19 @@ keyPassword=YOUR_KEY_PASSWORD
 2. 确认 keystore 文件存在于 `android/app/hain_tv_keystore.jks`。
 3. **必须使用与旧版本完全相同的 keystore**，否则已安装用户无法覆盖更新。
 
-#### OldTV 版
+#### tvLegacy 版
 
-1. 确认 `android/key-oldtv.properties` 存在且内容正确：
+1. 确认 `android/key-tvlegacy.properties` 存在且内容正确：
 
 ```properties
-storeFile=heinplay-oldtv.jks
+storeFile=heinplay-tvlegacy.jks
 storePassword=YOUR_STORE_PASSWORD
 keyAlias=your_key_alias
 keyPassword=YOUR_KEY_PASSWORD
 ```
 
-2. 确认 keystore 文件存在于 `android/app/heinplay-oldtv.jks`。
-3. OldTV 版与 TV 版包名相同但签名不同，可同时安装；**OldTV 版更新时必须使用相同的 heinplay-oldtv.jks**。
+2. 确认 keystore 文件存在于 `android/app/heinplay-tvlegacy.jks`。
+3. tvLegacy 版使用独立包名 `com.heinplay.hain_tv_legacy` 与独立签名，可与 TV 版同时安装；**tvLegacy 版更新时必须使用相同的 heinplay-tvlegacy.jks**。
 
 #### 手机版
 
@@ -173,7 +173,7 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 脚本会自动读取 `pubspec.yaml` 版本号，构建 release APK，并将产物重命名后复制到 `dist/`。
 
-> **注意**：Flutter 默认输出文件名固定为 `app-tv-release.apk` / `app-oldtv-release.apk` / `app-mobile-release.apk`，不会自动带版本号。使用下方脚本后，带版本号的 APK 会生成在 `dist/` 目录中。
+> **注意**：Flutter 默认输出文件名固定为 `app-tv-release.apk` / `app-tvlegacy-release.apk` / `app-mobile-release.apk`，不会自动带版本号。使用下方脚本后，带版本号的 APK 会生成在 `dist/` 目录中。
 
 #### TV 版
 
@@ -183,15 +183,15 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 输出：`dist/heinplay-{version}-tv.apk`
 
-#### OldTV 版
+#### tvLegacy 版
 
 ```powershell
-.\scripts\build_oldtv.ps1
+.\scripts\build_tvlegacy.ps1
 ```
 
-输出：`dist/heinplay-{version}-oldtv.apk`
+输出：`dist/heinplay-{version}-tvLegacy.apk`
 
-> OldTV 版与 TV 版功能一致，但 `minSdk=21`，适合 Android 5.0 及以上设备。签名与 TV/手机版完全独立。
+> tvLegacy 版与 TV 版功能一致，但 `minSdk=21`，适合 Android 5.0 及以上设备。签名与 TV/手机版完全独立。
 
 #### 手机版
 
@@ -212,13 +212,13 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 例如当前 `pubspec.yaml` 版本为 `1.2.0+12`，四个脚本会输出：
 
 - `dist/heinplay-1.2.0-tv.apk`
-- `dist/heinplay-1.2.0-oldtv.apk`
+- `dist/heinplay-1.2.0-tvLegacy.apk`
 - `dist/heinplay-1.2.0-mobile.apk`
 - `dist/heinplay-1.2.0-windows-portable.zip`
 
 ### 4.3 手动打包
 
-如果不需要自动重命名，可直接运行。手动打包的产物文件名仍为 `app-tv-release.apk` / `app-oldtv-release.apk` / `app-mobile-release.apk`，如需版本号命名请使用 4.2 节的脚本。
+如果不需要自动重命名，可直接运行。手动打包的产物文件名仍为 `app-tv-release.apk` / `app-tvlegacy-release.apk` / `app-mobile-release.apk`，如需版本号命名请使用 4.2 节的脚本。
 
 #### TV 版
 
@@ -228,13 +228,13 @@ flutter build apk --target lib/main_tv.dart --flavor tv --release
 
 默认产物：`build\app\outputs\flutter-apk\app-tv-release.apk`
 
-#### OldTV 版
+#### tvLegacy 版
 
 ```powershell
-flutter build apk --target lib/main_tv.dart --flavor oldtv --release
+flutter build apk --target lib/main_tv.dart --flavor tvlegacy --release
 ```
 
-默认产物：`build\app\outputs\flutter-apk\app-oldtv-release.apk`
+默认产物：`build\app\outputs\flutter-apk\app-tvlegacy-release.apk`
 
 #### 手机版
 
@@ -262,10 +262,10 @@ TV 版：
 jarsigner -verify -verbose -certs build\app\outputs\flutter-apk\app-tv-release.apk
 ```
 
-OldTV 版：
+tvLegacy 版：
 
 ```powershell
-jarsigner -verify -verbose -certs build\app\outputs\flutter-apk\app-oldtv-release.apk
+jarsigner -verify -verbose -certs build\app\outputs\flutter-apk\app-tvlegacy-release.apk
 ```
 
 手机版：
@@ -288,10 +288,10 @@ TV 版：
 aapt dump badging build\app\outputs\flutter-apk\app-tv-release.apk | findstr package
 ```
 
-OldTV 版：
+tvLegacy 版：
 
 ```powershell
-aapt dump badging build\app\outputs\flutter-apk\app-oldtv-release.apk | findstr package
+aapt dump badging build\app\outputs\flutter-apk\app-tvlegacy-release.apk | findstr package
 ```
 
 手机版：
@@ -303,7 +303,7 @@ aapt dump badging build\app\outputs\flutter-apk\app-mobile-release.apk | findstr
 应分别看到：
 
 - TV 版：`package: name='com.heinplay.hain_tv'`
-- OldTV 版：`package: name='com.heinplay.hain_tv'`
+- tvLegacy 版：`package: name='com.heinplay.hain_tv_legacy'`
 - 手机版：`package: name='com.heinplay.mobile'`
 
 ### 4.5 常见问题
@@ -347,27 +347,27 @@ keyPassword=YOUR_KEY_PASSWORD
 
 **包名保持为 `com.heinplay.hain_tv`**，与旧版本一致，确保已安装用户可以正常更新。
 
-### OldTV 版
+### tvLegacy 版
 
-OldTV 版使用独立的签名配置，读取 `android/key-oldtv.properties`：
+tvLegacy 版使用独立的签名配置，读取 `android/key-tvlegacy.properties`：
 
 ```properties
-storeFile=heinplay-oldtv.jks
+storeFile=heinplay-tvlegacy.jks
 storePassword=YOUR_STORE_PASSWORD
 keyAlias=your_key_alias
 keyPassword=YOUR_KEY_PASSWORD
 ```
 
-包名为 `com.heinplay.hain_tv`，但 versionName 会附加 `-oldtv` 后缀，与 TV 版可共存安装。**OldTV 版签名必须与 TV 版不同**，否则无法与 TV 版同时安装。
+包名为 `com.heinplay.hain_tv_legacy`，versionName 附加 `-tvlegacy` 后缀，与 TV 版可共存安装。**tvLegacy 版签名必须与 TV 版不同**。
 
-#### 生成 OldTV 新 keystore（如尚未创建）
+#### 生成 tvLegacy 新 keystore（如尚未创建）
 
 ```powershell
 cd android\app
-keytool -genkey -v -keystore heinplay-oldtv.jks -alias your_key_alias -keyalg RSA -keysize 2048 -validity 10000 -sigalg SHA384withRSA
+keytool -genkey -v -keystore heinplay-tvlegacy.jks -alias your_key_alias -keyalg RSA -keysize 2048 -validity 10000 -sigalg SHA384withRSA
 ```
 
-按提示设置密码与证书信息。生成的 `heinplay-oldtv.jks` 不要提交到 Git。
+按提示设置密码与证书信息。生成的 `heinplay-tvlegacy.jks` 不要提交到 Git。
 
 ### 手机版
 
@@ -382,18 +382,18 @@ keyPassword=YOUR_KEY_PASSWORD
 
 可参考 `android/key-mobile.properties.example` 创建该文件。手机版包名为 `com.heinplay.mobile`，与 TV 版完全不同，不会互相覆盖。
 
-> 注意：`key.properties`、`key-oldtv.properties`、`key-mobile.properties` 以及所有 `.jks` 文件已加入 `.gitignore`，请勿提交到仓库。
+> 注意：`key.properties`、`key-tvlegacy.properties`、`key-mobile.properties` 以及所有 `.jks` 文件已加入 `.gitignore`，请勿提交到仓库。
 
 ## 6. 包名与版本
 
 | 平台   | applicationId          | 版本名后缀 | 说明                     |
 |--------|------------------------|------------|--------------------------|
 | tv     | com.heinplay.hain_tv   | -tv        | Android TV 版            |
-| oldtv  | com.heinplay.hain_tv   | -oldtv     | Android 5.0+ TV 版       |
+| tvlegacy  | com.heinplay.hain_tv_legacy   | -tvlegacy     | Android 5.0+ TV 版       |
 | mobile | com.heinplay.mobile    | -mobile    | Android 手机版           |
 | windows| hain_tv.exe            | -windows   | Windows 桌面端，无需包名 |
 
-TV 版、OldTV 版与手机版可安装在同一台 Android 设备上，互不覆盖。
+TV 版、tvLegacy 版与手机版可安装在同一台 Android 设备上，互不覆盖。
 
 ## 7. 开发规范
 
@@ -448,12 +448,12 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 
 > **备份优先级最高**：`hain_tv_keystore.jks`。只要保留该文件，即使 `key.properties` 丢失，也可通过 `keytool` 重新查看别名并尝试回忆密码；但 keystore 丢失则无法恢复。
 
-### OldTV 版
+### tvLegacy 版
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| OldTV 签名密钥库 | `hain_tv/android/app/heinplay-oldtv.jks` | OldTV 版 release 签名密钥，与 TV/手机版完全独立。 |
-| OldTV 密钥配置 | `hain_tv/android/key-oldtv.properties` | 记录 OldTV 版 keystore 的别名、密码等信息。 |
+| tvLegacy 签名密钥库 | `hain_tv/android/app/heinplay-tvlegacy.jks` | tvLegacy 版 release 签名密钥，与 TV/手机版完全独立。 |
+| tvLegacy 密钥配置 | `hain_tv/android/key-tvlegacy.properties` | 记录 tvLegacy 版 keystore 的别名、密码等信息。 |
 
 ### 手机版
 
@@ -473,7 +473,7 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 
 ## 11. GitHub Actions 自动构建
 
-仓库已配置 `.github/workflows/build-release.yml`，可在 GitHub 云端自动构建 TV 版、OldTV 版、手机版与 Windows 桌面版产物。
+仓库已配置 `.github/workflows/build-release.yml`，可在 GitHub 云端自动构建 TV 版、tvLegacy 版、手机版与 Windows 桌面版产物。
 
 ### 11.1 工作流说明
 
@@ -488,7 +488,7 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 | 任务 | 运行环境 | 输出产物 |
 |------|----------|----------|
 | build-tv | ubuntu-latest | `heinplay-{version}-tv.apk` |
-| build-oldtv | ubuntu-latest | `heinplay-{version}-oldtv.apk` |
+| build-tvlegacy | ubuntu-latest | `heinplay-{version}-tvLegacy.apk` |
 | build-mobile | ubuntu-latest | `heinplay-{version}-mobile.apk` |
 | build-windows | windows-latest | `heinplay-{version}-windows-portable.zip` |
 
@@ -513,14 +513,14 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 | `TV_KEY_ALIAS` | 密钥别名 |
 | `TV_KEY_PASSWORD` | 密钥密码 |
 
-#### OldTV 版
+#### tvLegacy 版
 
 | Secret 名称 | 说明 |
 |-------------|------|
-| `OLDTV_KEYSTORE_BASE64` | OldTV 版 keystore 文件的 Base64 编码 |
-| `OLDTV_KEYSTORE_PASSWORD` | keystore 的 storePassword |
-| `OLDTV_KEY_ALIAS` | 密钥别名 |
-| `OLDTV_KEY_PASSWORD` | 密钥密码 |
+| `TVLEGACY_KEYSTORE_BASE64` | tvLegacy 版 keystore 文件的 Base64 编码 |
+| `TVLEGACY_KEYSTORE_PASSWORD` | keystore 的 storePassword |
+| `TVLEGACY_KEY_ALIAS` | 密钥别名 |
+| `TVLEGACY_KEY_PASSWORD` | 密钥密码 |
 
 #### 手机版
 
@@ -545,10 +545,10 @@ TV 版：
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\app\hain_tv_keystore.jks")) | Set-Clipboard
 ```
 
-OldTV 版：
+tvLegacy 版：
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("android\app\heinplay-oldtv.jks")) | Set-Clipboard
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("android\app\heinplay-tvlegacy.jks")) | Set-Clipboard
 ```
 
 手机版：
@@ -563,14 +563,14 @@ OldTV 版：
 # TV 版
 base64 -i android/app/hain_tv_keystore.jks | pbcopy
 
-# OldTV 版
-base64 -i android/app/heinplay-oldtv.jks | pbcopy
+# tvLegacy 版
+base64 -i android/app/heinplay-tvlegacy.jks | pbcopy
 
 # 手机版
 base64 -i android/app/heinplay-mobile.jks | pbcopy
 ```
 
-然后将得到的字符串完整粘贴到对应 Secret 中。具体文件名以你本地 `android/key.properties`、`android/key-oldtv.properties` 和 `android/key-mobile.properties` 中的 `storeFile=` 为准。
+然后将得到的字符串完整粘贴到对应 Secret 中。具体文件名以你本地 `android/key.properties`、`android/key-tvlegacy.properties` 和 `android/key-mobile.properties` 中的 `storeFile=` 为准。
 
 ### 11.4 在 GitHub 上配置 Secrets
 
@@ -599,7 +599,7 @@ base64 -i android/app/heinplay-mobile.jks | pbcopy
 - **Release 页面**：直接访问 `https://github.com/<owner>/<repo>/releases/tag/<tag>`，四个产物已作为 Release Assets 上传。
 - **Actions 运行详情页**：页面底部 `Artifacts` 区域仍会保留：
   - `heinplay-tv-apk`
-  - `heinplay-oldtv-apk`
+  - `heinplay-tvlegacy-apk`
   - `heinplay-mobile-apk`
   - `heinplay-windows-portable`
 

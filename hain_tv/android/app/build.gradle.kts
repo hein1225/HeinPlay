@@ -19,10 +19,10 @@ if (mobileKeystorePropertiesFile.exists()) {
     mobileKeystoreProperties.load(FileInputStream(mobileKeystorePropertiesFile))
 }
 
-val oldtvKeystorePropertiesFile = rootProject.file("key-oldtv.properties")
-val oldtvKeystoreProperties = Properties()
-if (oldtvKeystorePropertiesFile.exists()) {
-    oldtvKeystoreProperties.load(FileInputStream(oldtvKeystorePropertiesFile))
+val tvlegacyKeystorePropertiesFile = rootProject.file("key-tvlegacy.properties")
+val tvlegacyKeystoreProperties = Properties()
+if (tvlegacyKeystorePropertiesFile.exists()) {
+    tvlegacyKeystoreProperties.load(FileInputStream(tvlegacyKeystorePropertiesFile))
 }
 
 android {
@@ -53,9 +53,9 @@ android {
             applicationId = "com.heinplay.hain_tv"
             versionNameSuffix = "-tv"
         }
-        create("oldtv") {
-            applicationId = "com.heinplay.hain_tv"
-            versionNameSuffix = "-oldtv"
+        create("tvlegacy") {
+            applicationId = "com.heinplay.hain_tv_legacy"
+            versionNameSuffix = "-tvlegacy"
             minSdk = flutter.minSdkVersion
         }
         create("mobile") {
@@ -77,11 +77,11 @@ android {
             storeFile = mobileKeystoreProperties["storeFile"]?.let { file(it as String) }
             storePassword = mobileKeystoreProperties["storePassword"] as String?
         }
-        create("oldtv") {
-            keyAlias = oldtvKeystoreProperties["keyAlias"] as String?
-            keyPassword = oldtvKeystoreProperties["keyPassword"] as String?
-            storeFile = oldtvKeystoreProperties["storeFile"]?.let { file(it as String) }
-            storePassword = oldtvKeystoreProperties["storePassword"] as String?
+        create("tvlegacy") {
+            keyAlias = tvlegacyKeystoreProperties["keyAlias"] as String?
+            keyPassword = tvlegacyKeystoreProperties["keyPassword"] as String?
+            storeFile = tvlegacyKeystoreProperties["storeFile"]?.let { file(it as String) }
+            storePassword = tvlegacyKeystoreProperties["storePassword"] as String?
         }
     }
 
@@ -101,7 +101,7 @@ android {
         signingConfig = when (name) {
             "tv" -> signingConfigs.getByName("tv")
             "mobile" -> signingConfigs.getByName("mobile")
-            "oldtv" -> signingConfigs.getByName("oldtv")
+            "tvlegacy" -> signingConfigs.getByName("tvlegacy")
             else -> signingConfigs.getByName("tv")
         }
     }

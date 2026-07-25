@@ -72,8 +72,8 @@ jobs:
           path: hain_tv/dist/heinplay-*-tv.apk
           if-no-files-found: error
 
-  build-oldtv:
-    name: Build OldTV APK
+  build-tvlegacy:
+    name: Build tvLegacy APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -94,37 +94,37 @@ jobs:
           flutter-version: '3.44.6'
           channel: 'stable'
 
-      - name: Decode OldTV keystore
+      - name: Decode tvLegacy keystore
         run: |
-          echo "${{ secrets.OLDTV_KEYSTORE_BASE64 }}" | base64 -d > android/app/heinplay-oldtv.jks
+          echo "${{ secrets.TVLEGACY_KEYSTORE_BASE64 }}" | base64 -d > android/app/heinplay-tvlegacy.jks
 
-      - name: Write OldTV key-oldtv.properties
+      - name: Write tvLegacy key-tvlegacy.properties
         run: |
-          cat > android/key-oldtv.properties <<EOF
-          storeFile=heinplay-oldtv.jks
-          storePassword=${{ secrets.OLDTV_KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.OLDTV_KEY_ALIAS }}
-          keyPassword=${{ secrets.OLDTV_KEY_PASSWORD }}
+          cat > android/key-tvlegacy.properties <<EOF
+          storeFile=heinplay-tvlegacy.jks
+          storePassword=${{ secrets.TVLEGACY_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.TVLEGACY_KEY_ALIAS }}
+          keyPassword=${{ secrets.TVLEGACY_KEY_PASSWORD }}
           EOF
 
       - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Build OldTV APK
-        run: flutter build apk --target lib/main_tv.dart --flavor oldtv --release
+      - name: Build tvLegacy APK
+        run: flutter build apk --target lib/main_tv.dart --flavor tvlegacy --release
 
       - name: Rename artifact
         run: |
           VERSION="$RELEASE_TAG"
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-oldtv-release.apk "dist/heinplay-${VERSION}-oldtv.apk"
+          cp build/app/outputs/flutter-apk/app-tvlegacy-release.apk "dist/heinplay-${VERSION}-tvLegacy.apk"
 
-      - name: Upload OldTV APK
+      - name: Upload tvLegacy APK
         if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
-          name: heinplay-oldtv-apk
-          path: hain_tv/dist/heinplay-*-oldtv.apk
+          name: heinplay-tvlegacy-apk
+          path: hain_tv/dist/heinplay-*-tvLegacy.apk
           if-no-files-found: error
 
   build-mobile:
@@ -271,7 +271,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-tv, build-oldtv, build-mobile, build-windows]
+    needs: [build-tv, build-tvlegacy, build-mobile, build-windows]
     runs-on: ubuntu-latest
     if: ${{ inputs.upload-artifacts != false }}
     permissions:

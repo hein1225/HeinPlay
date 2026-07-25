@@ -1,8 +1,8 @@
 # 海因影视
 
-基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；OldTV 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快速切换、连接状态可视化、OldTV 低版本兼容等能力。
+v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快速切换、连接状态可视化、tvLegacy 低版本兼容等能力。
 
 ![海因影视 TV 版界面预览](docs/screenshots/home.png)
 
@@ -100,7 +100,7 @@ v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快�
 | 平台            | 状态     | 系统要求                  | 说明                                           |
 | ------------- | ------ | --------------------- | -------------------------------------------- |
 | Android TV    | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航                |
-| Android OldTV | 已发布    | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致               |
+| Android tvLegacy | 已发布    | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致               |
 | Android       | 已发布    | Android 7.0+（API 24+） | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
 | Web           | 支持     | 现代浏览器                 | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载            |
 | Windows       | 已发布    | Windows 10 1809+      | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`            |
@@ -112,7 +112,7 @@ v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快�
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
 | `heinplay-1.2.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
-| `heinplay-1.2.0-oldtv.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
+| `heinplay-1.2.0-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
 | `heinplay-1.2.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
 | `heinplay-1.2.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
@@ -123,7 +123,7 @@ hain_tv/
 ├── android/              # Android 平台配置
 │   ├── app/build.gradle.kts
 │   ├── key.properties    # TV 版发布签名配置（需妥善保管）
-│   ├── key-oldtv.properties # OldTV 版发布签名配置（需妥善保管）
+│   ├── key-tvlegacy.properties # tvLegacy 版发布签名配置（需妥善保管）
 │   └── ...
 ├── lib/                  # Flutter 业务代码
 │   ├── screens/          # 页面
@@ -142,7 +142,7 @@ hain_tv/
 
 - Flutter SDK: `^3.12.0`
 - Dart SDK: 与 Flutter 版本匹配
-- Android SDK: minSdk 24（Android 7.0+）；OldTV 版 minSdk 21（Android 5.0+）
+- Android SDK: minSdk 24（Android 7.0+）；tvLegacy 版 minSdk 21（Android 5.0+）
 - JDK: 用于 Android 构建
 
 ## 运行与调试
@@ -173,8 +173,8 @@ flutter run -d windows
 1. **Flutter 环境检查**：运行 `flutter doctor`。
 2. **依赖准备**：执行 `flutter pub get`。
 3. **Windows 原生依赖检查**：检测并清理损坏或版本错误的 `mpv-dev` / `ANGLE` 等 `.7z` 依赖包，确保 CMake 使用正确版本重新解压。
-4. **Android 签名完整性检查**：验证 TV 版（`android/key.properties`）、OldTV 版（`android/key-oldtv.properties`）与手机版（`android/key-mobile.properties`）签名配置及 keystore 文件是否存在。
-5. **分平台构建**：按需构建手机版、TV 版、OldTV 版、Windows 版，失败时输出对应日志路径与最近 30 行日志。
+4. **Android 签名完整性检查**：验证 TV 版（`android/key.properties`）、tvLegacy 版（`android/key-tvlegacy.properties`）与手机版（`android/key-mobile.properties`）签名配置及 keystore 文件是否存在。
+5. **分平台构建**：按需构建手机版、TV 版、tvLegacy 版、Windows 版，失败时输出对应日志路径与最近 30 行日志。
 6. **结果汇总**：构建成功后输出产物可点击链接（apk / zip），并在最后汇总成功/失败/跳过状态。
 
 ```bash
@@ -199,8 +199,8 @@ e:\code\HeinPlay\build_all.bat -SkipDoctor
 # 构建 Android TV Release APK
 .\hain_tv\scripts\build_tv.ps1
 
-# 构建 Android OldTV Release APK（Android 5.0+）
-.\hain_tv\scripts\build_oldtv.ps1
+# 构建 Android tvLegacy Release APK（Android 5.0+）
+.\hain_tv\scripts\build_tvlegacy.ps1
 
 # 构建 Android 手机版 Release APK
 .\hain_tv\scripts\build_mobile.ps1
@@ -215,7 +215,7 @@ e:\code\HeinPlay\build_all.bat -SkipDoctor
 .\hain_tv\scripts\generate_icons.ps1
 ```
 
-Release 构建会使用 `android/key.properties`（TV 版）、`android/key-oldtv.properties`（OldTV 版）或 `android/key-mobile.properties`（手机版）中配置的签名密钥。详细构建说明请查看 [BUILD_GUIDE.md](./BUILD_GUIDE.md)。
+Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvlegacy.properties`（tvLegacy 版）或 `android/key-mobile.properties`（手机版）中配置的签名密钥。详细构建说明请查看 [BUILD_GUIDE.md](./BUILD_GUIDE.md)。
 
 ## 更新日志
 
@@ -224,10 +224,10 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-oldt
 
 - **互联网/局域网双服务器自动切换**：登录页与服务器管理页支持分别配置互联网服务器与局域网服务器，启动时自动测速并选择延迟最低的可用地址，首页实时显示当前连接状态（互联网/局域网/未连接）。
 - **主/子双账号快速切换**：新增账号管理页面，支持保存主账号与子账号，一键切换无需重新输入密码；TV 端支持手机扫码快速配置子账号，方便使用不同播放源的账号。
-- **新增 OldTV 版本**：针对 Android 5.0+（API 21+）电视设备推出独立 `oldtv` 构建，功能与 TV 版一致，使用独立签名密钥，可与 TV 版并行安装。
+- **新增 tvLegacy 版本**：针对 Android 5.0+（API 21+）电视设备推出独立 `tvlegacy` 构建，功能与 TV 版一致，使用独立签名密钥，可与 TV 版并行安装。
 - **播放体验优化**：播放控制栏新增缓冲条，修复切换播放器时双加载图标重叠问题；手机版全屏播放默认保持视频原始比例。
 - **更新设置管理**：默认更新渠道为国内渠道，现在支持切换为 github 作为默认更新渠道。
-- **版本号统一**：全项目更新至 `1.2.0`，Release 产物命名同步为 `heinplay-1.2.0-tv.apk`、`heinplay-1.2.0-oldtv.apk`、`heinplay-1.2.0-mobile.apk`、`heinplay-1.2.0-windows-portable.zip`。
+- **版本号统一**：全项目更新至 `1.2.0`，Release 产物命名同步为 `heinplay-1.2.0-tv.apk`、`heinplay-1.2.0-tvLegacy.apk`、`heinplay-1.2.0-mobile.apk`、`heinplay-1.2.0-windows-portable.zip`。
 
 </details>
 
@@ -382,28 +382,28 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-oldt
   - 不要提交到 Git，不要通过邮件、即时通讯工具发送。
   - 建议多重备份（加密 U 盘、私有云、密码管理器等）。
 
-### 2. OldTV 版签名
+### 2. tvLegacy 版签名
 
-#### `android/key-oldtv.properties`
+#### `android/key-tvlegacy.properties`
 
-- **位置**：`hain_tv/android/key-oldtv.properties`
-- **用途**：配置 OldTV 版 Release 签名所需的密钥库密码、别名及密钥库文件路径。
+- **位置**：`hain_tv/android/key-tvlegacy.properties`
+- **用途**：配置 tvLegacy 版 Release 签名所需的密钥库密码、别名及密钥库文件路径。
 - **内容示例**：
   
   ```properties
   storePassword=******
   keyPassword=******
-  keyAlias=oldtv_key
-  storeFile=heinplay-oldtv.jks
+  keyAlias=tvlegacy_key
+  storeFile=heinplay-tvlegacy.jks
   ```
 
-#### `android/app/heinplay-oldtv.jks`
+#### `android/app/heinplay-tvlegacy.jks`
 
-- **位置**：`hain_tv/android/app/heinplay-oldtv.jks`
-- **用途**：OldTV 版 Android Release 签名密钥库文件，与 TV 版完全独立。
-- **别名**：`oldtv_key`
+- **位置**：`hain_tv/android/app/heinplay-tvlegacy.jks`
+- **用途**：tvLegacy 版 Android Release 签名密钥库文件，与 TV 版完全独立。
+- **别名**：`tvlegacy_key`
 - **保管要求**：
-  - OldTV 版更新必须使用该密钥。
+  - tvLegacy 版更新必须使用该密钥。
   - 不要提交到 Git，不要通过邮件、即时通讯工具发送。
   - 建议与 TV 版密钥分开备份。
 
@@ -411,22 +411,22 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-oldt
 
 #### `android/key-mobile.properties` / `android/app/heinplay-mobile.jks`
 
-- 手机版签名文件，与 TV / OldTV 版完全独立。
+- 手机版签名文件，与 TV / tvLegacy 版完全独立。
 
 ### 检查清单
 
 - [ ] `android/key.properties` 已加入 `.gitignore`
-- [ ] `android/key-oldtv.properties` 已加入 `.gitignore`
+- [ ] `android/key-tvlegacy.properties` 已加入 `.gitignore`
 - [ ] `android/key-mobile.properties` 已加入 `.gitignore`
 - [ ] `android/app/hain_tv_keystore.jks` 已加入 `.gitignore`
-- [ ] `android/app/heinplay-oldtv.jks` 已加入 `.gitignore`
+- [ ] `android/app/heinplay-tvlegacy.jks` 已加入 `.gitignore`
 - [ ] `android/app/heinplay-mobile.jks` 已加入 `.gitignore`
 - [ ] 密钥文件已备份到安全位置
 - [ ] 未在代码、日志或文档中硬编码真实密码
 
 ## 注意事项
 
-- Release 构建前请确认对应版本的签名配置（`android/key.properties`、`android/key-oldtv.properties`、`android/key-mobile.properties`）与 keystore 文件路径正确且文件存在。
+- Release 构建前请确认对应版本的签名配置（`android/key.properties`、`android/key-tvlegacy.properties`、`android/key-mobile.properties`）与 keystore 文件路径正确且文件存在。
 - 若在不同机器上构建，需要将对应版本的 keystore 文件复制到对应路径，并自行创建或更新签名配置。
 - Web 端受浏览器 CORS 策略限制，部分网络图片可能无法正常显示；Android / TV 端不受影响。
 - 国内渠道（GitCode）更新可能与 GitHub 存在同步延迟，如需测试最新版本可选择 GitHub 渠道。
