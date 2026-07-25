@@ -3,8 +3,8 @@ name: Build Release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag（例如 1.1.6），构建完成后会自动创建/更新该 tag 的 Release'
+      version:
+        description: '版本号（例如 1.1.6），构建成功后会自动创建 v1.1.6 tag 并发布 Release'
         required: true
         type: string
       upload-artifacts:
@@ -14,7 +14,7 @@ on:
         type: boolean
 
 env:
-  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_TAG: v${{ inputs.version }}
 
 jobs:
   build-tv:
@@ -282,7 +282,7 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TAG: v${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
