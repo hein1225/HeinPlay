@@ -14,7 +14,7 @@ on:
         type: boolean
 
 env:
-  RELEASE_TAG: v${{ inputs.version }}
+  RELEASE_TAG: ${{ inputs.version }}
 
 jobs:
   build-tv:
@@ -60,7 +60,7 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION="${RELEASE_TAG#v}"
+          VERSION="$RELEASE_TAG"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-tv-release.apk "dist/heinplay-${VERSION}-tv.apk"
 
@@ -115,7 +115,7 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION="${RELEASE_TAG#v}"
+          VERSION="$RELEASE_TAG"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-oldtv-release.apk "dist/heinplay-${VERSION}-oldtv.apk"
 
@@ -170,7 +170,7 @@ jobs:
 
       - name: Rename artifact
         run: |
-          VERSION="${RELEASE_TAG#v}"
+          VERSION="$RELEASE_TAG"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-mobile-release.apk "dist/heinplay-${VERSION}-mobile.apk"
 
@@ -252,12 +252,7 @@ jobs:
       - name: Rename artifact
         shell: pwsh
         run: |
-          $tag = $env:RELEASE_TAG
-          if ($tag -match '^v') {
-            $version = $tag.Substring(1)
-          } else {
-            $version = $tag
-          }
+          $version = $env:RELEASE_TAG
           $distDir = "dist"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           $sourceDir = "build\windows\x64\runner\Release"
@@ -282,7 +277,7 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: v${{ inputs.version }}
+      RELEASE_TAG: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
