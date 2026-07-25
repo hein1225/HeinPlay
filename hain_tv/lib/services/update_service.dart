@@ -285,6 +285,19 @@ function Write-Log {
     "$timestamp $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
 }
 
+function Get-ExeVersion {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path $Path)) { return $null }
+        $versionInfo = (Get-Item $Path).VersionInfo
+        $ver = $versionInfo.FileVersion
+        if ([string]::IsNullOrWhiteSpace($ver)) { $ver = $versionInfo.ProductVersion }
+        return $ver
+    } catch {
+        return $null
+    }
+}
+
 try {
     Write-Log "Updater started. Parent PID=$ParentPid, AppDir=$AppDir, ExeName=$ExeName"
 
@@ -302,6 +315,9 @@ try {
         }
         Start-Sleep -Milliseconds 500
     }
+
+    # 主进程退出后再等待 2 秒，确保文件句柄释放，避免 exe 被锁导致复制未生效。
+    Start-Sleep -Seconds 2
 
     $updateDir = Join-Path $AppDir 'update'
     $extractedDir = Join-Path $updateDir 'extracted'
@@ -335,15 +351,33 @@ try {
     $items = Get-ChildItem $newRoot | Where-Object { $exclude -notcontains $_.Name }
     Write-Log "Copying $($items.Count) items"
 
+    $exePath = Join-Path $AppDir $ExeName
+    $exeUpdated = $false
+
     foreach ($item in $items) {
         $dest = Join-Path $AppDir $item.Name
         Write-Log "Copying $($item.Name) -> $dest"
+
+        $isExe = ($item.Name -eq $ExeName)
+        $oldVersion = $null
+        $backupPath = "$dest.old"
+
+        if ($isExe -and (Test-Path $dest)) {
+            $oldVersion = Get-ExeVersion -Path $dest
+            Write-Log "Old $ExeName version: $oldVersion"
+        }
 
         $retry = 0
         $maxRetry = 10
         while ($retry -lt $maxRetry) {
             try {
-                if (Test-Path $dest) {
+                if ($isExe -and (Test-Path $dest)) {
+                    # 对主程序 exe 先重命名备份，再复制新文件；复制失败时可回滚。
+                    if (Test-Path $backupPath) {
+                        Remove-Item -Force $backupPath -ErrorAction Stop
+                    }
+                    Rename-Item -Path $dest -NewName "$($item.Name).old" -Force -ErrorAction Stop
+                } elseif (Test-Path $dest) {
                     Remove-Item -Recurse -Force $dest -ErrorAction Stop
                 }
                 Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
@@ -356,6 +390,30 @@ try {
                 Start-Sleep -Milliseconds 500
             }
         }
+
+        if ($isExe) {
+            $newVersion = Get-ExeVersion -Path $dest
+            Write-Log "New $ExeName version: $newVersion"
+            if ([string]::IsNullOrWhiteSpace($newVersion)) {
+                Write-Log "Warning: could not read version from new $ExeName"
+            } elseif ($oldVersion -and $newVersion -eq $oldVersion) {
+                # 新版本 exe 版本号与旧版本相同，说明更新包可能未生效或被系统还原，执行回滚。
+                Write-Log "ERROR: new $ExeName version equals old version ($newVersion), rolling back"
+                if (Test-Path $backupPath) {
+                    Remove-Item -Force $dest -ErrorAction SilentlyContinue
+                    Rename-Item -Path $backupPath -NewName $ExeName -Force -ErrorAction SilentlyContinue
+                    Write-Log "Rolled back to old $ExeName"
+                }
+                throw "主程序版本未变化（$newVersion），更新包未生效，已回滚。"
+            }
+            $exeUpdated = $true
+        }
+    }
+
+    # 更新成功后删除 exe 备份文件
+    if ($exeUpdated -and (Test-Path $backupPath)) {
+        Remove-Item -Force $backupPath -ErrorAction SilentlyContinue
+        Write-Log "Removed old $ExeName backup"
     }
 
     Write-Log "All files copied successfully"
