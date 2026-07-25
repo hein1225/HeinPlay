@@ -1,4 +1,4 @@
-﻿chcp 65001 | Out-Null
+chcp 65001 | Out-Null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 # 不将 stderr 输出直接视为终止错误，避免 Flutter 输出到 stderr 的提示性信息
@@ -43,6 +43,22 @@ $destZip = Join-Path $distDir "heinplay-${version}-windows-portable.zip"
 if (-not (Test-Path $sourceDir)) {
     Write-Error "未找到构建产物目录: $sourceDir"
     exit 1
+}
+
+# 将手动更新脚本复制到 Windows 产物根目录，随压缩包一起分发。
+$manualUpdateDir = Join-Path $projectDir "..\plan\update"
+$manualUpdateScripts = @(
+    (Join-Path $manualUpdateDir "update_windows_manual.ps1"),
+    (Join-Path $manualUpdateDir "update_windows_manual.bat")
+)
+foreach ($scriptPath in $manualUpdateScripts) {
+    if (Test-Path $scriptPath) {
+        Copy-Item -Path $scriptPath -Destination $sourceDir -Force
+        Write-Output "已复制手动更新脚本: $(Split-Path $scriptPath -Leaf)"
+    }
+    else {
+        Write-Warning "未找到手动更新脚本: $scriptPath"
+    }
 }
 
 if (Test-Path $destZip) {
