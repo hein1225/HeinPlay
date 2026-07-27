@@ -261,7 +261,7 @@ class UpdateService {
   }
 
   /// Windows 便携版自动更新脚本（英文日志，便于 bat 显示）。
-  /// 等待主进程退出后解压 zip 并替换应用目录内文件，保留 data 目录。
+  /// 等待主进程退出后解压 zip，删除旧程序文件，覆盖 data 目录内应用资源并保留用户数据。
   static const String _windowsUpdaterScript = r'''
 param(
     [Parameter(Mandatory=$true)]
@@ -346,8 +346,79 @@ try {
         Write-Log "Detected wrapper directory, actual root=$newRoot"
     }
 
-    # Copy new files into app directory, keep data and update folders
-    $exclude = @('data', 'update')
+    # Replace data folder: backup user data, remove old data, copy new data, restore user data.
+    $newDataDir = Join-Path $newRoot 'data'
+    $oldDataDir = Join-Path $AppDir 'data'
+    if (Test-Path $newDataDir) {
+        $dataBackupDir = Join-Path $updateDir 'data_backup'
+        $userDataItems = @('shared_preferences.json', 'support', 'documents', 'cache', 'downloads', 'temp', 'windows_logs')
+
+        if (Test-Path $dataBackupDir) { Remove-Item -Recurse -Force $dataBackupDir -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $dataBackupDir -Force | Out-Null
+
+        foreach ($udItem in $userDataItems) {
+            $udSource = Join-Path $oldDataDir $udItem
+            if (Test-Path $udSource) {
+                $udDest = Join-Path $dataBackupDir $udItem
+                Write-Log "Backing up user data: $udItem"
+                Copy-Item -Path $udSource -Destination $udDest -Recurse -Force -ErrorAction Stop
+            }
+        }
+
+        if (Test-Path $oldDataDir) {
+            Write-Log "Removing old data directory: $oldDataDir"
+            $retry = 0
+            $maxRetry = 10
+            while ($retry -lt $maxRetry) {
+                try {
+                    Remove-Item -Recurse -Force $oldDataDir -ErrorAction Stop
+                    break
+                } catch {
+                    $retry++
+                    Write-Log "Remove data failed (retry $retry/$maxRetry): $_"
+                    if ($retry -ge $maxRetry) { throw }
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+        }
+
+        Write-Log "Copying new data directory"
+        Copy-Item -Path $newDataDir -Destination $AppDir -Recurse -Force -ErrorAction Stop
+
+        foreach ($udItem in $userDataItems) {
+            $udSource = Join-Path $dataBackupDir $udItem
+            if (Test-Path $udSource) {
+                $udDest = Join-Path $oldDataDir $udItem
+                Write-Log "Restoring user data: $udItem"
+                Copy-Item -Path $udSource -Destination $udDest -Recurse -Force -ErrorAction Stop
+            }
+        }
+    }
+
+    # Remove old program files, keep data and update folders (data already handled).
+    $keep = @('data', 'update')
+    $existingItems = Get-ChildItem $AppDir -ErrorAction SilentlyContinue
+    foreach ($oldItem in $existingItems) {
+        if ($keep -contains $oldItem.Name) { continue }
+        $oldPath = $oldItem.FullName
+        Write-Log "Removing old item: $oldPath"
+        $retry = 0
+        $maxRetry = 10
+        while ($retry -lt $maxRetry) {
+            try {
+                Remove-Item -Recurse -Force $oldPath -ErrorAction Stop
+                break
+            } catch {
+                $retry++
+                Write-Log "Remove failed (retry $retry/$maxRetry): $_"
+                if ($retry -ge $maxRetry) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
+
+    # Copy new files into app directory, keep update folder; data already handled.
+    $exclude = @('update')
     $items = Get-ChildItem $newRoot | Where-Object { $exclude -notcontains $_.Name }
     Write-Log "Copying $($items.Count) items"
 
@@ -371,15 +442,6 @@ try {
         $maxRetry = 10
         while ($retry -lt $maxRetry) {
             try {
-                if ($isExe -and (Test-Path $dest)) {
-                    # 对主程序 exe 先重命名备份，再复制新文件；复制失败时可回滚。
-                    if (Test-Path $backupPath) {
-                        Remove-Item -Force $backupPath -ErrorAction Stop
-                    }
-                    Rename-Item -Path $dest -NewName "$($item.Name).old" -Force -ErrorAction Stop
-                } elseif (Test-Path $dest) {
-                    Remove-Item -Recurse -Force $dest -ErrorAction Stop
-                }
                 Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
                 Write-Log "Copy $($item.Name) succeeded"
                 break

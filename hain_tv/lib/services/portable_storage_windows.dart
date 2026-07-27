@@ -7,6 +7,8 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
 
+import '../utils/windows_logger.dart';
+
 /// Windows 便携版存储配置。
 ///
 /// 将 shared_preferences 与 path_provider 的默认路径从
@@ -33,6 +35,10 @@ class PortableStorageWindows {
     }
     await Directory(dataDir).create(recursive: true);
     _initialized = true;
+    WindowsLogger.log(
+      'PortableStorageWindows',
+      '初始化完成 dataDir=$dataDir',
+    );
   }
 
   /// 检测目录是否存在且具有写入权限。
@@ -107,14 +113,22 @@ class PortableSharedPreferencesStore extends SharedPreferencesStorePlatform {
     final file = File(_filePath);
     if (!await file.exists()) {
       _cache = {};
+      WindowsLogger.log(
+        'PortableSharedPreferencesStore',
+        '文件不存在，使用空缓存 path=$_filePath',
+      );
       return _cache!;
     }
     try {
       final content = await file.readAsString();
       final map = jsonDecode(content) as Map<String, dynamic>;
       _cache = map.cast<String, Object>();
+      WindowsLogger.log(
+        'PortableSharedPreferencesStore',
+        '读取成功 keyCount=${_cache!.length}',
+      );
     } catch (e) {
-      debugPrint('PortableSharedPreferencesStore 读取失败: $e');
+      WindowsLogger.log('PortableSharedPreferencesStore', '读取失败: $e');
       _cache = {};
     }
     return _cache!;
@@ -126,10 +140,15 @@ class PortableSharedPreferencesStore extends SharedPreferencesStorePlatform {
       await file.parent.create(recursive: true);
       await file.writeAsString(
         const JsonEncoder.withIndent('  ').convert(data),
+        flush: true,
+      );
+      WindowsLogger.log(
+        'PortableSharedPreferencesStore',
+        '写入成功 keyCount=${data.length}',
       );
       return true;
     } catch (e) {
-      debugPrint('PortableSharedPreferencesStore 写入失败: $e');
+      WindowsLogger.log('PortableSharedPreferencesStore', '写入失败: $e');
       return false;
     }
   }
@@ -163,6 +182,10 @@ class PortableSharedPreferencesStore extends SharedPreferencesStorePlatform {
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
+    WindowsLogger.log(
+      'PortableSharedPreferencesStore',
+      'setValue key=$key valueType=$valueType',
+    );
     final all = await _readAll();
     all[key] = value;
     _cache = all;

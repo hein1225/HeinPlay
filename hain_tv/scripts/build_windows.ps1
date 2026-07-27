@@ -1,4 +1,4 @@
-chcp 65001 | Out-Null
+﻿chcp 65001 | Out-Null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 # 不将 stderr 输出直接视为终止错误，避免 Flutter 输出到 stderr 的提示性信息

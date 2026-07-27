@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -21,7 +20,6 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
-import 'package:hain_tv/platform/windows_fullscreen_mixin.dart';
 
 class PlayerScreen extends StatefulWidget {
   final VideoDetail videoDetail;
@@ -47,8 +45,7 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen>
-    with WindowsFullscreenMixin<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen> {
   late VideoDetail _currentVideoDetail;
   late int _currentSourceIndex;
   // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
@@ -72,6 +69,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _skipConfigLoading = false;
   final Set<String> _skippedSegments = {};
   bool _autoNextTriggered = false;
+
+  /// 记录最近一次触发片头片尾跳过 seek 的时间，避免 seek 后位置未立即更新导致重复触发。
+  DateTime? _lastSkipSeekAt;
 
   final List<StreamSubscription> _subscriptions = [];
   Timer? _controlsTimer;
@@ -151,7 +151,6 @@ class _PlayerScreenState extends State<PlayerScreen>
       _initBrightnessAndVolume();
     }
     _startClock();
-    initWindowsFullscreen();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
@@ -254,6 +253,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       setState(() {
         _skipConfig = response.data;
         _skippedSegments.clear();
+        _lastSkipSeekAt = null;
         _autoNextTriggered = false;
       });
     }
@@ -334,6 +334,11 @@ class _PlayerScreenState extends State<PlayerScreen>
     final totalSeconds = _duration.inMilliseconds / 1000.0;
     if (totalSeconds <= 0) return;
 
+    // 跳过 seek 冷却：触发一次跳过后 3 秒内不再重复触发，避免 seek 后画面未更新
+    // 导致位置流仍报告在片头片尾区间内而连续 seek。
+    final skipSeekCooldown = _lastSkipSeekAt != null &&
+        DateTime.now().difference(_lastSkipSeekAt!) < const Duration(seconds: 3);
+
     for (final segment in _skipConfig!.segments) {
       final key = '${segment.type}_${segment.start}_${segment.end}';
       if (!segment.autoSkip) continue;
@@ -346,17 +351,29 @@ class _PlayerScreenState extends State<PlayerScreen>
       if (segment.type == 'ending' && segment.start <= 1.0) continue;
 
       final inSegment = seconds >= segment.start && seconds <= segment.end;
-      final passedSegment = seconds > segment.end + 1.0;
+      final passedSegment = seconds > segment.end + 0.5;
 
       if (inSegment) {
+        if (skipSeekCooldown) {
+          // 冷却期内仅打印一次日志，避免刷屏
+          if (!_skippedSegments.contains(key)) {
+            debugPrint(
+              '跳过片段冷却中: type=${segment.type} start=${segment.start} end=${segment.end}',
+            );
+            _skippedSegments.add(key);
+          }
+          continue;
+        }
         // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
         if (!_skippedSegments.contains(key)) {
           debugPrint(
             '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
           );
         }
-        // 跳到片段结束后 1 秒，确保越过片尾并给 ExoPlayer 留出缓冲余量。
-        _safeSeekToSeconds(segment.end + 1.0);
+        // 跳到片段结束后 0.3 秒处，减少跳转到非关键帧导致画面卡住的概率；
+        // 同时仍保留少量缓冲余量，避免解码器停在片尾关键帧上。
+        _lastSkipSeekAt = DateTime.now();
+        _safeSeekToSeconds(segment.end + 0.3);
         break;
       } else if (passedSegment && !_skippedSegments.contains(key)) {
         // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
@@ -433,6 +450,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _initialized = false;
       _error = null;
       _skippedSegments.clear();
+      _lastSkipSeekAt = null;
       _autoNextTriggered = false;
     });
 
@@ -653,6 +671,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         _switchingSource = false;
         _skipConfig = null;
         _skippedSegments.clear();
+        _lastSkipSeekAt = null;
         _autoNextTriggered = false;
         _initialized = false;
         _error = null;
@@ -774,6 +793,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _switchingSource = false;
       _skipConfig = null;
       _skippedSegments.clear();
+      _lastSkipSeekAt = null;
       _autoNextTriggered = false;
     });
 
@@ -1319,15 +1339,10 @@ class _PlayerScreenState extends State<PlayerScreen>
         return true;
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.escape:
-        if (!DeviceUtils.isWindows) {
-          // TV/Android：返回/ESC 同时会被系统映射为返回手势，若再调用 pop/maybePop
-          // 会与 PopScope 重复响应导致连退两层。此处直接消费 KeyEvent，
-          // 统一交给系统返回手势与 PopScope 处理：控制栏显示时 PopScope 会隐藏控制栏，
-          // 隐藏后再按才返回详情页。
-          return true;
-        }
-        // Windows：独立处理 ESC，真实全屏时退出全屏，否则返回上一页。
-        handleWindowsEsc();
+        // TV/Android：返回/ESC 同时会被系统映射为返回手势，若再调用 pop/maybePop
+        // 会与 PopScope 重复响应导致连退两层。此处直接消费 KeyEvent，
+        // 统一交给系统返回手势与 PopScope 处理：控制栏显示时 PopScope 会隐藏控制栏，
+        // 隐藏后再按才返回详情页。
         return true;
       default:
         return false;
@@ -1354,15 +1369,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   void _onDoubleTapScreen() {
-    if (DeviceUtils.isWindows) {
-      onWindowsDoubleTap();
-    } else {
-      _togglePlay();
-      _showGestureIndicator(
-        _playing ? '播放' : '暂停',
-        _playing ? Icons.play_arrow : Icons.pause,
-      );
-    }
+    _togglePlay();
+    _showGestureIndicator(
+      _playing ? '播放' : '暂停',
+      _playing ? Icons.play_arrow : Icons.pause,
+    );
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
@@ -1547,7 +1558,6 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void dispose() {
-    disposeWindowsFullscreen();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
@@ -1901,43 +1911,6 @@ class _PlayerScreenState extends State<PlayerScreen>
                   ),
                 ),
                 const Spacer(),
-                if (DeviceUtils.isWindows)
-                  FocusableWidget(
-                    onTap: toggleWindowsFullscreen,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                        vertical: AppSpacing.xs,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.bgElevated,
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isWindowsFullScreen
-                                ? Icons.fullscreen_exit
-                                : Icons.fullscreen,
-                            color: AppColors.textPrimary,
-                            size: 18,
-                          ),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            isWindowsFullScreen ? '退出全屏' : '全屏',
-                            style: const TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              fontSize: 13,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
                 if (_currentVideoDetail.source.isNotEmpty &&
                     _currentVideoDetail.id.isNotEmpty)
                   FocusableWidget(
@@ -2162,16 +2135,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      // 全屏或控制栏显示时禁止直接 pop：
-      // - 全屏时先退出全屏；
-      // - 控制栏显示时先隐藏控制栏；
-      // - 两者都满足时优先退出全屏。
-      canPop: !isWindowsFullScreen && !_controlsVisible,
+      // TV 版无窗口全屏概念：控制栏显示时先隐藏控制栏，再按返回才退出播放页。
+      canPop: !_controlsVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (isWindowsFullScreen) {
-          toggleWindowsFullscreen();
-        } else if (_controlsVisible) {
+        if (_controlsVisible) {
           _hideControls();
         }
       },
@@ -2341,53 +2309,37 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
             ),
           },
           child: SizedBox(
-            width: 640,
-            height: 240,
-            child: Listener(
-              onPointerSignal: (event) {
-                if (!DeviceUtils.isWindows) return;
-                if (event is PointerScrollEvent) {
-                  if (!_scrollController.hasClients) return;
-                  final delta = event.scrollDelta.dy;
-                  if (delta == 0) return;
-                  final newOffset = (_scrollController.offset + delta).clamp(
-                    _scrollController.position.minScrollExtent,
-                    _scrollController.position.maxScrollExtent,
-                  );
-                  _scrollController.jumpTo(newOffset);
-                }
-              },
+              width: 640,
+              height: 240,
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 controller: _scrollController,
                 child: Row(
-                  children: [
-                    for (var index = 0; index < widget.sources.length; index++)
-                      Padding(
-                        padding: EdgeInsets.only(
-                          right: index < widget.sources.length - 1
-                              ? AppSpacing.md
-                              : 0,
-                        ),
-                        child: _SourceSelectorCard(
-                          key: _itemKeys[index],
-                          focusNode: _focusNodes[index],
-                          autofocus: index == widget.currentIndex,
-                          source: widget.sources[index],
-                          selected: index == widget.currentIndex,
-                          rank: index + 1,
-                          formatSpeed: widget.formatSpeed,
-                          speedColor: widget.speedColor,
-                          onTap: () => widget.onSelect(index),
-                        ),
+                  children: List.generate(widget.sources.length, (index) {
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        right: index < widget.sources.length - 1
+                            ? AppSpacing.md
+                            : 0,
                       ),
-                  ],
+                      child: _SourceSelectorCard(
+                        key: _itemKeys[index],
+                        focusNode: _focusNodes[index],
+                        autofocus: index == widget.currentIndex,
+                        source: widget.sources[index],
+                        selected: index == widget.currentIndex,
+                        rank: index + 1,
+                        formatSpeed: widget.formatSpeed,
+                        speedColor: widget.speedColor,
+                        onTap: () => widget.onSelect(index),
+                      ),
+                    );
+                  }),
                 ),
               ),
             ),
           ),
         ),
-      ),
     );
   }
 }

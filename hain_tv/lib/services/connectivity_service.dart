@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'app_info_service.dart';
+import 'lunatv_service.dart';
 import 'user_data_service.dart';
 
 /// 服务器连接有效判定：
@@ -75,26 +75,32 @@ class ConnectivityService {
 
       final base = serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
       final cookies = await UserDataService.getCookies();
-      final response = await http
-          .get(
-            Uri.parse('$base/api/playrecords').replace(
-              queryParameters: {
-                'limit': '1',
-                '_t': DateTime.now().millisecondsSinceEpoch.toString(),
+      final client = LunaTVService.createApiClient();
+      try {
+        final response = await client
+            .get(
+              Uri.parse('$base/api/playrecords').replace(
+                queryParameters: {
+                  'limit': '1',
+                  '_t': DateTime.now().millisecondsSinceEpoch.toString(),
+                },
+              ),
+              headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'User-Agent': AppInfoService.userAgent,
+                if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
               },
-            ),
-            headers: {
-              'Accept': 'application/json, text/plain, */*',
-              'User-Agent': AppInfoService.userAgent,
-              if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
-            },
-          )
-          .timeout(_requestTimeout);
+            )
+            .timeout(_requestTimeout);
 
       // 只有登录态有效且接口返回 200 才算连接成功
       final connected = response.statusCode == 200;
       final serverType = await UserDataService.getCurrentServerType();
       _updateStatus(connected, serverType);
+      return;
+      } finally {
+        client.close();
+      }
     } catch (e) {
       _updateStatus(false, 'internet');
     } finally {

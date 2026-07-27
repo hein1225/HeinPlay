@@ -16,6 +16,7 @@ import 'app_info_service.dart';
 import 'cache_service.dart';
 import 'm3u8_utils.dart';
 import 'user_data_service.dart';
+import '../utils/windows_logger.dart';
 
 class LunaTVConfig {
   static const Duration searchTimeout = Duration(seconds: 30);
@@ -39,6 +40,49 @@ class LunaTVService {
       await _cacheService.init();
       _cacheInitialized = true;
     }
+  }
+
+  /// 创建 LunaTV API 请求专用 HTTP 客户端。
+  ///
+  /// Windows 桌面版 Dart 默认证书校验对自签名/非标准证书链容易触发
+  /// HandshakeException，而 Android 同网络可正常访问。此处对 Windows
+  /// 放宽证书校验，并禁用系统代理、保持长连接，确保用户配置的服务器地址可用。
+  static void _log(String tag, String message) {
+    if (Platform.isWindows) {
+      WindowsLogger.log(tag, message);
+    } else {
+      debugPrint('[$tag] $message');
+    }
+  }
+
+  static http.Client createApiClient() {
+    if (Platform.isWindows) {
+      final httpClient = HttpClient();
+      httpClient.badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+      httpClient.findProxy = (uri) => 'DIRECT';
+      httpClient.idleTimeout = const Duration(seconds: 30);
+      return IOClient(httpClient);
+    }
+    return http.Client();
+  }
+
+  /// Windows 专用兜底 HTTP 客户端。
+  ///
+  /// 当 [createApiClient] 仍然失败时（如系统代理/TLS 版本等边缘情况），
+  /// 尝试使用未经自定义的默认客户端再请求一次，便于诊断问题。
+  static http.Client _createFallbackClient() {
+    if (Platform.isWindows) {
+      try {
+        final httpClient = HttpClient()
+          ..badCertificateCallback =
+              (X509Certificate cert, String host, int port) => true;
+        return IOClient(httpClient);
+      } catch (_) {
+        return http.Client();
+      }
+    }
+    return http.Client();
   }
 
   static Future<String?> _baseUrl() async {
@@ -83,18 +127,55 @@ class LunaTVService {
     final headers = await _headers();
     final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
 
+    _log(
+      'LunaTVService._get',
+      'GET $uri, hasCookie=${headers.containsKey('Cookie')}, '
+      'timeout=${effectiveTimeout.inSeconds}s',
+    );
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
+      final client = createApiClient();
       try {
-        final response = await http
+        final response = await client
             .get(uri, headers: headers)
             .timeout(effectiveTimeout);
+        _log(
+          'LunaTVService._get',
+          '响应 ${response.statusCode}, '
+          'bodyLength=${response.body.length}, uri=$uri',
+        );
         return response;
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
+        _log('LunaTVService._get', '第${attempt + 1}次请求失败: $e, uri=$uri');
         if (attempt == LunaTVConfig.maxRetryCount) break;
+      } finally {
+        client.close();
       }
     }
+
+    // Windows 兜底：使用更保守的客户端再试一次，便于区分是自定义配置还是网络本身问题
+    if (Platform.isWindows) {
+      final fallbackClient = _createFallbackClient();
+      try {
+        _log('LunaTVService._get', 'Windows 兜底请求 $uri');
+        final response = await fallbackClient
+            .get(uri, headers: headers)
+            .timeout(effectiveTimeout);
+        _log(
+          'LunaTVService._get',
+          '兜底响应 ${response.statusCode}, '
+          'bodyLength=${response.body.length}, uri=$uri',
+        );
+        return response;
+      } catch (e) {
+        _log('LunaTVService._get', '兜底请求失败: $e, uri=$uri');
+        lastError = e is Exception ? e : Exception(e.toString());
+      } finally {
+        fallbackClient.close();
+      }
+    }
+
     throw lastError ?? Exception('请求失败: $path');
   }
 
@@ -115,14 +196,17 @@ class LunaTVService {
 
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
+      final client = createApiClient();
       try {
-        final response = await http
+        final response = await client
             .post(uri, headers: headers, body: body)
             .timeout(effectiveTimeout);
         return response;
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         if (attempt == LunaTVConfig.maxRetryCount) break;
+      } finally {
+        client.close();
       }
     }
     throw lastError ?? Exception('请求失败: $path');
@@ -146,14 +230,17 @@ class LunaTVService {
 
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
+      final client = createApiClient();
       try {
-        final response = await http
+        final response = await client
             .delete(uri, headers: headers)
             .timeout(effectiveTimeout);
         return response;
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         if (attempt == LunaTVConfig.maxRetryCount) break;
+      } finally {
+        client.close();
       }
     }
     throw lastError ?? Exception('请求失败: $path');
@@ -177,34 +264,39 @@ class LunaTVService {
     final body = <String, String>{'username': username, 'password': password};
 
     try {
-      final response = await http
-          .post(
-            Uri.parse('$base/api/login'),
-            headers: {
-              'Accept': 'application/json, text/plain, */*',
-              'Content-Type': 'application/json',
-              'User-Agent': AppInfoService.userAgent,
-            },
-            body: json.encode(body),
-          )
-          .timeout(const Duration(seconds: 15));
+      final client = createApiClient();
+      try {
+        final response = await client
+            .post(
+              Uri.parse('$base/api/login'),
+              headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json',
+                'User-Agent': AppInfoService.userAgent,
+              },
+              body: json.encode(body),
+            )
+            .timeout(const Duration(seconds: 15));
 
-      if (response.statusCode == 200) {
-        final setCookie = response.headers['set-cookie'];
-        if (setCookie != null && setCookie.isNotEmpty) {
-          return ApiResponse.success(
-            setCookie,
-            statusCode: response.statusCode,
-          );
+        if (response.statusCode == 200) {
+          final setCookie = response.headers['set-cookie'];
+          if (setCookie != null && setCookie.isNotEmpty) {
+            return ApiResponse.success(
+              setCookie,
+              statusCode: response.statusCode,
+            );
+          }
+          return ApiResponse.success('', statusCode: response.statusCode);
         }
-        return ApiResponse.success('', statusCode: response.statusCode);
-      }
 
-      final data = _decodeBody(response);
-      return ApiResponse.error(
-        data['error']?.toString() ?? '登录失败: ${response.statusCode}',
-        statusCode: response.statusCode,
-      );
+        final data = _decodeBody(response);
+        return ApiResponse.error(
+          data['error']?.toString() ?? '登录失败: ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      } finally {
+        client.close();
+      }
     } catch (e) {
       return ApiResponse.error('登录请求异常: $e');
     }
@@ -239,10 +331,22 @@ class LunaTVService {
       final query = <String, String>{'q': trimmed};
       if (source != null && source.isNotEmpty) query['source'] = source;
 
+      final base = await _baseUrl();
+      _log(
+        'LunaTVService.search',
+        'base=$base, keyword=$trimmed, source=$source',
+      );
+
       final response = await _get(
         '/api/search',
         queryParameters: query,
         timeout: LunaTVConfig.searchTimeout,
+      );
+
+      _log(
+        'LunaTVService.search',
+        'status=${response.statusCode}, '
+        'bodyLength=${response.body.length}',
       );
 
       if (response.statusCode == 200) {
@@ -251,6 +355,10 @@ class LunaTVService {
         final results = resultsData
             .map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
             .toList();
+        _log(
+          'LunaTVService.search',
+          '解析结果数=${results.length}, body前200=${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}',
+        );
         // 仅缓存非空结果，避免服务器异常/无数据时被当作“无源”长期缓存，
         // 服务器恢复后可立即重新搜索到源；空结果同时清理旧缓存。
         if (results.isNotEmpty) {
@@ -264,11 +372,13 @@ class LunaTVService {
         }
         return ApiResponse.success(results, statusCode: response.statusCode);
       }
+      _log('LunaTVService.search', '非 200 响应 status=${response.statusCode}');
       return ApiResponse.error(
         'LunaTV 搜索失败: ${response.statusCode}',
         statusCode: response.statusCode,
       );
-    } catch (e) {
+    } catch (e, stack) {
+      _log('LunaTVService.search', '搜索异常 $e\n$stack');
       return ApiResponse.error('LunaTV 搜索异常: $e');
     }
   }

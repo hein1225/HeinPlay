@@ -1,8 +1,7 @@
 import 'dart:async';
 
-import 'package:http/http.dart' as http;
-
 import 'app_info_service.dart';
+import 'lunatv_service.dart';
 import 'user_data_service.dart';
 
 /// 服务器延迟测速服务，用于在主/备用服务器地址之间自动选择延迟最低的地址。
@@ -15,8 +14,9 @@ class ServerLatencyService {
     final base = url.trim().replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/api/playrecords?limit=1');
     final stopwatch = Stopwatch()..start();
+    final client = LunaTVService.createApiClient();
     try {
-      final response = await http.get(uri, headers: {
+      final response = await client.get(uri, headers: {
         'User-Agent': AppInfoService.userAgent,
       }).timeout(_testTimeout);
       stopwatch.stop();
@@ -32,6 +32,8 @@ class ServerLatencyService {
         latencyMs: _testTimeout.inMilliseconds,
         reachable: false,
       );
+    } finally {
+      client.close();
     }
   }
 

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # HeinPlay 全平台构建脚本
 # 功能：菜单选择 flutter doctor、依赖检查、Windows 插件检查、Android 签名完整性检查
 #       构建 TV / tvLegacy / 手机 / Windows / 全部版本，汇总结果、日志路径与产物路径

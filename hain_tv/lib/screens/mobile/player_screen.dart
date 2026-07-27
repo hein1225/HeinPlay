@@ -72,6 +72,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   final Set<String> _skippedSegments = {};
   bool _autoNextTriggered = false;
 
+  /// 记录最近一次触发片头片尾跳过 seek 的时间，避免 seek 后位置未立即更新导致重复触发。
+  DateTime? _lastSkipSeekAt;
+
   final List<StreamSubscription> _subscriptions = [];
   Timer? _controlsTimer;
   Timer? _longPressSeekTimer;
@@ -248,6 +251,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       setState(() {
         _skipConfig = response.data;
         _skippedSegments.clear();
+        _lastSkipSeekAt = null;
         _autoNextTriggered = false;
       });
     }
@@ -328,6 +332,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     final totalSeconds = _duration.inMilliseconds / 1000.0;
     if (totalSeconds <= 0) return;
 
+    // 跳过 seek 冷却：触发一次跳过后 3 秒内不再重复触发，避免 seek 后画面未更新
+    // 导致位置流仍报告在片头片尾区间内而连续 seek。
+    final skipSeekCooldown = _lastSkipSeekAt != null &&
+        DateTime.now().difference(_lastSkipSeekAt!) < const Duration(seconds: 3);
+
     for (final segment in _skipConfig!.segments) {
       final key = '${segment.type}_${segment.start}_${segment.end}';
       if (!segment.autoSkip) continue;
@@ -340,17 +349,29 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       if (segment.type == 'ending' && segment.start <= 1.0) continue;
 
       final inSegment = seconds >= segment.start && seconds <= segment.end;
-      final passedSegment = seconds > segment.end + 1.0;
+      final passedSegment = seconds > segment.end + 0.5;
 
       if (inSegment) {
+        if (skipSeekCooldown) {
+          // 冷却期内仅打印一次日志，避免刷屏
+          if (!_skippedSegments.contains(key)) {
+            debugPrint(
+              '跳过片段冷却中: type=${segment.type} start=${segment.start} end=${segment.end}',
+            );
+            _skippedSegments.add(key);
+          }
+          continue;
+        }
         // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
         if (!_skippedSegments.contains(key)) {
           debugPrint(
             '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
           );
         }
-        // 跳到片段结束后 1 秒，确保越过片尾并给 ExoPlayer 留出缓冲余量。
-        _safeSeekToSeconds(segment.end + 1.0);
+        // 跳到片段结束后 0.3 秒处，减少跳转到非关键帧导致画面卡住的概率；
+        // 同时仍保留少量缓冲余量，避免解码器停在片尾关键帧上。
+        _lastSkipSeekAt = DateTime.now();
+        _safeSeekToSeconds(segment.end + 0.3);
         break;
       } else if (passedSegment && !_skippedSegments.contains(key)) {
         // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
@@ -427,6 +448,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       _initialized = false;
       _error = null;
       _skippedSegments.clear();
+      _lastSkipSeekAt = null;
       _autoNextTriggered = false;
     });
 
@@ -636,6 +658,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         _switchingSource = false;
         _skipConfig = null;
         _skippedSegments.clear();
+        _lastSkipSeekAt = null;
         _autoNextTriggered = false;
         _initialized = false;
         _error = null;
@@ -757,6 +780,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       _switchingSource = false;
       _skipConfig = null;
       _skippedSegments.clear();
+      _lastSkipSeekAt = null;
       _autoNextTriggered = false;
     });
 

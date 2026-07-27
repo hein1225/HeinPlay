@@ -9,6 +9,7 @@ import 'package:hain_tv/services/local_storage_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/utils/windows_logger.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
 
@@ -36,6 +37,9 @@ class SearchScreenState extends State<SearchScreen> {
   String? _error;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
+
+  /// 防止搜索框 onSubmitted / onEditingComplete / 搜索按钮重复触发搜索。
+  bool _searching = false;
 
   // Windows 电脑版使用键盘输入，不需要手机扫码输入。
   final bool _hasQrInput = !DeviceUtils.isWindows;
@@ -121,7 +125,8 @@ class SearchScreenState extends State<SearchScreen> {
 
   Future<void> _search(String keyword) async {
     final trimmed = keyword.trim();
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty || _searching) return;
+    _searching = true;
 
     setState(() {
       _loading = true;
@@ -129,20 +134,45 @@ class SearchScreenState extends State<SearchScreen> {
       _results = [];
     });
 
-    await LocalStorageService.addSearchHistory(trimmed);
-    _loadSearchHistory();
+    try {
+      WindowsLogger.log('WindowsSearchScreen', '开始保存搜索历史 "$trimmed"');
+      await LocalStorageService.addSearchHistory(trimmed);
+      WindowsLogger.log('WindowsSearchScreen', '搜索历史保存完成');
+      await _loadSearchHistory();
+    } catch (e, stack) {
+      WindowsLogger.log('WindowsSearchScreen', '搜索历史保存异常 $e\n$stack');
+    }
 
-    final response = await SearchService.search(keyword: trimmed);
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        if (response.success) {
-          _results = response.data ?? [];
-        } else {
-          _error = response.message;
-        }
-        _syncResultFocusNodes();
-      });
+    WindowsLogger.log('WindowsSearchScreen', '开始搜索 "$trimmed"');
+    try {
+      // Windows 键鼠输入容易因空格、符号等导致精确匹配被过滤，使用更宽松的模糊匹配。
+      final response = await SearchService.search(keyword: trimmed, fuzzy: true);
+      WindowsLogger.log(
+        'WindowsSearchScreen',
+        '搜索 "$trimmed" 结果 success=${response.success}, '
+        'count=${response.data?.length ?? 0}, message=${response.message}',
+      );
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          if (response.success) {
+            _results = response.data ?? [];
+          } else {
+            _error = response.message;
+          }
+          _syncResultFocusNodes();
+        });
+      }
+    } catch (e, stack) {
+      WindowsLogger.log('WindowsSearchScreen', '搜索异常 $e\n$stack');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '搜索异常: $e';
+        });
+      }
+    } finally {
+      _searching = false;
     }
   }
 
@@ -326,18 +356,37 @@ class SearchScreenState extends State<SearchScreen> {
   ///
   /// 搜索框（TextField）会消耗方向键事件，外层 Focus 的 onKeyEvent 无法收到，
   /// 因此通过 HardwareKeyboard 层面监听，确保 TV 遥控器方向键能按预期在各个区域移动。
+  /// 回车键交给 Focus.onKeyEvent 处理，避免全局与 Focus 重复触发搜索。
   bool _handleHardwareKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
 
     // 仅在本页面获得焦点时处理，避免影响顶部导航栏或其他页面
     if (!_focusInSearchPage) return false;
 
-    return _handleDirectionKey(event.logicalKey) == _KeyAction.handled;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      return false;
+    }
+
+    return _handleDirectionKey(key) == _KeyAction.handled;
   }
 
   _KeyAction _handleDirectionKey(LogicalKeyboardKey key) {
     final resultCrossAxisCount = _effectiveResultCrossAxisCount;
     final historyCols = _historyCrossAxisCount;
+
+    // 回车：搜索框内执行搜索，避免被外层导航消费。
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (_focusInSearchBox) {
+        _search(_controller.text);
+        return _KeyAction.handled;
+      }
+      return _KeyAction.ignored;
+    }
 
     // 按右：搜索框→二维码（TV 版）；搜索框/历史→搜索结果第一项
     if (key == LogicalKeyboardKey.arrowRight) {
@@ -557,16 +606,34 @@ class SearchScreenState extends State<SearchScreen> {
               decoration: InputDecoration(
                 hintText: '输入关键词',
                 hintStyle: const TextStyle(color: AppColors.textMuted),
-                suffixIcon: _controller.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(
-                          Icons.clear,
-                          color: AppColors.textSecondary,
-                          size: 18,
+                suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _controller,
+                  builder: (context, value, child) {
+                    final hasText = value.text.isNotEmpty;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (hasText)
+                          IconButton(
+                            icon: const Icon(
+                              Icons.clear,
+                              color: AppColors.textSecondary,
+                              size: 18,
+                            ),
+                            onPressed: _clearInput,
+                          ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.search,
+                            color: AppColors.textSecondary,
+                            size: 18,
+                          ),
+                          onPressed: () => _search(_controller.text),
                         ),
-                        onPressed: _clearInput,
-                      )
-                    : null,
+                      ],
+                    );
+                  },
+                ),
                 filled: true,
                 fillColor: AppColors.bgApp,
                 border: OutlineInputBorder(

@@ -79,6 +79,10 @@ class _WindowsShellState extends State<WindowsShell> {
     if (index == 0) {
       _profileScreenKey.currentState?.refresh();
     }
+    // 切换到搜索页时让搜索框获得焦点，便于键盘/遥控器直接输入。
+    if (index == 1) {
+      _searchScreenKey.currentState?.requestSearchBoxFocus();
+    }
   }
 
   void _handleBack() {
@@ -92,9 +96,23 @@ class _WindowsShellState extends State<WindowsShell> {
     }
   }
 
+  /// 当前焦点是否在文本输入框内。
+  ///
+  /// 搜索框等编辑区域获得焦点时，顶部导航不应再消费方向键/回车键，
+  /// 否则会导致搜索框内按回车无法触发搜索、按左右方向键切换页面。
+  bool _isEditing() {
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus == null || focus.context == null) return false;
+    return focus.context!.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
   /// 键盘方向键切换顶部导航。
   KeyEventResult _handleNavKey(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    // 焦点在输入框内时交给输入框自行处理（如回车搜索、方向键移动光标）。
+    if (_isEditing()) {
       return KeyEventResult.ignored;
     }
     switch (event.logicalKey) {

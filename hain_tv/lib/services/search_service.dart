@@ -125,8 +125,8 @@ class SearchService {
     SearchResult result,
     String query,
   ) {
-    final title = (result.title).trim();
-    final keyword = query.trim();
+    final title = (result.title).trim().toLowerCase();
+    final keyword = query.trim().toLowerCase();
 
     if (title.isEmpty || keyword.isEmpty) return 0;
 
@@ -459,6 +459,14 @@ class SearchService {
       fuzzy: fuzzy,
     );
     if (results.isEmpty) {
+      // 模糊搜索模式下若全部被过滤，直接返回 LunaTV 原始结果兜底，避免桌面键鼠输入因大小写/空格等细节搜不到内容。
+      if (fuzzy && lunaResponse.data!.isNotEmpty) {
+        final enriched = await _enrichAllWithDouban(lunaResponse.data!);
+        return ApiResponse.success(
+          enriched.toList(),
+          statusCode: lunaResponse.statusCode,
+        );
+      }
       return ApiResponse.success([], statusCode: lunaResponse.statusCode);
     }
 
