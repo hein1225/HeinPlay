@@ -37,23 +37,49 @@ class ServerLatencyService {
     }
   }
 
-  /// 对 [primary] 和 [backup] 进行延迟测速，返回并保存延迟最低的可达地址。
-  /// 所有地址均不可达时回退到 [primary]。
+  /// 对 [primary] 和 [backup] 进行延迟测速，返回并保存第一个可达的地址。
+  ///
+  /// 改为竞争模式：所有候选地址同时发起请求，只要有一个返回 200/401
+  /// 立即采用该地址，不再等待其他地址的超时，显著加快双服务器场景下
+  /// 的启动速度。所有地址均不可达时回退到 [primary]。
   static Future<String> selectBestServer(String primary, String? backup) async {
     final candidates = <String>[primary];
     if (backup != null && backup.trim().isNotEmpty && backup.trim() != primary) {
       candidates.add(backup.trim());
     }
 
-    final results = await Future.wait(candidates.map(_testOne));
-    final reachable = results.where((r) => r.reachable).toList();
-    if (reachable.isEmpty) {
+    if (candidates.length == 1) {
       await UserDataService.saveLastSelectedServerUrl(primary);
       return primary;
     }
 
-    reachable.sort((a, b) => a.latencyMs.compareTo(b.latencyMs));
-    final best = reachable.first.url;
+    final completer = Completer<String>();
+    var pending = candidates.length;
+
+    void onResult(({String url, int latencyMs, bool reachable}) result) {
+      if (completer.isCompleted) return;
+      if (result.reachable) {
+        completer.complete(result.url);
+        return;
+      }
+      pending--;
+      if (pending == 0) {
+        // 全部失败，回退到 primary
+        completer.complete(primary);
+      }
+    }
+
+    for (final url in candidates) {
+      _testOne(url).then(onResult, onError: (_) {
+        onResult((
+          url: url,
+          latencyMs: _testTimeout.inMilliseconds,
+          reachable: false,
+        ));
+      });
+    }
+
+    final best = await completer.future;
     await UserDataService.saveLastSelectedServerUrl(best);
     return best;
   }

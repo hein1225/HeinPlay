@@ -2,7 +2,7 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快速切换、连接状态可视化、tvLegacy 低版本兼容等能力。
+v1.2.1 在 v1.2.0 基础上新增 Windows 播放页小窗模式与窗口置顶，并修复 TV / Windows 搜索页焦点移动与搜索灰屏问题。
 
 ![海因影视 TV 版界面预览](docs/screenshots/home.png)
 
@@ -111,10 +111,10 @@ v1.2.0 新增互联网/局域网双服务器自动切换、主/子双账号快�
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
-| `heinplay-1.2.0-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
-| `heinplay-1.2.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.2.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.2.1-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
+| `heinplay-1.2.1-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
+| `heinplay-1.2.1-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.2.1-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 项目结构
 
@@ -220,6 +220,16 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 更新日志
 
 <details open>
+<summary><strong>1.2.1</strong></summary>
+
+- **Windows 播放页小窗模式**：播放控制栏新增「小窗播放/恢复窗口」按钮，可将播放窗口一键切换为右下角小窗（默认 480×270）并继续播放；小窗支持鼠标拖动、双击恢复/全屏、四周热区自由拉伸，退出小窗后自动恢复原窗口尺寸或全屏状态。
+- **Windows 播放页窗口置顶**：播放控制栏新增「窗口置顶/取消置顶」按钮，普通窗口与小窗模式均可切换置顶，全屏切换时自动同步置顶状态。
+- **搜索页焦点与灰屏修复**：修复 TV 版在「正在补充海报信息」阶段焦点无法移动到搜索结果海报的问题，修复 Windows 版搜索过程中结果区偶发灰屏的问题；根因是搜索结果海报 `FocusNode` 被同步 dispose 导致旧 widget 访问已释放节点，已改为延迟释放并增加长度校验防御。
+- **版本号统一**：全项目更新至 `1.2.1`，Release 产物命名同步为 `heinplay-1.2.1-tv.apk`、`heinplay-1.2.1-tvLegacy.apk`、`heinplay-1.2.1-mobile.apk`、`heinplay-1.2.1-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.2.0</strong></summary>
 
 - **互联网/局域网双服务器自动切换**：登录页与服务器管理页支持分别配置互联网服务器与局域网服务器，启动时自动测速并选择延迟最低的可用地址，首页实时显示当前连接状态（互联网/局域网/未连接）。

@@ -19,6 +19,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
 
   bool _loading = false;
   String? _error;
+  String? _progressText;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
 
@@ -48,16 +49,28 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progressText = '正在搜索...';
       _results = [];
     });
 
     await LocalStorageService.addSearchHistory(trimmed);
     _loadSearchHistory();
 
-    final response = await SearchService.search(keyword: trimmed);
+    final response = await SearchService.search(
+      keyword: trimmed,
+      onProgress: (results, progressText) {
+        if (mounted) {
+          setState(() {
+            _results = results;
+            _progressText = progressText;
+          });
+        }
+      },
+    );
     if (mounted) {
       setState(() {
         _loading = false;
+        _progressText = null;
         if (response.success) {
           _results = response.data ?? [];
         } else {
@@ -201,13 +214,23 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
   }
 
   Widget _buildResultsArea() {
-    if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+    if (_loading && _results.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: AppColors.primary),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              _progressText ?? '正在搜索...',
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+          ],
+        ),
       );
     }
 
-    if (_error != null) {
+    if (_error != null && _results.isEmpty) {
       return Center(
         child: Text(
           _error!,
@@ -258,11 +281,40 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       );
     }).toList();
 
-    return MobilePosterGrid(
-      items: items,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: EdgeInsets.zero,
+    return Column(
+      children: [
+        if (_loading && _progressText != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    color: AppColors.primary,
+                    strokeWidth: 2,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  _progressText!,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        MobilePosterGrid(
+          items: items,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+        ),
+      ],
     );
   }
 }

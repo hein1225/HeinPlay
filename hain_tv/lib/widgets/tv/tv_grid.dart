@@ -256,6 +256,7 @@ class TvPosterGrid extends StatefulWidget {
   )?
   onItemKeyEvent;
   final bool Function(int index)? selectedPredicate;
+  final bool shrinkWrap;
 
   const TvPosterGrid({
     super.key,
@@ -269,6 +270,7 @@ class TvPosterGrid extends StatefulWidget {
     this.onKeyEvent,
     this.onItemKeyEvent,
     this.selectedPredicate,
+    this.shrinkWrap = false,
   });
 
   static int computeCrossAxisCount(double width) {
@@ -330,6 +332,27 @@ class _TvPosterGridState extends State<TvPosterGrid> {
   void _ensureVisible(int index) {
     if (index < 0 || index >= _itemKeys.length) return;
     final row = index ~/ _crossAxisCount;
+
+    // shrinkWrap 模式下由外部 Scrollable 统一滚动。
+    if (widget.shrinkWrap) {
+      final itemContext = _itemKeys[index].currentContext;
+      final renderObject = itemContext?.findRenderObject();
+      if (renderObject == null) return;
+      // 用 TvPosterGrid 自身的 context 查找外部 Scrollable，避免找到内部不可滚动的 Scrollable。
+      final outerScrollable = Scrollable.maybeOf(context);
+      if (outerScrollable == null) return;
+      // 同一行内左右移动不触发竖直滚动，避免海报墙上下跳动
+      if (row == _lastFocusedRow) return;
+      _lastFocusedRow = row;
+      outerScrollable.position.ensureVisible(
+        renderObject,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+      return;
+    }
+
     // 同一行内左右移动不触发竖直滚动，避免海报墙上下跳动
     if (row == _lastFocusedRow) {
       debugPrint('[TvPosterGrid._ensureVisible] index=$index row=$row 同一行，不滚动');
@@ -371,6 +394,45 @@ class _TvPosterGridState extends State<TvPosterGrid> {
   int _computeCrossAxisCount(double width) =>
       widget.crossAxisCount ?? TvPosterGrid.computeCrossAxisCount(width);
 
+  Widget _buildItem(int index, int count) {
+    final item = widget.items[index];
+    final isFirst = index == 0;
+    final externalNodes = widget.itemFocusNodes;
+    return TvPosterCard(
+      key: _itemKeys[index],
+      autofocus: widget.autofocusFirstItem && isFirst,
+      focusNode: externalNodes != null && index < externalNodes.length
+          ? externalNodes[index]
+          : (isFirst ? widget.firstItemFocusNode : null),
+      selected: widget.selectedPredicate?.call(index) ?? false,
+      aspectRatio: 0.78,
+      onKeyEvent: (node, event) {
+        if (widget.onItemKeyEvent != null) {
+          final result = widget.onItemKeyEvent!(
+            index,
+            count,
+            node,
+            event,
+          );
+          if (result == KeyEventResult.handled) return result;
+        }
+        return widget.onKeyEvent?.call(node, event) ??
+            KeyEventResult.ignored;
+      },
+      onFocusChange: (focused) {
+        if (focused) _ensureVisible(index);
+      },
+      title: item.title,
+      posterUrl: item.posterUrl,
+      year: item.year,
+      subtitle: item.subtitle,
+      rating: item.rating,
+      ratingLabel: item.ratingLabel,
+      bangumiRating: item.bangumiRating,
+      onTap: item.onTap,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -389,6 +451,43 @@ class _TvPosterGridState extends State<TvPosterGrid> {
                 AppSpacing.md * (count - 1)) /
             count;
         _rowHeight = itemWidth / 0.78 + 6;
+
+        if (widget.shrinkWrap) {
+          // shrinkWrap 模式下使用非滚动网格布局，避免内部 Scrollable 拦截 ensureVisible。
+          final rows = (widget.items.length + count - 1) ~/ count;
+          final rowWidgets = <Widget>[];
+          for (int row = 0; row < rows; row++) {
+            if (row > 0) rowWidgets.add(const SizedBox(height: 6));
+            final children = <Widget>[];
+            for (int col = 0; col < count; col++) {
+              final index = row * count + col;
+              if (col > 0) {
+                children.add(const SizedBox(width: AppSpacing.md));
+              }
+              children.add(
+                Expanded(
+                  child: index < widget.items.length
+                      ? _buildItem(index, count)
+                      : const SizedBox.shrink(),
+                ),
+              );
+            }
+            rowWidgets.add(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: children,
+              ),
+            );
+          }
+          return Padding(
+            padding: widget.padding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: rowWidgets,
+            ),
+          );
+        }
+
         return GridView.builder(
           controller: _scrollController,
           padding: widget.padding,
@@ -400,44 +499,7 @@ class _TvPosterGridState extends State<TvPosterGrid> {
           ),
           scrollCacheExtent: ScrollCacheExtent.pixels(2000),
           itemCount: widget.items.length,
-          itemBuilder: (context, index) {
-            final item = widget.items[index];
-            final isFirst = index == 0;
-            final itemCount = count;
-            return TvPosterCard(
-              key: _itemKeys[index],
-              autofocus: widget.autofocusFirstItem && isFirst,
-              focusNode: widget.itemFocusNodes != null
-                  ? widget.itemFocusNodes![index]
-                  : (isFirst ? widget.firstItemFocusNode : null),
-              selected: widget.selectedPredicate?.call(index) ?? false,
-              aspectRatio: 0.78,
-              onKeyEvent: (node, event) {
-                if (widget.onItemKeyEvent != null) {
-                  final result = widget.onItemKeyEvent!(
-                    index,
-                    itemCount,
-                    node,
-                    event,
-                  );
-                  if (result == KeyEventResult.handled) return result;
-                }
-                return widget.onKeyEvent?.call(node, event) ??
-                    KeyEventResult.ignored;
-              },
-              onFocusChange: (focused) {
-                if (focused) _ensureVisible(index);
-              },
-              title: item.title,
-              posterUrl: item.posterUrl,
-              year: item.year,
-              subtitle: item.subtitle,
-              rating: item.rating,
-              ratingLabel: item.ratingLabel,
-              bangumiRating: item.bangumiRating,
-              onTap: item.onTap,
-            );
-          },
+          itemBuilder: (context, index) => _buildItem(index, count),
         );
       },
     );

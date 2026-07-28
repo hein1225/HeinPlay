@@ -28,13 +28,14 @@ class SearchScreenState extends State<SearchScreen> {
   final _qrFocusNode = FocusNode();
   final List<FocusNode> _historyFocusNodes = [];
   final List<FocusNode> _resultFocusNodes = [];
-  final _resultScrollController = ScrollController();
+  final _pageScrollController = ScrollController();
   BoxConstraints? _resultGridConstraints;
   int _resultCrossAxisCount = 4;
   int _historyCrossAxisCount = 3;
 
   bool _loading = false;
   String? _error;
+  String? _progressText;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
 
@@ -93,7 +94,7 @@ class SearchScreenState extends State<SearchScreen> {
     for (final node in _resultFocusNodes) {
       node.dispose();
     }
-    _resultScrollController.dispose();
+    _pageScrollController.dispose();
     _remoteInputSub?.cancel();
     _remoteInputService.dispose();
     super.dispose();
@@ -114,12 +115,29 @@ class SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  void _scrollToTop() {
+    if (_pageScrollController.hasClients) {
+      _pageScrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
   void _syncResultFocusNodes() {
     while (_resultFocusNodes.length < _results.length) {
       _resultFocusNodes.add(FocusNode());
     }
-    while (_resultFocusNodes.length > _results.length) {
-      _resultFocusNodes.removeLast().dispose();
+    if (_resultFocusNodes.length > _results.length) {
+      final removed = _resultFocusNodes.sublist(_results.length);
+      _resultFocusNodes.removeRange(_results.length, _resultFocusNodes.length);
+      // 延迟释放，避免旧的 FocusableWidget 仍在树上时 dispose 已挂载的节点。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final node in removed) {
+          node.dispose();
+        }
+      });
     }
   }
 
@@ -131,6 +149,7 @@ class SearchScreenState extends State<SearchScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progressText = '正在搜索...';
       _results = [];
     });
 
@@ -146,7 +165,19 @@ class SearchScreenState extends State<SearchScreen> {
     WindowsLogger.log('WindowsSearchScreen', '开始搜索 "$trimmed"');
     try {
       // Windows 键鼠输入容易因空格、符号等导致精确匹配被过滤，使用更宽松的模糊匹配。
-      final response = await SearchService.search(keyword: trimmed, fuzzy: true);
+      final response = await SearchService.search(
+        keyword: trimmed,
+        fuzzy: true,
+        onProgress: (results, progressText) {
+          if (mounted) {
+            _syncResultFocusNodes();
+            setState(() {
+              _results = results;
+              _progressText = progressText;
+            });
+          }
+        },
+      );
       WindowsLogger.log(
         'WindowsSearchScreen',
         '搜索 "$trimmed" 结果 success=${response.success}, '
@@ -155,6 +186,7 @@ class SearchScreenState extends State<SearchScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+          _progressText = null;
           if (response.success) {
             _results = response.data ?? [];
           } else {
@@ -168,6 +200,7 @@ class SearchScreenState extends State<SearchScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+          _progressText = null;
           _error = '搜索异常: $e';
         });
       }
@@ -401,16 +434,18 @@ class SearchScreenState extends State<SearchScreen> {
         }
         return _KeyAction.ignored;
       }
-      if (_focusInQr || _focusInHistory) {
-        if (_resultFocusNodes.isNotEmpty) {
-          _resultFocusNodes.first.requestFocus();
-          return _KeyAction.handled;
+      if (_focusInHistory) {
+        final idx = _currentHistoryIndex!;
+        if ((idx + 1) % historyCols != 0 &&
+            idx + 1 < _historyFocusNodes.length) {
+          _historyFocusNodes[idx + 1].requestFocus();
         }
-        return _KeyAction.ignored;
+        return _KeyAction.handled;
       }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        if (idx + 1 < _resultFocusNodes.length) {
+        if ((idx + 1) % resultCrossAxisCount != 0 &&
+            idx + 1 < _resultFocusNodes.length) {
           _resultFocusNodes[idx + 1].requestFocus();
         }
         return _KeyAction.handled;
@@ -426,14 +461,14 @@ class SearchScreenState extends State<SearchScreen> {
       }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
-        if (idx > 0) {
+        if (idx % resultCrossAxisCount > 0) {
           _resultFocusNodes[idx - 1].requestFocus();
         }
         return _KeyAction.handled;
       }
       if (_focusInHistory) {
         final idx = _currentHistoryIndex!;
-        if (idx > 0) {
+        if (idx % historyCols > 0) {
           _historyFocusNodes[idx - 1].requestFocus();
         }
         return _KeyAction.handled;
@@ -456,9 +491,14 @@ class SearchScreenState extends State<SearchScreen> {
       }
       if (_focusInHistory) {
         final idx = _currentHistoryIndex!;
-        final nextIdx = idx + historyCols;
-        if (nextIdx < _historyFocusNodes.length) {
-          _historyFocusNodes[nextIdx].requestFocus();
+        final currentRow = idx ~/ historyCols;
+        final lastRow =
+            (_historyFocusNodes.length - 1) ~/ historyCols;
+        if (currentRow < lastRow) {
+          final nextIdx = idx + historyCols;
+          if (nextIdx < _historyFocusNodes.length) {
+            _historyFocusNodes[nextIdx].requestFocus();
+          }
         } else if (_resultFocusNodes.isNotEmpty) {
           _resultFocusNodes.first.requestFocus();
         }
@@ -486,7 +526,13 @@ class SearchScreenState extends State<SearchScreen> {
         if (idx >= resultCrossAxisCount) {
           _resultFocusNodes[idx - resultCrossAxisCount].requestFocus();
         } else {
-          _focusNode.requestFocus();
+          // 在结果第一行，按上进入搜索历史第一行第一个
+          if (_historyFocusNodes.isNotEmpty) {
+            _historyFocusNodes.first.requestFocus();
+          } else {
+            _focusNode.requestFocus();
+          }
+          _scrollToTop();
         }
         return _KeyAction.handled;
       }
@@ -497,19 +543,7 @@ class SearchScreenState extends State<SearchScreen> {
           _historyFocusNodes[prevIdx].requestFocus();
         } else {
           _focusNode.requestFocus();
-        }
-        return _KeyAction.handled;
-      }
-      if (_focusInResults) {
-        final idx = _currentResultIndex!;
-        if (idx >= resultCrossAxisCount) {
-          _resultFocusNodes[idx - resultCrossAxisCount].requestFocus();
-        } else {
-          if (_historyFocusNodes.isNotEmpty) {
-            _historyFocusNodes.last.requestFocus();
-          } else {
-            _focusNode.requestFocus();
-          }
+          _scrollToTop();
         }
         return _KeyAction.handled;
       }
@@ -540,33 +574,32 @@ class SearchScreenState extends State<SearchScreen> {
             final historyCols = _computeHistoryCrossAxisCount(
               constraints.maxWidth,
             );
-            if (historyCols != _historyCrossAxisCount) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted)
-                  setState(() => _historyCrossAxisCount = historyCols);
-              });
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 第一行：搜索框 + 手机扫码（TV 版）
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(child: _buildSearchBox()),
-                    if (_hasQrInput) ...[
-                      const SizedBox(width: AppSpacing.md),
-                      _buildQrButton(),
+            // 直接同步更新，避免按键处理时读到过期的列数。
+            _historyCrossAxisCount = historyCols;
+            return SingleChildScrollView(
+              controller: _pageScrollController,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 第一行：搜索框 + 手机扫码（TV 版）
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(child: _buildSearchBox()),
+                      if (_hasQrInput) ...[
+                        const SizedBox(width: AppSpacing.md),
+                        _buildQrButton(),
+                      ],
                     ],
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                // 第二行：搜索历史（两行）
-                _buildHistorySection(constraints.maxWidth, historyCols),
-                const SizedBox(height: AppSpacing.md),
-                // 第三行：搜索结果
-                Expanded(child: _buildResultsArea()),
-              ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  // 第二行：搜索历史（两行）
+                  _buildHistorySection(constraints.maxWidth, historyCols),
+                  const SizedBox(height: AppSpacing.md),
+                  // 第三行：搜索结果
+                  _buildResultsArea(),
+                ],
+              ),
             );
           },
         ),
@@ -807,13 +840,23 @@ class SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildResultsArea() {
-    if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+    if (_loading && _results.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: AppColors.primary),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              _progressText ?? '正在搜索...',
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+          ],
+        ),
       );
     }
 
-    if (_error != null) {
+    if (_error != null && _results.isEmpty) {
       return Center(
         child: Text(
           _error!,
@@ -875,20 +918,46 @@ class SearchScreenState extends State<SearchScreen> {
       builder: (context, constraints) {
         _resultGridConstraints = constraints;
         final count = _computeCrossAxisCount(constraints.maxWidth);
-        if (count != _resultCrossAxisCount) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _resultCrossAxisCount = count);
-          });
-        }
-        return TvPosterGrid(
-          controller: _resultScrollController,
-          items: items,
-          crossAxisCount: count,
-          itemFocusNodes: _resultFocusNodes.isNotEmpty
-              ? _resultFocusNodes
-              : null,
-          autofocusFirstItem: false,
-          onKeyEvent: _handleKeyEvent,
+        // 直接同步更新，避免按键处理时读到过期的列数。
+        _resultCrossAxisCount = count;
+        return Column(
+          children: [
+            if (_loading && _progressText != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                        strokeWidth: 2,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text(
+                      _progressText!,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            TvPosterGrid(
+              shrinkWrap: true,
+              items: items,
+              crossAxisCount: count,
+              itemFocusNodes: _resultFocusNodes.isNotEmpty
+                  ? _resultFocusNodes
+                  : null,
+              autofocusFirstItem: false,
+              onKeyEvent: _handleKeyEvent,
+            ),
+          ],
         );
       },
     );

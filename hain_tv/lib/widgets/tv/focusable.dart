@@ -31,9 +31,12 @@ class FocusableWidget extends StatefulWidget {
 }
 
 class _FocusableWidgetState extends State<FocusableWidget> {
-  late final FocusNode _focusNode;
+  late FocusNode _focusNode;
   bool _focused = false;
   bool _hovered = false;
+
+  // 当内部节点被外部节点替换时，延迟到下一帧再释放，避免 Focus 组件还在 detach 阶段。
+  final List<FocusNode> _pendingDisposeNodes = [];
 
   @override
   void initState() {
@@ -42,7 +45,32 @@ class _FocusableWidgetState extends State<FocusableWidget> {
   }
 
   @override
+  void didUpdateWidget(covariant FocusableWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 当外部传入的 focusNode 发生变化时，切换底层 Focus 使用的节点。
+    // 旧的内部自动创建的节点需要释放；外部传入的节点由调用方管理生命周期。
+    if (widget.focusNode != oldWidget.focusNode) {
+      if (oldWidget.focusNode == null) {
+        _pendingDisposeNodes.add(_focusNode);
+      }
+      _focusNode = widget.focusNode ?? FocusNode();
+      if (_pendingDisposeNodes.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          for (final node in _pendingDisposeNodes) {
+            node.dispose();
+          }
+          _pendingDisposeNodes.clear();
+        });
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    for (final node in _pendingDisposeNodes) {
+      node.dispose();
+    }
+    _pendingDisposeNodes.clear();
     if (widget.focusNode == null) {
       _focusNode.dispose();
     }

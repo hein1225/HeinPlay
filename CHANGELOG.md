@@ -1,6 +1,40 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.2.1</h2></summary>
+
+## 1.2.1
+
+### 新增
+
+- **Windows 播放页小窗模式**
+  - 播放控制栏新增「小窗播放 / 恢复窗口」按钮，一键将播放窗口切换为右下角小窗（默认 480×270），视频继续播放不被中断。
+  - 小窗模式隐藏系统标题栏，支持鼠标拖动窗口位置、双击先恢复普通窗口再进入全屏、四周自定义热区自由拉伸，最小尺寸限制为 320×180。
+  - 退出小窗时自动恢复进入小窗前保存的窗口尺寸与位置；若进入小窗前处于全屏，则先退出全屏并记录状态，恢复后重新进入全屏，避免窗口尺寸异常。
+  - 小窗切换过程增加尺寸限制释放与 `WS_CAPTION` / `WS_THICKFRAME` 窗口样式恢复，避免退出小窗后窗口无法拉伸或变成不可调整的小窗口。
+
+- **Windows 播放页窗口置顶**
+  - 播放控制栏新增「窗口置顶 / 取消置顶」按钮，普通窗口与小窗模式均可独立切换置顶状态。
+  - 全屏切换时根据当前置顶设置自动同步：开启置顶后进入全屏会保持置顶，关闭置顶后退出全屏会取消置顶，避免状态冲突。
+
+### 修复
+
+- **TV / Windows 搜索页焦点与灰屏**
+  - 修复 TV 版在「正在补充海报信息」阶段，焦点无法从搜索历史移动到搜索结果海报的问题。
+  - 修复 Windows 版搜索过程中，搜索结果区域偶发出现灰屏、搜索完成后才恢复正常的问题。
+  - 根因：搜索结果海报使用的外部 `FocusNode` 在列表长度变化时被同步 `dispose`，但旧的 `FocusableWidget` 仍在 widget 树上，导致构建阶段访问已释放节点并抛异常。
+  - 解决：TV / Windows 搜索页的 `_syncResultFocusNodes()` 改为将待释放节点从列表移除后，通过 `addPostFrameCallback` 延迟到下一帧再 `dispose`；`TvPosterGrid` 增加外部 `itemFocusNodes` 长度校验，长度不一致时回退到内部节点，避免越界访问。
+
+### 变更
+
+- **版本号统一**
+  - 全项目版本号更新至 `1.2.1`（build `+13`）。
+  - Release 产物命名同步为 `heinplay-1.2.1-tv.apk`、`heinplay-1.2.1-tvLegacy.apk`、`heinplay-1.2.1-mobile.apk`、`heinplay-1.2.1-windows-portable.zip`。
+  - Windows EXE 资源版本号同步更新为 `1.2.1`，`AppInfoService` 兜底版本号同步更新。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.2.0</h2></summary>
 
 ## 1.2.0

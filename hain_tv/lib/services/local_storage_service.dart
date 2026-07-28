@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'user_data_service.dart';
+
 class PlayRecord {
   final String source;
   final String id;
@@ -106,6 +108,16 @@ class LocalStorageService {
   static const String _favoritesKey = 'favorites';
   static const String _searchHistoryKey = 'search_history';
   static const String _sourceResolutionCacheKey = 'source_resolution_cache';
+
+  /// 根据当前登录账号生成搜索历史存储键，实现主/副账号搜索历史隔离。
+  /// 未登录或无法获取 username 时回退到默认 key，保持与旧数据兼容。
+  static Future<String> _searchHistoryKeyForCurrentAccount() async {
+    final username = await UserDataService.getUsername();
+    if (username != null && username.trim().isNotEmpty) {
+      return '${_searchHistoryKey}_$username';
+    }
+    return _searchHistoryKey;
+  }
 
   static Future<SharedPreferences> _prefs() async {
     return SharedPreferences.getInstance();
@@ -219,7 +231,8 @@ class LocalStorageService {
 
   static Future<List<String>> getSearchHistory() async {
     final prefs = await _prefs();
-    final raw = prefs.getString(_searchHistoryKey);
+    final key = await _searchHistoryKeyForCurrentAccount();
+    final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return [];
     try {
       final list = json.decode(raw) as List<dynamic>;
@@ -233,16 +246,18 @@ class LocalStorageService {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
     final prefs = await _prefs();
+    final key = await _searchHistoryKeyForCurrentAccount();
     final history = await getSearchHistory()
       ..remove(trimmed)
       ..insert(0, trimmed);
     final limited = history.take(50).toList();
-    await prefs.setString(_searchHistoryKey, json.encode(limited));
+    await prefs.setString(key, json.encode(limited));
   }
 
   static Future<void> clearSearchHistory() async {
     final prefs = await _prefs();
-    await prefs.remove(_searchHistoryKey);
+    final key = await _searchHistoryKeyForCurrentAccount();
+    await prefs.remove(key);
   }
 
   static Future<Map<String, String>> getSourceResolutionCache() async {

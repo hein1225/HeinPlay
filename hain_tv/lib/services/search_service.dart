@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../models/api_response.dart';
 import '../models/douban_movie.dart';
@@ -384,7 +384,7 @@ class SearchService {
       final doubanResponse = await DoubanService.search(
         keyword: result.title,
         limit: 5,
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 2));
       if (!doubanResponse.success || doubanResponse.data == null) {
         return result;
       }
@@ -423,6 +423,8 @@ class SearchService {
   static Future<List<SearchResult>> _enrichAllWithDouban(
     List<SearchResult> results, {
     int concurrency = 5,
+    void Function(int completed, int total, List<SearchResult> enrichedSoFar)?
+        onProgress,
   }) async {
     final enriched = <SearchResult>[];
     for (var i = 0; i < results.length; i += concurrency) {
@@ -431,8 +433,21 @@ class SearchService {
         batch.map((result) => _enrichWithDouban(result)),
       );
       enriched.addAll(batchEnriched);
+      onProgress?.call(enriched.length, results.length, enriched.toList());
     }
     return enriched;
+  }
+
+  /// 将进度回调推迟到下一帧执行，避免在 build 阶段触发 setState 导致异常。
+  static void _notifyProgress(
+    void Function(List<SearchResult>, String)? onProgress,
+    List<SearchResult> results,
+    String text,
+  ) {
+    if (onProgress == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      onProgress(results, text);
+    });
   }
 
   static Future<ApiResponse<List<SearchResult>>> search({
@@ -440,6 +455,9 @@ class SearchService {
     String? source,
     bool exactMatch = false,
     bool fuzzy = false,
+    /// 进度回调，搜索找到结果后会立即触发一次（未 enrich），后续每完成一批
+    /// 豆瓣信息补充再触发一次，供 UI 实时刷新结果与进度文案。
+    void Function(List<SearchResult> results, String progressText)? onProgress,
   }) async {
     final lunaResponse = await LunaTVService.search(
       keyword: keyword,
@@ -461,7 +479,21 @@ class SearchService {
     if (results.isEmpty) {
       // 模糊搜索模式下若全部被过滤，直接返回 LunaTV 原始结果兜底，避免桌面键鼠输入因大小写/空格等细节搜不到内容。
       if (fuzzy && lunaResponse.data!.isNotEmpty) {
-        final enriched = await _enrichAllWithDouban(lunaResponse.data!);
+        _notifyProgress(
+          onProgress,
+          lunaResponse.data!,
+          '已找到 ${lunaResponse.data!.length} 个结果，正在补充海报信息...',
+        );
+        final enriched = await _enrichAllWithDouban(
+          lunaResponse.data!,
+          onProgress: (completed, total, enrichedSoFar) {
+            _notifyProgress(
+              onProgress,
+              enrichedSoFar,
+              '正在补充海报信息 ($completed/$total)',
+            );
+          },
+        );
         return ApiResponse.success(
           enriched.toList(),
           statusCode: lunaResponse.statusCode,
@@ -470,7 +502,23 @@ class SearchService {
       return ApiResponse.success([], statusCode: lunaResponse.statusCode);
     }
 
-    final enriched = await _enrichAllWithDouban(results);
+    // 先立即回调未 enrich 的结果，让用户尽快看到搜索内容
+    _notifyProgress(
+      onProgress,
+      results,
+      '已找到 ${results.length} 个结果，正在补充海报信息...',
+    );
+
+    final enriched = await _enrichAllWithDouban(
+      results,
+      onProgress: (completed, total, enrichedSoFar) {
+        _notifyProgress(
+          onProgress,
+          enrichedSoFar,
+          '正在补充海报信息 ($completed/$total)',
+        );
+      },
+    );
 
     return ApiResponse.success(
       enriched.toList(),
