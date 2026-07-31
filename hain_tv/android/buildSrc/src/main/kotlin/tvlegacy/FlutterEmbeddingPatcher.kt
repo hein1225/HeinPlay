@@ -50,9 +50,11 @@ object FlutterEmbeddingPatcher {
             val extractDir = workDir.resolve("extract").apply { mkdirs() }
 
             // 编译补丁源文件，classpath 使用原始 flutter_embedding jar + android.jar
+            // Windows 用 ; 分隔，Linux/macOS 用 : 分隔。
+            val cpSeparator = if (System.getProperty("os.name").lowercase().contains("windows")) ";" else ":"
             val javacProcess = ProcessBuilder(
                 "javac",
-                "-cp", "${originalJar.absolutePath};${androidJar.absolutePath}",
+                "-cp", "${originalJar.absolutePath}$cpSeparator${androidJar.absolutePath}",
                 "-d", classesDir.absolutePath,
                 patchSourceFile.absolutePath
             ).apply {
