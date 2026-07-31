@@ -46,6 +46,9 @@
   - Release 产物命名同步为 `heinplay-1.2.2-tv.apk`、`heinplay-1.2.2-tvLegacy.apk`、`heinplay-1.2.2-mobile.apk`、`heinplay-1.2.2-windows-portable.zip`。
   - Windows EXE 资源版本号同步更新为 `1.2.2`，`AppInfoService` 兜底版本号同步更新。
 
+- **CI 构建修复**
+  - 修复 tvlegacy 的 `FlutterEmbeddingPatcher` 在 GitHub Actions（Ubuntu）上因 `javac` classpath 使用 Windows 分号 `;` 而编译失败的问题，改为根据操作系统自动选择 `;` 或 `:`。
+
 </details>
 
 <details>
