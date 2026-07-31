@@ -227,7 +227,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **搜索体验修复**：搜索页恢复原版模糊搜索逻辑，修复快速切换搜索时并发请求未取消导致结果混乱的问题。
 - **FVP 自动连播修复**：修复 FVP 播放完一集后未自动播放下一集的问题，并统一三端连播兜底逻辑。
 - **tvLegacy 兼容性增强**：为 Android 5.x 设备单独降级 Media3/ExoPlayer 版本，修复因 API 21/22 缺失 `AudioDeviceCallback`、`checkSelfPermission`、`getLocales` 等导致的播放闪退，并补充 Android 5.x 缺失的 Let's Encrypt 根证书信任。
-- **详情页与播放记录/收藏夹打通**：首页继续播放、播放记录、收藏夹点击进入的详情页优先展示豆瓣信息；收藏夹新增保存豆瓣 ID，旧记录可通过标题自动匹配豆瓣兜底。
+- **详情页与播放记录/收藏夹打通**：首页继续播放、播放记录、收藏夹点击进入的详情页优先展示豆瓣信息；收藏夹新增保存豆瓣 ID，旧记录可通过标题自动匹配豆瓣兜底，即使原始源失效也能展示豆瓣详情页。
 - **详情页手动模糊搜索统一**：自动搜索无源时的手动模糊搜索改为与「搜索」分类页一致的搜索逻辑。
 - **版本号统一**：全项目更新至 `1.2.2`，Release 产物命名同步为 `heinplay-1.2.2-tv.apk`、`heinplay-1.2.2-tvLegacy.apk`、`heinplay-1.2.2-mobile.apk`、`heinplay-1.2.2-windows-portable.zip`。
 

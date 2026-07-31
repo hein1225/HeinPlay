@@ -628,11 +628,38 @@ class _DetailScreenState extends State<DetailScreen> {
     }
   }
 
-  /// 提取用于模糊/简化搜索的基准名称：取第一个空格或标点（:：-–—）之前的部分。
+  /// 提取用于模糊/简化搜索的基准名称：
+  /// 1. 去掉括号及其中内容（年份、版本等）。
+  /// 2. 去掉常见的语言/版本/质量后缀（如“国语”“HD”“4K”等）。
+  /// 3. 取第一个空格或标点（:：-–—）之前的部分。
   String _extractSearchBaseName(String title) {
-    final splitIndex = title.indexOf(RegExp(r'[\s:：\-–—]'));
-    if (splitIndex <= 0) return title.trim();
-    return title.substring(0, splitIndex).trim();
+    var base = title.trim();
+
+    // 去掉括号及其中内容（年份、版本等）
+    base = base.replaceAll(RegExp(r'[（(].*?[）)]'), '').trim();
+
+    // 去掉常见的语言/版本/质量后缀
+    const suffixes = [
+      '国语', '粤语', '日语', '英语', '韩语', '中字', '双语',
+      '高清', '超清', '蓝光', 'DVD', 'TV版', '剧场版', 'OVA', 'OAD',
+      'HD', 'BD', '4K', '1080P', '720P', '480P', '2160P',
+    ];
+    var lower = base.toLowerCase();
+    for (final suffix in suffixes) {
+      if (lower.endsWith(suffix.toLowerCase())) {
+        base = base.substring(0, base.length - suffix.length).trim();
+        lower = base.toLowerCase();
+        break;
+      }
+    }
+
+    // 按首个空格/标点截取，进一步去掉副标题
+    final splitIndex = base.indexOf(RegExp(r'[\s:：\-–—]'));
+    if (splitIndex > 0) {
+      base = base.substring(0, splitIndex).trim();
+    }
+
+    return base;
   }
 
   /// 后台搜索播放源，搜索到一个即刷新界面，全部完成后加载当前选中源详情。
