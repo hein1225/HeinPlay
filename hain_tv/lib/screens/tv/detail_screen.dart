@@ -977,11 +977,38 @@ class _DetailScreenState extends State<DetailScreen> {
         unawaited(_loadPlayRecord(force: true, applySelection: true));
       }
     } else {
+      // 详情接口失败时，若当前源已带有搜索返回的剧集/海报，则用它兜底展示，
+      // 避免源失效时直接显示错误页面；同时继续等待豆瓣详情作为更优展示。
+      final fallbackDetail = _buildFallbackVideoDetail();
       setState(() {
-        _error = response.message ?? '获取视频详情失败';
+        if (fallbackDetail != null) {
+          _videoDetail = fallbackDetail;
+        } else {
+          _error = response.message ?? '获取视频详情失败';
+        }
         _detailLoading = false;
       });
     }
+  }
+
+  /// 当 detail 接口失败时，用当前源已有的搜索信息构造一个基础 VideoDetail 用于兜底展示。
+  VideoDetail? _buildFallbackVideoDetail() {
+    final s = _currentSource;
+    if (s.source.isEmpty || s.id.isEmpty) return null;
+    final hasEpisodes = s.episodes.isNotEmpty;
+    final hasPoster = s.poster != null && s.poster!.isNotEmpty;
+    if (!hasEpisodes && !hasPoster) return null;
+    return VideoDetail(
+      source: s.source,
+      sourceName: s.sourceName,
+      id: s.id,
+      title: s.title.isNotEmpty ? s.title : widget.title,
+      poster: s.poster ?? '',
+      year: s.year.isNotEmpty ? s.year : widget.year,
+      doubanId: s.doubanId,
+      episodes: s.episodes,
+      episodesTitles: s.episodesTitles,
+    );
   }
 
   Future<void> _loadDoubanDetails() async {
