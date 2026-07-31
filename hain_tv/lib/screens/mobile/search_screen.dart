@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:hain_tv/models/search_result.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
@@ -22,6 +23,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
   String? _progressText;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
+  http.Client? _searchClient;
 
   @override
   void initState() {
@@ -31,6 +33,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
 
   @override
   void dispose() {
+    _searchClient?.close();
     _controller.dispose();
     super.dispose();
   }
@@ -46,6 +49,11 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
 
+    // 取消上一个未完成的搜索请求
+    _searchClient?.close();
+    final client = http.Client();
+    _searchClient = client;
+
     setState(() {
       _loading = true;
       _error = null;
@@ -56,27 +64,45 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     await LocalStorageService.addSearchHistory(trimmed);
     _loadSearchHistory();
 
-    final response = await SearchService.search(
-      keyword: trimmed,
-      onProgress: (results, progressText) {
-        if (mounted) {
-          setState(() {
-            _results = results;
-            _progressText = progressText;
-          });
-        }
-      },
-    );
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        _progressText = null;
-        if (response.success) {
-          _results = response.data ?? [];
-        } else {
-          _error = response.message;
-        }
-      });
+    try {
+      final response = await SearchService.search(
+        keyword: trimmed,
+        cancelClient: client,
+        fuzzy: true,
+        onProgress: (results, progressText) {
+          if (mounted && _searchClient == client) {
+            setState(() {
+              _results = results;
+              _progressText = progressText;
+            });
+          }
+        },
+      );
+      if (mounted && _searchClient == client) {
+        setState(() {
+          _loading = false;
+          _progressText = null;
+          if (response.success) {
+            _results = response.data ?? [];
+          } else {
+            _error = response.message;
+          }
+        });
+      }
+    } catch (e) {
+      // 被取消的搜索不需要更新界面
+      if (mounted && _searchClient == client) {
+        setState(() {
+          _loading = false;
+          _progressText = null;
+          _error = '搜索失败: $e';
+        });
+      }
+    } finally {
+      if (_searchClient == client) {
+        client.close();
+        _searchClient = null;
+      }
     }
   }
 

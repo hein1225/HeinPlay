@@ -98,5 +98,8 @@ class FvpBackend implements VideoPlayerBackend {
   Stream<bool> get playingStream => _impl.playingStream;
 
   @override
+  Stream<void> get completedStream => _impl.completedStream;
+
+  @override
   Future<void> dispose() => _impl.dispose();
 }

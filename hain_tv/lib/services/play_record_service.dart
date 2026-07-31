@@ -332,12 +332,35 @@ class PlayRecordService {
   }
 
   static double _titleSimilarity(String a, String b) {
-    final na = _normalize(a);
-    final nb = _normalize(b);
+    String normalize(String s) {
+      var result = s
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^\w\s\u4e00-\u9fff]+'), '')
+          .replaceAll(RegExp(r'\s+'), '')
+          .trim();
+      // 将罗马数字/圈数字归一为阿拉伯数字，提升含“Ⅲ”“①”等标题的匹配率
+      const digitMap = {
+        'ⅰ': '1', 'ⅱ': '2', 'ⅲ': '3', 'ⅳ': '4', 'ⅴ': '5',
+        'ⅵ': '6', 'ⅶ': '7', 'ⅷ': '8', 'ⅸ': '9', 'ⅹ': '10',
+        '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
+        '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10',
+        'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5',
+        'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8', 'Ⅸ': '9', 'Ⅹ': '10',
+      };
+      digitMap.forEach((k, v) {
+        result = result.replaceAll(k, v);
+      });
+      return result;
+    }
+
+    final na = normalize(a);
+    final nb = normalize(b);
     if (na.isEmpty || nb.isEmpty) return 0.0;
     if (na == nb) return 1.0;
     if (na.contains(nb) || nb.contains(na)) return 0.9;
-    return 0.0;
+
+    final matchedChars = na.split('').where(nb.contains).length;
+    return matchedChars / na.length;
   }
 
   /// 尝试为播放记录匹配豆瓣海报。
@@ -389,7 +412,10 @@ class PlayRecordService {
           if (bestMatch != null &&
               bestScore >= 0.6 &&
               bestMatch.poster.isNotEmpty) {
-            return record.copyWith(cover: bestMatch.poster);
+            return record.copyWith(
+              cover: bestMatch.poster,
+              doubanId: bestMatch.id,
+            );
           }
         }
       } catch (e) {

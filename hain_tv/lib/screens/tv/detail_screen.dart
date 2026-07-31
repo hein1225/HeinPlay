@@ -129,11 +129,17 @@ class DetailScreen extends StatefulWidget {
           title: favorite.title,
           poster: favorite.cover.isNotEmpty ? favorite.cover : null,
           year: '',
+          doubanId: favorite.doubanId != null
+              ? int.tryParse(favorite.doubanId!)
+              : null,
         ),
       ],
       title: favorite.title,
       poster: favorite.cover.isNotEmpty ? favorite.cover : null,
       year: '',
+      doubanId: favorite.doubanId != null
+          ? int.tryParse(favorite.doubanId!)
+          : null,
       searchOnLoad: true,
     );
   }
@@ -515,8 +521,9 @@ class _DetailScreenState extends State<DetailScreen> {
           source: source,
           id: id,
           title: widget.title,
-          posterUrl: widget.poster ?? _doubanDetails?.poster,
+          posterUrl: _doubanDetails?.poster ?? widget.poster,
           year: widget.year,
+          doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
           createdAt: DateTime.now(),
         );
         await local.LocalStorageService.addFavorite(record);
@@ -662,6 +669,25 @@ class _DetailScreenState extends State<DetailScreen> {
       '[SourceSearch] 首轮结果: success=${response.success}, '
       'count=${response.data?.length ?? 0}, message=${response.message}',
     );
+
+    // 精确模式无结果时，先用原始标题尝试非精确的高相关匹配（包含/开头/高相似），
+    // 比直接截断基准名更可能命中带季/篇后缀的具体条目。
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
+        !fuzzy &&
+        initialExactMatch) {
+      debugPrint('[SourceSearch] 精确模式无结果，尝试高相关匹配: $searchKeyword');
+      response = await SearchService.searchSourcesFastWithVariants(
+        keyword: searchKeyword,
+        exactMatch: false,
+        fuzzy: false,
+        onProgress: onProgress,
+      );
+      debugPrint(
+        '[SourceSearch] 高相关匹配结果: count=${response.data?.length ?? 0}',
+      );
+    }
 
     // 若原始标题无结果，尝试用基准名（首个空格/标点前）重试
     if ((!response.success ||
@@ -839,8 +865,30 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   /// 手动触发模糊搜索，用于精确匹配无结果时。
+  /// 使用与“搜索”分类页一致的 [SearchService.search]（fuzzy: true）逻辑，
+  /// 结果经 groupBySource 后合并到当前源列表。
   Future<void> _runFuzzySearch() async {
-    await _searchSourcesInBackground(fuzzy: true);
+    if (!mounted) return;
+    setState(() {
+      _searchingSources = true;
+      _fuzzySearchEnabled = true;
+    });
+    try {
+      final response = await SearchService.search(
+        keyword: widget.title,
+        fuzzy: true,
+      );
+      if (!mounted) return;
+      if (response.success && response.data != null) {
+        final sources = SearchService.groupBySource(response.data!);
+        _mergeAndUpdateSources(sources, fuzzy: true, isFinal: true);
+      } else {
+        setState(() => _searchingSources = false);
+      }
+    } catch (e) {
+      debugPrint('手动模糊搜索失败: $e');
+      if (mounted) setState(() => _searchingSources = false);
+    }
   }
 
   Future<void> _loadVideoDetail() async {
@@ -977,13 +1025,70 @@ class _DetailScreenState extends State<DetailScreen> {
       return;
     }
 
-    // 既无 Bangumi ID 也无豆瓣 ID：直接结束加载
+    // 既无 Bangumi ID 也无豆瓣 ID：尝试用标题和年份搜索豆瓣兜底，
+    // 使从播放记录/收藏夹等仅有源标题的入口也能展示豆瓣详情页。
+    // 先用完整标题，再用基准名（去掉季/集后缀）重试，提高命中率。
+    final fallbackTitles = [
+      widget.title,
+      if (widget.title.isNotEmpty) _extractSearchBaseName(widget.title),
+    ].where((t) => t.isNotEmpty).toSet().toList();
+    for (final keyword in fallbackTitles) {
+      final searchResponse = await DoubanService.search(
+        keyword: keyword,
+        limit: 5,
+      );
+      if (searchResponse.success && searchResponse.data != null) {
+        DoubanMovie? bestMatch;
+        var bestScore = 0.0;
+        for (final candidate in searchResponse.data!) {
+          var score = _titleSimilarity(widget.title, candidate.title);
+          if (widget.year.isNotEmpty && candidate.year.isNotEmpty) {
+            if (widget.year == candidate.year) score += 0.2;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = candidate;
+          }
+        }
+        if (bestMatch != null && bestScore >= 0.6) {
+          final detailResponse = await DoubanService.getDetails(
+            doubanId: bestMatch.id,
+          );
+          if (mounted) {
+            setState(() {
+              _doubanLoading = false;
+              if (detailResponse.success && detailResponse.data != null) {
+                _doubanDetails = detailResponse.data;
+              }
+            });
+          }
+          return;
+        }
+      }
+    }
     if (mounted) setState(() => _doubanLoading = false);
   }
 
   static double _titleSimilarity(String a, String b) {
-    final na = a.toLowerCase().replaceAll(RegExp(r'\s+'), '');
-    final nb = b.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    String normalize(String s) {
+      var result = s.toLowerCase();
+      // 将罗马数字/圈数字等特殊数字归一为阿拉伯数字，提升含“Ⅲ”“①”等标题的匹配率
+      const digitMap = {
+        'ⅰ': '1', 'ⅱ': '2', 'ⅲ': '3', 'ⅳ': '4', 'ⅴ': '5',
+        'ⅵ': '6', 'ⅶ': '7', 'ⅷ': '8', 'ⅸ': '9', 'ⅹ': '10',
+        '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
+        '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10',
+        'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5',
+        'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8', 'Ⅸ': '9', 'Ⅹ': '10',
+      };
+      digitMap.forEach((k, v) {
+        result = result.replaceAll(k, v);
+      });
+      return result.replaceAll(RegExp(r'\s+'), '');
+    }
+
+    final na = normalize(a);
+    final nb = normalize(b);
     if (na.isEmpty || nb.isEmpty) return 0.0;
     if (na == nb) return 1.0;
 
@@ -1239,8 +1344,9 @@ class _DetailScreenState extends State<DetailScreen> {
       source: source,
       id: id,
       title: widget.title,
-      posterUrl: widget.poster ?? _doubanDetails?.poster,
+      posterUrl: _doubanDetails?.poster ?? widget.poster,
       year: widget.year,
+      doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
       createdAt: DateTime.now(),
     );
     if (targetFavorite) {
@@ -1266,8 +1372,9 @@ class _DetailScreenState extends State<DetailScreen> {
         source: _currentSource.source,
         id: _currentSource.id,
         title: widget.title,
-        cover: widget.poster ?? _doubanDetails?.poster ?? '',
+        cover: _doubanDetails?.poster ?? widget.poster ?? '',
         sourceName: _currentSource.sourceName,
+        doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
       );
       if (add) {
         await LunaTVService.addFavorite(key: key, favorite: favorite);

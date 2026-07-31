@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/search_result.dart';
@@ -37,6 +38,7 @@ class SearchScreenState extends State<SearchScreen> {
   String? _progressText;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
+  http.Client? _searchClient;
 
   // Windows 电脑版使用键盘输入，不需要手机扫码输入。
   final bool _hasQrInput = !DeviceUtils.isWindows;
@@ -80,6 +82,7 @@ class SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _searchClient?.close();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _controller.dispose();
     _focusNode.dispose();
@@ -141,6 +144,11 @@ class SearchScreenState extends State<SearchScreen> {
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
 
+    // 取消上一个未完成的搜索请求
+    _searchClient?.close();
+    final client = http.Client();
+    _searchClient = client;
+
     setState(() {
       _loading = true;
       _error = null;
@@ -151,29 +159,47 @@ class SearchScreenState extends State<SearchScreen> {
     await LocalStorageService.addSearchHistory(trimmed);
     _loadSearchHistory();
 
-    final response = await SearchService.search(
-      keyword: trimmed,
-      onProgress: (results, progressText) {
-        if (mounted) {
+    try {
+      final response = await SearchService.search(
+        keyword: trimmed,
+        cancelClient: client,
+        fuzzy: true,
+        onProgress: (results, progressText) {
+          if (mounted && _searchClient == client) {
+            _syncResultFocusNodes();
+            setState(() {
+              _results = results;
+              _progressText = progressText;
+            });
+          }
+        },
+      );
+      if (mounted && _searchClient == client) {
+        setState(() {
+          _loading = false;
+          _progressText = null;
+          if (response.success) {
+            _results = response.data ?? [];
+          } else {
+            _error = response.message;
+          }
           _syncResultFocusNodes();
-          setState(() {
-            _results = results;
-            _progressText = progressText;
-          });
-        }
-      },
-    );
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        _progressText = null;
-        if (response.success) {
-          _results = response.data ?? [];
-        } else {
-          _error = response.message;
-        }
-        _syncResultFocusNodes();
-      });
+        });
+      }
+    } catch (e) {
+      // 被取消的搜索不需要更新界面
+      if (mounted && _searchClient == client) {
+        setState(() {
+          _loading = false;
+          _progressText = null;
+          _error = '搜索失败: $e';
+        });
+      }
+    } finally {
+      if (_searchClient == client) {
+        client.close();
+        _searchClient = null;
+      }
     }
   }
 

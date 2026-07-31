@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/api_response.dart';
 import '../models/douban_movie.dart';
@@ -376,7 +377,29 @@ class SearchService {
       variants.add(numberVariant);
     }
 
+    // 对于带中文标点/空格的标题，生成去标点变体，提升源标题与查询不完全一致时的命中率。
+    final punctuationVariant = _generatePunctuationVariant(trimmed);
+    if (punctuationVariant != null &&
+        punctuationVariant != trimmed &&
+        !variants.contains(punctuationVariant)) {
+      variants.add(punctuationVariant);
+    }
+
     return variants;
+  }
+
+  /// 移除常见中文/英文标点并压缩空格，用于匹配源站标题格式差异。
+  static String? _generatePunctuationVariant(String query) {
+    final withoutPunctuation = query
+        .replaceAll(
+          RegExp(r'[\u3000\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF5E]'),
+          ' ',
+        )
+        .replaceAll(RegExp(r'[!"#$%&()*+,-./:;<=>?@\[\\\]^_`{|}~]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (withoutPunctuation.isEmpty || withoutPunctuation == query) return null;
+    return withoutPunctuation;
   }
 
   static Future<SearchResult> _enrichWithDouban(SearchResult result) async {
@@ -450,9 +473,13 @@ class SearchService {
     });
   }
 
+  /// 搜索页主搜索入口（恢复 f77c04a 发布版本逻辑）。
+  /// 与详情页源搜索不同，这里以服务端结果为主；开启 [fuzzy] 后即使全部被客户端
+  /// 相关性过滤，也会兜底返回 LunaTV 原始结果，保持搜索页的模糊搜索体验。
   static Future<ApiResponse<List<SearchResult>>> search({
     required String keyword,
     String? source,
+    http.Client? cancelClient,
     bool exactMatch = false,
     bool fuzzy = false,
     /// 进度回调，搜索找到结果后会立即触发一次（未 enrich），后续每完成一批
@@ -462,6 +489,7 @@ class SearchService {
     final lunaResponse = await LunaTVService.search(
       keyword: keyword,
       source: source,
+      cancelClient: cancelClient,
     );
     if (!lunaResponse.success || lunaResponse.data == null) {
       return ApiResponse.error(
@@ -477,7 +505,8 @@ class SearchService {
       fuzzy: fuzzy,
     );
     if (results.isEmpty) {
-      // 模糊搜索模式下若全部被过滤，直接返回 LunaTV 原始结果兜底，避免桌面键鼠输入因大小写/空格等细节搜不到内容。
+      // 模糊搜索模式下若全部被过滤，直接返回 LunaTV 原始结果兜底，
+      // 避免桌面键鼠输入因大小写/空格等细节搜不到内容。
       if (fuzzy && lunaResponse.data!.isNotEmpty) {
         _notifyProgress(
           onProgress,

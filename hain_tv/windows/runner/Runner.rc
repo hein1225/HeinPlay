@@ -61,8 +61,8 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 //
 
 // 应用版本号，与 pubspec.yaml 的 version 主版本保持一致。
-#define VERSION_AS_NUMBER 1,2,1,13
-#define VERSION_AS_STRING "1.2.1"
+#define VERSION_AS_NUMBER 1,2,2,14
+#define VERSION_AS_STRING "1.2.2"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION VERSION_AS_NUMBER

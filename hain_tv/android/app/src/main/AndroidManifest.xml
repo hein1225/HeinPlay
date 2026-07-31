@@ -1,4 +1,9 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- tvlegacy 需要支持 Android 5.0 (API 21)，但部分 Flutter 插件声明 minSdk=24，
+         使用 tools:overrideLibrary 强制合并，由 tvlegacy  flavor 将应用 minSdk 设为 21。 -->
+    <uses-sdk tools:overrideLibrary="io.flutter.plugins.sharedpreferences,io.flutter.plugins.urllauncher,androidx.media3.common,androidx.media3.container,androidx.media3.database,androidx.media3.datasource,androidx.media3.decoder,androidx.media3.exoplayer,androidx.media3.exoplayer.dash,androidx.media3.exoplayer.hls,androidx.media3.exoplayer.rtsp,androidx.media3.exoplayer.smoothstreaming,androidx.media3.extractor" />
 
     <!-- 联网权限 -->
     <uses-permission android:name="android.permission.INTERNET" />

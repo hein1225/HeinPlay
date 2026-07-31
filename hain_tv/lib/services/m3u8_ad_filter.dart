@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 
 /// M3U8 去广告过滤器。
@@ -190,6 +192,7 @@ class M3u8AdFilter {
     } else {
       result = _get(baseUrl, content);
     }
+    result = _ensureDiscontinuityAtBoundaries(baseUrl, content, result);
     result = _keepVodEndList(content, result);
 
     if (totalSegments > 0 && currentAdCount > totalSegments * 0.5) {
@@ -1197,6 +1200,91 @@ class M3u8AdFilter {
     if (query >= 0) clean = clean.substring(0, query);
     final slash = clean.lastIndexOf('/');
     return slash > 0 ? clean.substring(0, slash + 1) : '';
+  }
+
+  /// 在删除片段后的边界插入 `#EXT-X-DISCONTINUITY`。
+  ///
+  /// 过滤逻辑会移除广告片段，但直接删掉会导致被删片段前后的时间戳不连续，
+  /// ExoPlayer 等播放器会报 `AudioSink$UnexpectedDiscontinuityException`。
+  /// 通过比较过滤前后的媒体 URI 顺序，在“中间有片段被删除”的保留片段前补上一个
+  /// discontinuity 标记，让播放器重置时间基线。
+  static String _ensureDiscontinuityAtBoundaries(
+    String baseUrl,
+    String originalContent,
+    String filteredContent,
+  ) {
+    final originalUris = _extractMediaUris(baseUrl, originalContent);
+    if (originalUris.isEmpty) return filteredContent;
+
+    final resultLines = filteredContent.replaceAll('\r\n', '\n').split('\n');
+    final groups = <List<String>>[];
+    var current = <String>[];
+    for (final raw in resultLines) {
+      final item = raw.trim();
+      if (item.isEmpty) continue;
+      if (_isMediaUriLine(item)) {
+        current.add(raw);
+        groups.add(current);
+        current = [];
+      } else {
+        current.add(raw);
+      }
+    }
+    if (current.isNotEmpty) groups.add(current);
+
+    final indexMap = <String, Queue<int>>{};
+    for (var i = 0; i < originalUris.length; i++) {
+      indexMap.putIfAbsent(originalUris[i], () => Queue<int>()).add(i);
+    }
+
+    var insertedCount = 0;
+    int? prevOriginalIndex;
+    for (final group in groups) {
+      final lastLine = group.lastOrNull?.trim() ?? '';
+      if (!_isMediaUriLine(lastLine)) continue;
+
+      final absoluteUrl = _toAbsoluteUrl(baseUrl, lastLine);
+      final queue = indexMap[absoluteUrl];
+      if (queue == null || queue.isEmpty) continue;
+
+      final originalIndex = queue.removeFirst();
+      final hasGap = (prevOriginalIndex == null && originalIndex > 0) ||
+          (prevOriginalIndex != null && originalIndex > prevOriginalIndex + 1);
+      if (hasGap && !_groupHasDiscontinuity(group)) {
+        group.insert(0, _tagDiscontinuity);
+        insertedCount++;
+      }
+      prevOriginalIndex = originalIndex;
+    }
+
+    final sb = StringBuffer();
+    for (final group in groups) {
+      for (final line in group) {
+        if (insertedCount > 0 &&
+            line.trim().startsWith('#EXT-X-DISCONTINUITY-SEQUENCE')) {
+          continue;
+        }
+        sb.writeln(line);
+      }
+    }
+    return sb.toString();
+  }
+
+  static List<String> _extractMediaUris(String baseUrl, String content) {
+    final uris = <String>[];
+    for (final raw in content.replaceAll('\r\n', '\n').split('\n')) {
+      final item = raw.trim();
+      if (item.isEmpty || item.startsWith('#')) continue;
+      uris.add(_toAbsoluteUrl(baseUrl, item));
+    }
+    return uris;
+  }
+
+  static bool _groupHasDiscontinuity(List<String> group) {
+    for (final line in group) {
+      if (_isDiscontinuityTag(line.trim())) return true;
+    }
+    return false;
   }
 
   static String _toAbsoluteUrl(String base, String url) {

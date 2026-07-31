@@ -21,6 +21,7 @@ class FavoriteService {
             cover: f.posterUrl ?? '',
             sourceName: '',
             saveTime: f.createdAt.millisecondsSinceEpoch,
+            doubanId: f.doubanId,
           ),
         )
         .toList();
@@ -39,6 +40,7 @@ class FavoriteService {
                 id: f.id,
                 title: f.title,
                 posterUrl: f.cover.isNotEmpty ? f.cover : null,
+                doubanId: f.doubanId,
                 createdAt: DateTime.fromMillisecondsSinceEpoch(
                   f.saveTime ?? DateTime.now().millisecondsSinceEpoch,
                 ),

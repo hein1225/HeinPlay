@@ -43,7 +43,9 @@ class VlcBackend implements VideoPlayerBackend {
   final _durationController = StreamController<Duration>.broadcast();
   final _bufferedController = StreamController<Duration>.broadcast();
   final _playingController = StreamController<bool>.broadcast();
+  final _completedController = StreamController<void>.broadcast();
   VoidCallback? _valueListener;
+  bool _completedReported = false;
   BoxFit _fit = BoxFit.contain;
 
   @override
@@ -87,6 +89,7 @@ class VlcBackend implements VideoPlayerBackend {
     BufferProfileConfig? bufferConfig,
   }) async {
     await dispose();
+    _completedReported = false;
 
     debugPrint('VlcBackend open: $url');
     WindowsLogger.log('VlcBackend', 'open url=$url proxyMode=$proxyMode');
@@ -152,6 +155,17 @@ class VlcBackend implements VideoPlayerBackend {
               : value.position,
         );
         _playingController.add(value.isPlaying);
+
+        // VLC 没有原生完成回调，通过位置到达片尾且停止播放来模拟完成事件。
+        if (!_completedReported &&
+            value.duration > const Duration(seconds: 10) &&
+            !value.isPlaying &&
+            value.position > Duration.zero &&
+            value.duration - value.position <= const Duration(seconds: 1)) {
+          _completedReported = true;
+          debugPrint('VlcBackend 播放完成');
+          _completedController.add(null);
+        }
       };
       controller.addListener(_valueListener!);
 
@@ -214,6 +228,9 @@ class VlcBackend implements VideoPlayerBackend {
   Stream<bool> get playingStream => _playingController.stream;
 
   @override
+  Stream<void> get completedStream => _completedController.stream;
+
+  @override
   Future<void> dispose() async {
     final listener = _valueListener;
     _valueListener = null;
@@ -222,5 +239,6 @@ class VlcBackend implements VideoPlayerBackend {
     }
     _controller?.dispose();
     _controller = null;
+    _completedReported = false;
   }
 }

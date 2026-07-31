@@ -29,6 +29,7 @@ class ConnectivityService {
 
   Timer? _timer;
   bool _checking = false;
+  DateTime? _lastSuccessAt;
 
   /// 启动周期性探测。
   void startMonitoring() {
@@ -45,6 +46,26 @@ class ConnectivityService {
 
   /// 立即执行一次探测。
   Future<void> checkNow() async => _checkConnection();
+
+  /// 业务接口调用成功时主动上报，避免周期性探测失败导致状态误报为未连接。
+  Future<void> reportSuccess([String? url]) async {
+    _lastSuccessAt = DateTime.now();
+    if (!isServerConnected.value) {
+      isServerConnected.value = true;
+    }
+
+    if (url != null && url.trim().isNotEmpty) {
+      final backup = await UserDataService.getBackupServerUrl();
+      final normalizedUrl = url.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+      final normalizedBackup = backup.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+      final type = normalizedBackup.isNotEmpty && normalizedUrl == normalizedBackup
+          ? 'lan'
+          : 'internet';
+      if (serverType.value != type) {
+        serverType.value = type;
+      }
+    }
+  }
 
   Future<void> _checkConnection() async {
     if (_checking) return;
@@ -94,7 +115,14 @@ class ConnectivityService {
             .timeout(_requestTimeout);
 
       // 只有登录态有效且接口返回 200 才算连接成功
-      final connected = response.statusCode == 200;
+      var connected = response.statusCode == 200;
+      // 若本次探测失败，但近期有业务接口实际调用成功，则仍保持已连接状态，
+      // 避免探测 URL 与业务 URL 不一致或瞬时波动导致状态误报。
+      if (!connected &&
+          _lastSuccessAt != null &&
+          DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
+        connected = true;
+      }
       final serverType = await UserDataService.getCurrentServerType();
       _updateStatus(connected, serverType);
       return;
@@ -102,7 +130,14 @@ class ConnectivityService {
         client.close();
       }
     } catch (e) {
-      _updateStatus(false, 'internet');
+      // 异常失败时同样参考最近业务成功记录，避免误报未连接。
+      if (_lastSuccessAt != null &&
+          DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
+        final serverType = await UserDataService.getCurrentServerType();
+        _updateStatus(true, serverType);
+      } else {
+        _updateStatus(false, 'internet');
+      }
     } finally {
       _checking = false;
     }

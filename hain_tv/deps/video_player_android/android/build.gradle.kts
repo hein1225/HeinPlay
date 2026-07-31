@@ -53,7 +53,9 @@ android {
     }
 
     dependencies {
-        val exoplayerVersion = "1.9.2"
+        // tvlegacy 通过 project property 强制使用较低版本 Media3，避免 1.9.2 在 API 21/22
+        // 上引用 AudioDeviceCallback（API 23+）导致 NoClassDefFoundError 闪退。
+        val exoplayerVersion = project.findProperty("heinplay.media3.version") as? String ?: "1.9.2"
         implementation("androidx.media3:media3-exoplayer:${exoplayerVersion}")
         implementation("androidx.media3:media3-exoplayer-hls:${exoplayerVersion}")
         implementation("androidx.media3:media3-exoplayer-dash:${exoplayerVersion}")

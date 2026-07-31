@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/search_result.dart';
@@ -38,9 +39,7 @@ class SearchScreenState extends State<SearchScreen> {
   String? _progressText;
   List<SearchResult> _results = [];
   List<String> _searchHistory = [];
-
-  /// 防止搜索框 onSubmitted / onEditingComplete / 搜索按钮重复触发搜索。
-  bool _searching = false;
+  http.Client? _searchClient;
 
   // Windows 电脑版使用键盘输入，不需要手机扫码输入。
   final bool _hasQrInput = !DeviceUtils.isWindows;
@@ -84,6 +83,7 @@ class SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _searchClient?.close();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _controller.dispose();
     _focusNode.dispose();
@@ -143,8 +143,12 @@ class SearchScreenState extends State<SearchScreen> {
 
   Future<void> _search(String keyword) async {
     final trimmed = keyword.trim();
-    if (trimmed.isEmpty || _searching) return;
-    _searching = true;
+    if (trimmed.isEmpty) return;
+
+    // 取消上一个未完成的搜索请求
+    _searchClient?.close();
+    final client = http.Client();
+    _searchClient = client;
 
     setState(() {
       _loading = true;
@@ -164,12 +168,12 @@ class SearchScreenState extends State<SearchScreen> {
 
     WindowsLogger.log('WindowsSearchScreen', '开始搜索 "$trimmed"');
     try {
-      // Windows 键鼠输入容易因空格、符号等导致精确匹配被过滤，使用更宽松的模糊匹配。
       final response = await SearchService.search(
         keyword: trimmed,
+        cancelClient: client,
         fuzzy: true,
         onProgress: (results, progressText) {
-          if (mounted) {
+          if (mounted && _searchClient == client) {
             _syncResultFocusNodes();
             setState(() {
               _results = results;
@@ -183,7 +187,7 @@ class SearchScreenState extends State<SearchScreen> {
         '搜索 "$trimmed" 结果 success=${response.success}, '
         'count=${response.data?.length ?? 0}, message=${response.message}',
       );
-      if (mounted) {
+      if (mounted && _searchClient == client) {
         setState(() {
           _loading = false;
           _progressText = null;
@@ -197,7 +201,7 @@ class SearchScreenState extends State<SearchScreen> {
       }
     } catch (e, stack) {
       WindowsLogger.log('WindowsSearchScreen', '搜索异常 $e\n$stack');
-      if (mounted) {
+      if (mounted && _searchClient == client) {
         setState(() {
           _loading = false;
           _progressText = null;
@@ -205,7 +209,10 @@ class SearchScreenState extends State<SearchScreen> {
         });
       }
     } finally {
-      _searching = false;
+      if (_searchClient == client) {
+        client.close();
+        _searchClient = null;
+      }
     }
   }
 

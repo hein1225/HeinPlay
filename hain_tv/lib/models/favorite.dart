@@ -6,6 +6,7 @@ class Favorite {
   final String sourceName;
   final String? typeName;
   final int? saveTime;
+  final String? doubanId;
 
   Favorite({
     required this.source,
@@ -15,6 +16,7 @@ class Favorite {
     required this.sourceName,
     this.typeName,
     this.saveTime,
+    this.doubanId,
   });
 
   factory Favorite.fromJson(String key, Map<String, dynamic> json) {
@@ -27,6 +29,7 @@ class Favorite {
       sourceName: json['source_name'] as String? ?? '',
       typeName: json['type_name'] as String?,
       saveTime: (json['save_time'] as num?)?.toInt(),
+      doubanId: json['douban_id']?.toString(),
     );
   }
 
@@ -37,6 +40,7 @@ class Favorite {
       'source_name': sourceName,
       if (typeName != null) 'type_name': typeName,
       if (saveTime != null) 'save_time': saveTime,
+      if (doubanId != null) 'douban_id': doubanId,
     };
   }
 }

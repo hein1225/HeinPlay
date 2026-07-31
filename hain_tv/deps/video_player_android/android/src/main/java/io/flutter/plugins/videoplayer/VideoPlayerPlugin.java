@@ -18,6 +18,8 @@ import io.flutter.plugins.videoplayer.platformview.PlatformVideoViewFactory;
 import io.flutter.plugins.videoplayer.platformview.PlatformViewVideoPlayer;
 import io.flutter.plugins.videoplayer.texture.TextureVideoPlayer;
 import io.flutter.view.TextureRegistry;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLSocketFactory;
 
 /** Android platform implementation of the VideoPlayerPlugin. */
 public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
@@ -32,10 +34,20 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
+    final Context applicationContext = binding.getApplicationContext();
+    // Android 5.x（API < 23）系统根证书库缺少 Let's Encrypt 等现代 CA，
+    // 通过 HttpsURLConnection 全局默认 SSLSocketFactory 补充内置根证书，
+    // 使 ExoPlayer 的 DefaultHttpDataSource 能正常访问 HTTPS 片源。
+    SSLSocketFactory sslSocketFactory =
+        SslSocketFactoryProvider.getLegacyCompatibleSocketFactory(applicationContext);
+    if (sslSocketFactory != null) {
+      HttpsURLConnection.setDefaultSSLSocketFactory(sslSocketFactory);
+    }
+
     final FlutterInjector injector = FlutterInjector.instance();
     this.flutterState =
         new FlutterState(
-            binding.getApplicationContext(),
+            applicationContext,
             binding.getBinaryMessenger(),
             injector.flutterLoader()::getLookupKeyForAsset,
             injector.flutterLoader()::getLookupKeyForAsset,

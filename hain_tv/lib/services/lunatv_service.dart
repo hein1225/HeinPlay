@@ -14,6 +14,7 @@ import '../models/skip_segment.dart';
 import '../models/video_detail.dart';
 import 'app_info_service.dart';
 import 'cache_service.dart';
+import 'connectivity_service.dart';
 import 'm3u8_utils.dart';
 import 'user_data_service.dart';
 import '../utils/windows_logger.dart';
@@ -115,6 +116,7 @@ class LunaTVService {
     String path, {
     Map<String, String>? queryParameters,
     Duration? timeout,
+    http.Client? cancelClient,
   }) async {
     final base = await _baseUrl();
     if (base == null) {
@@ -134,7 +136,8 @@ class LunaTVService {
     );
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
-      final client = createApiClient();
+      final client = cancelClient ?? createApiClient();
+      final shouldCloseClient = cancelClient == null;
       try {
         final response = await client
             .get(uri, headers: headers)
@@ -144,19 +147,24 @@ class LunaTVService {
           '响应 ${response.statusCode}, '
           'bodyLength=${response.body.length}, uri=$uri',
         );
+        // 业务接口返回 200/401 都表示服务器可达，主动同步连接状态。
+        if (response.statusCode == 200 || response.statusCode == 401) {
+          unawaited(ConnectivityService.instance.reportSuccess(base));
+        }
         return response;
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         _log('LunaTVService._get', '第${attempt + 1}次请求失败: $e, uri=$uri');
         if (attempt == LunaTVConfig.maxRetryCount) break;
       } finally {
-        client.close();
+        if (shouldCloseClient) client.close();
       }
     }
 
     // Windows 兜底：使用更保守的客户端再试一次，便于区分是自定义配置还是网络本身问题
     if (Platform.isWindows) {
-      final fallbackClient = _createFallbackClient();
+      final fallbackClient = cancelClient ?? _createFallbackClient();
+      final shouldCloseFallback = cancelClient == null;
       try {
         _log('LunaTVService._get', 'Windows 兜底请求 $uri');
         final response = await fallbackClient
@@ -167,12 +175,15 @@ class LunaTVService {
           '兜底响应 ${response.statusCode}, '
           'bodyLength=${response.body.length}, uri=$uri',
         );
+        if (response.statusCode == 200 || response.statusCode == 401) {
+          unawaited(ConnectivityService.instance.reportSuccess(base));
+        }
         return response;
       } catch (e) {
         _log('LunaTVService._get', '兜底请求失败: $e, uri=$uri');
         lastError = e is Exception ? e : Exception(e.toString());
       } finally {
-        fallbackClient.close();
+        if (shouldCloseFallback) fallbackClient.close();
       }
     }
 
@@ -201,6 +212,9 @@ class LunaTVService {
         final response = await client
             .post(uri, headers: headers, body: body)
             .timeout(effectiveTimeout);
+        if (response.statusCode == 200 || response.statusCode == 401) {
+          unawaited(ConnectivityService.instance.reportSuccess(base));
+        }
         return response;
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
@@ -306,6 +320,7 @@ class LunaTVService {
     required String keyword,
     String? source,
     bool forceRefresh = false,
+    http.Client? cancelClient,
   }) async {
     await _initCache();
     final trimmed = keyword.trim();
@@ -341,6 +356,7 @@ class LunaTVService {
         '/api/search',
         queryParameters: query,
         timeout: LunaTVConfig.searchTimeout,
+        cancelClient: cancelClient,
       );
 
       _log(

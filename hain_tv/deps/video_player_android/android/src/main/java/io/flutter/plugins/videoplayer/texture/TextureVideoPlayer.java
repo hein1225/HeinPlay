@@ -5,11 +5,13 @@
 package io.flutter.plugins.videoplayer.texture;
 
 import android.content.Context;
+import android.os.Build;
 import android.view.Surface;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RestrictTo;
 import androidx.annotation.VisibleForTesting;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
@@ -76,6 +78,12 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
           }
           androidx.media3.exoplayer.trackselection.DefaultTrackSelector trackSelector =
               new androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context);
+          // Android 5.x（API < 23）没有 Context.checkSelfPermission，media3 的 WakeLockManager
+          // 在尝试获取 WakeLock 时会直接调用该方法导致 NoSuchMethodError 闪退。
+          // 应用在 Dart 层使用 wakelock_plus 管理常亮，因此低版本上禁用 ExoPlayer 自带 wake lock。
+          if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            builder.setWakeMode(C.WAKE_MODE_NONE);
+          }
           builder
               .setTrackSelector(trackSelector)
               .setMediaSourceFactory(asset.getMediaSourceFactory(context));

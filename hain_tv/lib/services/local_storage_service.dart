@@ -69,6 +69,7 @@ class FavoriteRecord {
   final String title;
   final String? posterUrl;
   final String? year;
+  final String? doubanId;
   final DateTime createdAt;
 
   const FavoriteRecord({
@@ -77,6 +78,7 @@ class FavoriteRecord {
     required this.title,
     this.posterUrl,
     this.year,
+    this.doubanId,
     required this.createdAt,
   });
 
@@ -87,6 +89,7 @@ class FavoriteRecord {
       title: json['title']?.toString() ?? '',
       posterUrl: json['posterUrl']?.toString(),
       year: json['year']?.toString(),
+      doubanId: json['doubanId']?.toString(),
       createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
     );
   }
@@ -98,6 +101,7 @@ class FavoriteRecord {
       'title': title,
       if (posterUrl != null) 'posterUrl': posterUrl,
       if (year != null) 'year': year,
+      if (doubanId != null) 'doubanId': doubanId,
       'createdAt': createdAt.toIso8601String(),
     };
   }

@@ -28,5 +28,9 @@ abstract class VideoPlayerBackend {
   Stream<Duration> get bufferedStream;
   Stream<bool> get playingStream;
 
+  /// 播放完成事件流。每个 [open] 周期内应仅触发一次，
+  /// 用于在 position 流未精确到达片尾时仍能可靠切下一集。
+  Stream<void> get completedStream;
+
   Future<void> dispose();
 }

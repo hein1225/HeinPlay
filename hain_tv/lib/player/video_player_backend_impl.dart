@@ -41,7 +41,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
   final _durationController = StreamController<Duration>.broadcast();
   final _bufferedController = StreamController<Duration>.broadcast();
   final _playingController = StreamController<bool>.broadcast();
+  final _completedController = StreamController<void>.broadcast();
   Timer? _timer;
+  bool _completedReported = false;
   BoxFit _fit = BoxFit.contain;
 
   VideoPlayerController? get controller => _controller;
@@ -115,6 +117,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     BufferProfileConfig? bufferConfig,
   }) async {
     await dispose();
+    _completedReported = false;
 
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
@@ -221,6 +224,13 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     if (value.hasError && value.errorDescription != null) {
       debugPrint('VideoPlayerBackendImpl 播放错误: ${value.errorDescription}');
     }
+    // 播放器原生报告播放完成时触发一次完成事件，
+    // 避免仅依赖 position 流在片尾未精确更新时漏掉自动下一集。
+    if (value.isCompleted && !_completedReported) {
+      _completedReported = true;
+      debugPrint('VideoPlayerBackendImpl 播放完成');
+      _completedController.add(null);
+    }
   }
 
   void _startPositionTimer() {
@@ -278,9 +288,13 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
   Stream<bool> get playingStream => _playingController.stream;
 
   @override
+  Stream<void> get completedStream => _completedController.stream;
+
+  @override
   Future<void> dispose() async {
     _timer?.cancel();
     _timer = null;
+    _completedReported = false;
     _controller?.removeListener(_onControllerValueChanged);
     await _controller?.dispose();
     _controller = null;

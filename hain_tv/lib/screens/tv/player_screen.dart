@@ -302,6 +302,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
         backend.playingStream.listen((playing) {
           if (mounted) setState(() => _playing = playing);
         }),
+      )
+      ..add(
+        backend.completedStream.listen((_) {
+          if (mounted &&
+              !_autoNextTriggered &&
+              _currentEpisodeIndex < _currentVideoDetail.episodes.length - 1) {
+            _autoNextTriggered = true;
+            debugPrint('播放器报告播放完成，触发下一集');
+            _nextEpisode();
+          }
+        }),
       );
 
     await _openEpisode(_currentEpisodeIndex);
@@ -321,9 +332,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _checkSkipSegments(Duration position) {
-    if (_skipConfig == null || _skipConfig!.segments.isEmpty) return;
-
-    // 刚切换集数/源的前 2 秒内不处理跳过，避免初始化阶段位置抖动导致误触发或 seek 失效。
+    // 刚切换集数/源的前 2 秒内不处理跳过/自动下一集，避免初始化阶段位置抖动导致误触发。
     final switchAt = _episodeSwitchAt;
     if (switchAt != null &&
         DateTime.now().difference(switchAt) < const Duration(seconds: 2)) {
@@ -339,92 +348,93 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final skipSeekCooldown = _lastSkipSeekAt != null &&
         DateTime.now().difference(_lastSkipSeekAt!) < const Duration(seconds: 3);
 
-    for (final segment in _skipConfig!.segments) {
-      final key = '${segment.type}_${segment.start}_${segment.end}';
-      if (!segment.autoSkip) continue;
+    if (_skipConfig != null && _skipConfig!.segments.isNotEmpty) {
+      for (final segment in _skipConfig!.segments) {
+        final key = '${segment.type}_${segment.start}_${segment.end}';
+        if (!segment.autoSkip) continue;
 
-      // 过滤时长异常/超出总时长的无效 segment
-      if (segment.end - segment.start < 1.0) continue;
-      if (segment.type == 'opening' && segment.end >= totalSeconds - 1.0) {
-        continue;
-      }
-      if (segment.type == 'ending' && segment.start <= 1.0) continue;
-
-      final inSegment = seconds >= segment.start && seconds <= segment.end;
-      final passedSegment = seconds > segment.end + 0.5;
-
-      if (inSegment) {
-        if (skipSeekCooldown) {
-          // 冷却期内仅打印一次日志，避免刷屏
-          if (!_skippedSegments.contains(key)) {
-            debugPrint(
-              '跳过片段冷却中: type=${segment.type} start=${segment.start} end=${segment.end}',
-            );
-            _skippedSegments.add(key);
-          }
+        // 过滤时长异常/超出总时长的无效 segment
+        if (segment.end - segment.start < 1.0) continue;
+        if (segment.type == 'opening' && segment.end >= totalSeconds - 1.0) {
           continue;
         }
-        // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
-        if (!_skippedSegments.contains(key)) {
+        if (segment.type == 'ending' && segment.start <= 1.0) continue;
+
+        final inSegment = seconds >= segment.start && seconds <= segment.end;
+        final passedSegment = seconds > segment.end + 0.5;
+
+        if (inSegment) {
+          if (skipSeekCooldown) {
+            // 冷却期内仅打印一次日志，避免刷屏
+            if (!_skippedSegments.contains(key)) {
+              debugPrint(
+                '跳过片段冷却中: type=${segment.type} start=${segment.start} end=${segment.end}',
+              );
+              _skippedSegments.add(key);
+            }
+            continue;
+          }
+          // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
+          if (!_skippedSegments.contains(key)) {
+            debugPrint(
+              '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+            );
+          }
+          // 跳到片段结束后 0.3 秒处，减少跳转到非关键帧导致画面卡住的概率；
+          // 同时仍保留少量缓冲余量，避免解码器停在片尾关键帧上。
+          _lastSkipSeekAt = DateTime.now();
+          _safeSeekToSeconds(segment.end + 0.3);
+          break;
+        } else if (passedSegment && !_skippedSegments.contains(key)) {
+          // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
+          _skippedSegments.add(key);
           debugPrint(
-            '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+            '跳过片段已生效: type=${segment.type} end=${segment.end} current=$seconds',
           );
         }
-        // 跳到片段结束后 0.3 秒处，减少跳转到非关键帧导致画面卡住的概率；
-        // 同时仍保留少量缓冲余量，避免解码器停在片尾关键帧上。
-        _lastSkipSeekAt = DateTime.now();
-        _safeSeekToSeconds(segment.end + 0.3);
-        break;
-      } else if (passedSegment && !_skippedSegments.contains(key)) {
-        // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
-        _skippedSegments.add(key);
-        debugPrint(
-          '跳过片段已生效: type=${segment.type} end=${segment.end} current=$seconds',
-        );
       }
     }
 
     // 总时长过短（如 HLS 直播或解析异常）时不触发片尾下一集
     if (totalSeconds <= 10) return;
 
-    for (final segment in _skipConfig!.segments) {
-      // 只有片尾类型的 segment 才允许触发自动下一集
-      if (segment.type != 'ending' ||
-          !segment.autoNextEpisode ||
-          _autoNextTriggered)
-        continue;
-      var remainingTime = segment.remainingTime;
-      if (remainingTime == null) {
-        remainingTime = totalSeconds - segment.start;
-      }
-      // 限制 remainingTime 不超过实际剩余时长，且不超过总时长一半，
-      // 避免播放器报告错误时长时误触发。
-      final actualRemaining = totalSeconds - segment.start;
-      if (remainingTime > actualRemaining) remainingTime = actualRemaining;
-      // 小于 1 秒视为无效，防止立即触发下一集导致卡死
-      if (remainingTime < 1.0) continue;
-      // 超过总时长一半视为异常配置，不触发
-      if (remainingTime > totalSeconds * 0.5) continue;
-      if (totalSeconds - seconds <= remainingTime) {
-        _autoNextTriggered = true;
-        debugPrint(
-          '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
-        );
-        _nextEpisode();
-        break;
+    if (!_autoNextTriggered &&
+        _skipConfig != null &&
+        _skipConfig!.segments.isNotEmpty) {
+      for (final segment in _skipConfig!.segments) {
+        // 只有片尾类型的 segment 才允许触发自动下一集
+        if (segment.type != 'ending' || !segment.autoNextEpisode) continue;
+        var remainingTime = segment.remainingTime;
+        if (remainingTime == null) {
+          remainingTime = totalSeconds - segment.start;
+        }
+        // 限制 remainingTime 不超过实际剩余时长，且不超过总时长一半，
+        // 避免播放器报告错误时长时误触发。
+        final actualRemaining = totalSeconds - segment.start;
+        if (remainingTime > actualRemaining) remainingTime = actualRemaining;
+        // 小于 1 秒视为无效，防止立即触发下一集导致卡死
+        if (remainingTime < 1.0) continue;
+        // 超过总时长一半视为异常配置，不触发
+        if (remainingTime > totalSeconds * 0.5) continue;
+        if (totalSeconds - seconds <= remainingTime) {
+          _autoNextTriggered = true;
+          debugPrint(
+            '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
+          );
+          _nextEpisode();
+          return;
+        }
       }
     }
 
-    const fallbackRemaining = 5.0;
-    if (!_autoNextTriggered && totalSeconds - seconds <= fallbackRemaining) {
-      final endingSegments = _skipConfig!.segments
-          .where((s) => s.type == 'ending' && s.autoNextEpisode)
-          .toList();
-      if (endingSegments.isNotEmpty) {
-        _autoNextTriggered = true;
-        debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
-        _nextEpisode();
-      }
+    // 兜底：即使没有片尾跳过配置，播放到最后 3 秒也自动下一集
+    const fallbackRemaining = 3.0;
+    if (!_autoNextTriggered &&
+        _currentEpisodeIndex < _currentVideoDetail.episodes.length - 1 &&
+        totalSeconds - seconds <= fallbackRemaining) {
+      _autoNextTriggered = true;
+      debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
+      _nextEpisode();
     }
   }
 

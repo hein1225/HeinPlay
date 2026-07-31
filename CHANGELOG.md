@@ -1,6 +1,54 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.2.2</h2></summary>
+
+## 1.2.2
+
+### 优化
+
+- **去广告播放体验优化**
+  - 优化 M3U8 本地去广告与代理逻辑，提升含广告、多切片源播放稳定性。
+  - 修复去广告开关状态在设置页偶发与实际存储值不一致的问题。
+  - `AdFilterEngine` 增加真实开关值日志，便于排查状态。
+
+- **服务器连接判断优化**
+  - 启动时与「我的-服务器管理」页手动测速时，互联网/局域网候选地址并发探测。
+  - 首个返回 HTTP 200/401 的地址立即被采用并持久化，无需等待慢地址超时，显著降低无网或慢网场景下的等待与误判。
+
+- **搜索体验优化**
+  - 搜索页恢复原版模糊搜索逻辑（`SearchService.search`），与视频详情页搜索源逻辑解耦。
+  - 修复搜索页在上一次搜索未完成时用户立即点击新搜索，旧请求未被取消导致多个任务并行的问题；三端搜索页均加入 HTTP 请求取消机制。
+
+- **详情页搜索与展示优化**
+  - 自动搜索无源时的手动模糊搜索改为与「搜索」分类页一致的 `SearchService.search(fuzzy: true)` 逻辑。
+  - 首页继续播放、播放记录、收藏夹点击进入的详情页优先展示豆瓣信息。
+  - 收藏夹数据模型新增 `doubanId`，收藏时同步保存，下次从收藏夹进入可直接加载豆瓣详情。
+  - 播放记录/收藏夹无豆瓣 ID 时，详情页通过标题+年份自动匹配豆瓣兜底，并用完整标题与基准名（去掉季/集后缀）双重尝试，提升命中率。
+  - 标题相似度算法增加罗马数字/圈数字归一化（如 `Ⅲ`→`3`），减少因特殊字符导致的匹配失败。
+
+### 修复
+
+- **FVP 播放完未自动下一集**
+  - 修复 FVP 播放完一集后未触发下一集的问题。
+  - 统一三端播放器 `_checkSkipSegments` 逻辑，移除 `_autoNextTriggered` 循环条件并增加 3 秒兜底自动连播。
+
+- **tvLegacy 播放闪退与源失败**
+  - 为 tvLegacy 单独降级 Media3/ExoPlayer 版本到 `1.1.0`，规避 Media3 1.9.2 在 API 21/22 上引用 `AudioDeviceCallback`（API 23+）导致的 `NoClassDefFoundError` 闪退。
+  - 修复 ExoPlayer 在 API < 23 设备上因 `Context.checkSelfPermission`（API 23+）缺失导致的 `NoSuchMethodError`：构建 ExoPlayer 时对 API < 23 禁用 WakeLock。
+  - 修复 Flutter LocalizationPlugin 在 API 21/22 上调用 `Configuration.getLocales`（API 24+）导致的 `NoSuchMethodError`：通过 `FlutterEmbeddingPatcher` 替换 `LocalizationPlugin.class` 为兼容版本。
+  - 修复 Android 5.x 播放源 HTTPS 证书信任失败：新增 `SslSocketFactoryProvider`，合并系统证书与内置 Let's Encrypt ISRG Root X1/X2，并通过 `VideoPlayerPlugin` 注入。
+
+### 变更
+
+- **版本号统一**
+  - 全项目版本号更新至 `1.2.2`（build `+14`）。
+  - Release 产物命名同步为 `heinplay-1.2.2-tv.apk`、`heinplay-1.2.2-tvLegacy.apk`、`heinplay-1.2.2-mobile.apk`、`heinplay-1.2.2-windows-portable.zip`。
+  - Windows EXE 资源版本号同步更新为 `1.2.2`，`AppInfoService` 兜底版本号同步更新。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.2.1</h2></summary>
 
 ## 1.2.1
