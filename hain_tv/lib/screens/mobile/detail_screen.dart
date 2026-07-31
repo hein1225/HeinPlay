@@ -940,7 +940,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       year: s.year.isNotEmpty ? s.year : widget.year,
       doubanId: s.doubanId,
       episodes: s.episodes,
-      episodesTitles: s.episodesTitles,
+      episodesTitles: const [],
     );
   }
 

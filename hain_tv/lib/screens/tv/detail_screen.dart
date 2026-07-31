@@ -1007,7 +1007,7 @@ class _DetailScreenState extends State<DetailScreen> {
       year: s.year.isNotEmpty ? s.year : widget.year,
       doubanId: s.doubanId,
       episodes: s.episodes,
-      episodesTitles: s.episodesTitles,
+      episodesTitles: const [],
     );
   }
 
