@@ -225,6 +225,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **自动测速开关**：全版本设置页新增「进入详情页自动测速」开关，默认开启；关闭后无播放记录的豆瓣/Bangumi 详情页在搜索源完成后即可播放与选集。
 - **手动测速后台继续**：关闭自动测速后，用户手动触发测速仍可进入播放，测速在后台继续完成排序，行为与有播放记录时一致。
 - **TV 服务器管理二维码优化**：「我的-服务器管理」二维码输入页面默认带入电视端已保存的互联网/局域网地址；手机提交时空字段不再覆盖电视端原有地址。
+- **TV 兼容性优化**：移除全局 Impeller 禁用，改为仅 TV/tvLegacy  flavor 禁用 Impeller，手机版继续保留 Vulkan，提升老机顶盒/低版本电视设备兼容性。
 - **版本号统一**：全项目更新至 `1.2.3`（build `+15`），Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
 
 </details>

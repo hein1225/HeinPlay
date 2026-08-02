@@ -22,6 +22,10 @@
   - 「我的-服务器管理」二维码页面默认带入电视端已保存的互联网/局域网地址，手机端可直接在已有地址上修改。
   - 手机提交后，未填写的字段保留电视端原有地址，避免空值覆盖已有服务器配置。
 
+- **TV 兼容性优化**
+  - 移除全局 Impeller 禁用，改为仅 TV/tvLegacy flavor 通过 `AndroidManifest.xml` 禁用 Impeller，手机版继续保留 Vulkan 渲染后端。
+  - 修复部分老机顶盒/低版本电视设备因 Vulkan 驱动不支持导致的 `ErrorFormatNotSupported` 闪退，同时不影响支持 Vulkan 的移动设备性能。
+
 ### 变更
 
 - **版本号统一**
