@@ -1,6 +1,37 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.2.3</h2></summary>
+
+## 1.2.3
+
+### 新增
+
+- **自动测速开关**
+  - 全版本设置页新增「进入详情页自动测速」开关，默认开启，与原有行为保持一致。
+  - 开关状态通过 `UserDataService.saveAutoSpeedTest` / `getAutoSpeedTest` 持久化存储。
+
+### 优化
+
+- **无播放记录详情页体验**
+  - 关闭自动测速后，豆瓣/Bangumi 等无播放记录详情页在搜索源完成后立即启用播放按钮与选集，无需等待测速完成。
+  - 关闭自动测速后，用户手动触发测速仍可进入播放，测速在后台继续完成排序并同步到播放页，行为与有播放记录时一致。
+  - 自动测速开启时，原有逻辑不变：多源未完成测速前播放按钮仍显示「测速中」并禁用。
+
+- **TV 服务器管理二维码输入**
+  - 「我的-服务器管理」二维码页面默认带入电视端已保存的互联网/局域网地址，手机端可直接在已有地址上修改。
+  - 手机提交后，未填写的字段保留电视端原有地址，避免空值覆盖已有服务器配置。
+
+### 变更
+
+- **版本号统一**
+  - 全项目版本号更新至 `1.2.3`（build `+15`）。
+  - Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
+  - Windows EXE 资源版本号同步更新为 `1.2.3`，`AppInfoService` 兜底版本号同步更新。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.2.2</h2></summary>
 
 ## 1.2.2

@@ -121,8 +121,13 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
 
       final normalized =
           UserDataService.classifyServerUrls(serverUrl, backupServerUrl);
-      await _setPrimaryServerUrl(normalized.internet);
-      await _setBackupServerUrl(normalized.lan);
+      // 手机端未填写的字段保留电视端原有地址，避免空值覆盖已有配置。
+      if (normalized.internet.isNotEmpty) {
+        await _setPrimaryServerUrl(normalized.internet);
+      }
+      if (normalized.lan.isNotEmpty) {
+        await _setBackupServerUrl(normalized.lan);
+      }
 
       if (_qrServerConfigDialogShowing && Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
@@ -139,7 +144,10 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer();
+      final baseUrl = await _remoteInputService.startServer(
+        currentServerUrl: _primaryServerUrl,
+        currentBackupServerUrl: _backupServerUrl,
+      );
       url = '$baseUrl?mode=server_config';
     } catch (e) {
       error = '启动失败，请检查网络权限';

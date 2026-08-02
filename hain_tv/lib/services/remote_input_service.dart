@@ -39,6 +39,8 @@ class RemoteInputService {
     bool loginMode = false,
     bool serverConfigMode = false,
     bool subAccountMode = false,
+    String currentServerUrl = '',
+    String currentBackupServerUrl = '',
   }) {
     if (loginMode) {
       return '''
@@ -158,11 +160,11 @@ class RemoteInputService {
     <p>输入互联网/局域网服务器地址后，电视将自动保存</p>
     <div class="field">
       <label>互联网服务器地址</label>
-      <input id="server" placeholder="https://your-lunatv-server.com" />
+      <input id="server" placeholder="https://your-lunatv-server.com" value="${currentServerUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}" />
     </div>
     <div class="field">
       <label>局域网服务器地址（选填）</label>
-      <input id="backupServer" placeholder="http://192.168.1.100:3000" />
+      <input id="backupServer" placeholder="http://192.168.1.100:3000" value="${currentBackupServerUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}" />
     </div>
     <button onclick="sendConfig()">保存</button>
     <div id="status"></div>
@@ -346,7 +348,10 @@ class RemoteInputService {
 ''';
   }
 
-  Future<String> startServer() async {
+  Future<String> startServer({
+    String currentServerUrl = '',
+    String currentBackupServerUrl = '',
+  }) async {
     if (_server != null) return _serverUrl!;
 
     try {
@@ -375,6 +380,8 @@ class RemoteInputService {
               loginMode: loginMode,
               serverConfigMode: serverConfigMode,
               subAccountMode: subAccountMode,
+              currentServerUrl: currentServerUrl,
+              currentBackupServerUrl: currentBackupServerUrl,
             );
             _setCorsHeaders(request.response);
             request.response

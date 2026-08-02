@@ -2,7 +2,7 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.2 优化去广告播放体验与服务器连接判断，修复搜索页并发搜索与 FVP 自动连播问题，并进一步改善 tvLegacy 低版本设备兼容性。
+v1.2.3 新增自动测速开关与 TV 服务器管理二维码保留逻辑，关闭自动测速后详情页播放与选集更即时，扫码修改服务器地址时空字段不再覆盖已有配置。
 
 ![海因影视 TV 版界面预览](docs/screenshots/home.png)
 
@@ -111,10 +111,10 @@ v1.2.2 优化去广告播放体验与服务器连接判断，修复搜索页并�
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.2-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
-| `heinplay-1.2.2-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
-| `heinplay-1.2.2-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.2.2-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.2.3-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
+| `heinplay-1.2.3-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
+| `heinplay-1.2.3-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.2.3-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 项目结构
 
@@ -220,6 +220,16 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 更新日志
 
 <details open>
+<summary><strong>1.2.3</strong></summary>
+
+- **自动测速开关**：全版本设置页新增「进入详情页自动测速」开关，默认开启；关闭后无播放记录的豆瓣/Bangumi 详情页在搜索源完成后即可播放与选集。
+- **手动测速后台继续**：关闭自动测速后，用户手动触发测速仍可进入播放，测速在后台继续完成排序，行为与有播放记录时一致。
+- **TV 服务器管理二维码优化**：「我的-服务器管理」二维码输入页面默认带入电视端已保存的互联网/局域网地址；手机提交时空字段不再覆盖电视端原有地址。
+- **版本号统一**：全项目更新至 `1.2.3`（build `+15`），Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.2.2</strong></summary>
 
 - **去广告播放优化**：优化 M3U8 本地去广告与代理逻辑，提升含广告源播放稳定性；修复去广告开关状态在设置页偶发不一致的问题。

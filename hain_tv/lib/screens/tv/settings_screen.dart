@@ -28,6 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoPlayNextEpisode = true;
   bool _autoSwitchSource = true;
   int _autoSwitchSourceTimeout = 15;
+  bool _autoSpeedTest = true;
   String _m3u8ProxyUrl = '';
   bool _adFilterEnabled = false;
   bool _hardwareDecoding = true;
@@ -63,6 +64,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final autoSwitchSource = await UserDataService.getAutoSwitchSource();
     final autoSwitchSourceTimeout =
         await UserDataService.getAutoSwitchSourceTimeout();
+    final autoSpeedTest = await UserDataService.getAutoSpeedTest();
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
@@ -84,6 +86,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _autoPlayNextEpisode = next;
       _autoSwitchSource = autoSwitchSource;
       _autoSwitchSourceTimeout = autoSwitchSourceTimeout;
+      _autoSpeedTest = autoSpeedTest;
       _m3u8ProxyUrl = m3u8ProxyUrl;
       _adFilterEnabled = adFilterEnabled;
       _hardwareDecoding = hardwareDecoding;
@@ -171,6 +174,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setAutoSwitchSource(bool value) async {
     await UserDataService.saveAutoSwitchSource(value);
     setState(() => _autoSwitchSource = value);
+  }
+
+  Future<void> _setAutoSpeedTest(bool value) async {
+    await UserDataService.saveAutoSpeedTest(value);
+    setState(() => _autoSpeedTest = value);
   }
 
   Future<void> _setM3u8ProxyUrl(String url) async {
@@ -268,6 +276,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: '片尾结束后自动播放下一集',
             value: _autoPlayNextEpisode,
             onChanged: _setAutoNext,
+          ),
+          _buildSwitchTile(
+            title: '进入详情页自动测速',
+            subtitle: '多源时自动测试各源速度并排序，关闭后仍支持手动测速',
+            value: _autoSpeedTest,
+            onChanged: _setAutoSpeedTest,
           ),
           _buildAutoSwitchSourceTile(),
           _buildM3u8ProxyTile(),

@@ -220,6 +220,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   bool _isFavorite = false;
   bool _fuzzySearchEnabled = false;
   PlayerBackendType _playerBackend = PlayerBackendFactory.platformDefault;
+  bool _autoSpeedTestEnabled = true;
   late List<SourceOption> _sources;
   models.PlayRecord? _playRecord;
 
@@ -242,19 +243,24 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   }
 
   /// 无播放记录时，播放按钮是否可点击。
-  /// 搜索源中、测速中、或源数>=2但未完成测速时均不可点击。
+  /// 搜索源中不可点击；自动测速开启时，测速中或多源未完成测速也不可点击。
+  /// 自动测速关闭后，即使手动测速中也可进入播放，测速在后台继续。
   bool get _canPlayWithoutRecord {
     if (_searchingSources) return false;
-    if (_speedTesting) return false;
-    if (_sources.length >= 2 && !_hasSpeedTested) return false;
+    if (_autoSpeedTestEnabled && _speedTesting) return false;
+    if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
+      return false;
+    }
     return true;
   }
 
   /// 无播放记录时，播放按钮显示的文案。
   String get _playButtonTextWithoutRecord {
     if (_searchingSources) return '搜索源中';
-    if (_speedTesting) return _speedTestProgress;
-    if (_sources.length >= 2 && !_hasSpeedTested) return '测速中';
+    if (_autoSpeedTestEnabled && _speedTesting) return _speedTestProgress;
+    if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
+      return '测速中';
+    }
     return '播放';
   }
 
@@ -362,11 +368,8 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           _scrollToSelectedEpisode();
         }
         // 播放记录加载完成后，若尚未开始测速则触发一次，确保原始源被优先测速。
-        if (record != null &&
-            _sources.length >= 2 &&
-            !_speedTesting &&
-            !_hasSpeedTested) {
-          unawaited(_runSpeedTest());
+        if (record != null && _sources.length >= 2) {
+          _maybeStartSpeedTest();
         }
       }
     } catch (e) {
@@ -487,6 +490,9 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   }
 
   Future<void> _loadData() async {
+    // 读取自动测速开关，用于控制播放按钮是否等待测速完成。
+    _autoSpeedTestEnabled = await UserDataService.getAutoSpeedTest();
+
     if (mounted) {
       setState(() {
         _doubanLoading = true;
@@ -555,10 +561,16 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
   }
 
   /// 满足条件时在后台启动测速，避免重复启动。
-  void _maybeStartSpeedTest() {
-    if (_sources.length >= 2 && !_speedTesting && !_hasSpeedTested) {
-      unawaited(_runSpeedTest());
-    }
+  /// 尊重设置中的“自动测速”开关；手动点击测速按钮不受此开关限制。
+  Future<void> _maybeStartSpeedTest({
+    bool force = false,
+    bool onlyUntested = false,
+  }) async {
+    if (_sources.length < 2 || _speedTesting) return;
+    if (!force && !onlyUntested && _hasSpeedTested) return;
+    final enabled = await UserDataService.getAutoSpeedTest();
+    if (!enabled) return;
+    unawaited(_runSpeedTest(force: force, onlyUntested: onlyUntested));
   }
 
   /// 提取用于模糊/简化搜索的基准名称：
@@ -816,11 +828,8 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
 
     // 搜索全部完成后，若存在多个源且未测速，执行一次自动测速择优。
     // 有播放记录时也会测速，但不会改变当前选中的源。
-    if (isFinal &&
-        _sources.length >= 2 &&
-        !_speedTesting &&
-        !_hasSpeedTested) {
-      unawaited(_runSpeedTest(force: true));
+    if (isFinal && _sources.length >= 2) {
+      unawaited(_maybeStartSpeedTest(force: true));
     }
   }
 
@@ -1316,7 +1325,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     if (_pendingSpeedTestRestart) {
       _pendingSpeedTestRestart = false;
       if (mounted && _sources.length >= 2) {
-        unawaited(_runSpeedTest(onlyUntested: true));
+        unawaited(_maybeStartSpeedTest(onlyUntested: true));
       }
     }
   }

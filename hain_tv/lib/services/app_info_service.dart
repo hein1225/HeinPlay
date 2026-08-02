@@ -10,7 +10,7 @@ import 'package:win32/win32.dart';
 class AppInfoService {
   /// 兜底版本号，与 pubspec.yaml 的 version 主版本保持一致。
   /// 当 package_info_plus 与 Windows EXE 均读取失败时，至少保证 UI 能显示版本。
-  static const String _fallbackVersion = '1.2.2';
+  static const String _fallbackVersion = '1.2.3';
 
   static String _version = '';
   static String _rawVersion = '';
