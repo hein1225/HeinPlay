@@ -57,6 +57,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 部分机顶盒/电视的 GPU 对 Vulkan swapchain 支持不完整，启用 Impeller 会在
+             raster 线程触发 SIGSEGV（如 SkyworthDigitalRT-Q601F Android 10）。
+             统一禁用 Impeller，回退到 Skia + OpenGL ES，提升低端设备稳定性。 -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <!-- FileProvider：用于分享 APK 文件给系统安装器 -->
         <provider
             android:name="androidx.core.content.FileProvider"
