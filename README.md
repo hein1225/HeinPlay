@@ -101,8 +101,8 @@ v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV �
 
 | 平台            | 状态     | 系统要求                  | 说明                                           |
 | ------------- | ------ | --------------------- | -------------------------------------------- |
-| Android TV    | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航                |
-| Android tvLegacy | 已发布    | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致               |
+| Android TV    | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。 |
+| Android tvLegacy | 已发布    | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
 | Android       | 已发布    | Android 7.0+（API 24+） | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
 | Web           | 支持     | 现代浏览器                 | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载            |
 | Windows       | 已发布    | Windows 10 1809+      | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`            |
@@ -222,12 +222,15 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 更新日志
 
 <details open>
+<summary><strong>1.2.0</strong></summary>
+
+<details open>
 <summary><strong>1.2.4</strong></summary>
 
-- **TV 渲染后端策略调整**：普通 TV 版移除 `EnableImpeller=false`，默认使用 Flutter Impeller + Vulkan，提升新设备性能与渲染一致性；tvLegacy 版继续禁用 Impeller，维持 Skia + OpenGL ES，保证 Android 5.0+ 旧设备兼容。
-- **TV 版「获取日志」显示优化**：设置页日志下载二维码与提示文字改为左右排列，二维码与文字尺寸整体缩小，避免低分辨率电视显示不全。
-- **TV 版软件介绍二维码显示优化**：「我的」页软件介绍区域仓库二维码恢复横向双列布局，二维码尺寸缩小至 72×72，避免右侧二维码被截断。
-- **TV 版更新日志字体优化**：更新弹窗标题与正文字体分别由 15/14 缩小至 13/12，避免更新内容在 TV 对话框中溢出。
+- **TV 渲染后端策略调整**：普通 TV 版默认使用 **Vulkan（Impeller）** 渲染后端，推荐新设备使用；tvLegacy 版维持 **OpenGL ES** 渲染，继续兼容 Android 5.0+ 旧设备与低版本电视盒子。
+- **新增获取日志功能**：全版本设置页新增「获取日志」开关；开启后 TV 版显示局域网日志下载二维码，手机版与 Windows 版显示日志保存路径，方便反馈问题时导出日志。
+- **README 增加反馈问题说明**：新增「获取日志与反馈问题」章节，说明如何开启日志、各平台取日志方式，以及反馈问题需要提供的设备型号、系统版本、应用版本、复现步骤、截图和日志等信息。
+- **TV 版界面显示优化**：优化设置页「获取日志」二维码、软件介绍仓库二维码与更新日志弹窗的布局与字号，避免低分辨率电视显示不全。
 - **版本号统一**：全项目更新至 `1.2.4`（build `+16`），Release 产物命名同步为 `heinplay-1.2.4-tv.apk`、`heinplay-1.2.4-tvLegacy.apk`、`heinplay-1.2.4-mobile.apk`、`heinplay-1.2.4-windows-portable.zip`。
 
 </details>
@@ -281,6 +284,11 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **版本号统一**：全项目更新至 `1.2.0`，Release 产物命名同步为 `heinplay-1.2.0-tv.apk`、`heinplay-1.2.0-tvLegacy.apk`、`heinplay-1.2.0-mobile.apk`、`heinplay-1.2.0-windows-portable.zip`。
 
 </details>
+
+</details>
+
+<details>
+<summary><strong>1.1.0</strong></summary>
 
 <details>
 <summary><strong>1.1.6</strong></summary>
@@ -360,6 +368,11 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 </details>
 
+</details>
+
+<details>
+<summary><strong>1.0.0</strong></summary>
+
 <details>
 <summary><strong>1.0.3</strong></summary>
 
@@ -391,6 +404,8 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **应用内更新**：支持国内（GitCode）与 GitHub 双渠道，下载前请求安装权限。
 - **跳过片头片尾**：支持 LunaTV 跳过配置，可自动跳过片头、片尾与广告。
 - **依赖升级**：`permission_handler` 升级至 `^12.0.3`，并更新多个兼容依赖。
+
+</details>
 
 </details>
 

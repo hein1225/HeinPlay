@@ -1,29 +1,38 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.2.0</h2></summary>
+
+<details open>
 <summary><h2 style="display: inline;">1.2.4</h2></summary>
 
 ## 1.2.4
 
+### 新增
+
+- **获取日志功能**
+  - 全版本设置页新增「获取日志」开关，默认关闭。
+  - 开启后 TV 版启动局域网 HTTP 服务并展示日志下载二维码，手机扫码即可下载日志文件。
+  - 手机版与 Windows 版在开关下方显示日志文件保存路径，便于手动复制。
+  - 日志文件按时间命名，关闭开关时自动停止日志下载服务。
+
+- **反馈问题说明**
+  - `README.md` 新增「获取日志与反馈问题」章节。
+  - 详细说明如何开启日志、各平台取日志方式，以及反馈问题时需要提供的设备型号、系统版本、应用版本、问题描述、复现步骤、截图/照片、日志文件、播放源/影片信息等。
+
 ### 变更
 
 - **TV 渲染后端策略调整**
-  - 普通 TV 版（`tv` flavor）移除 `AndroidManifest.xml` 中的 `io.flutter.embedding.android.EnableImpeller=false`，默认使用 Flutter Impeller + Vulkan 渲染后端，提升新设备性能与渲染一致性。
-  - tvLegacy 版（`tvlegacy` flavor）继续保留 `EnableImpeller=false`，维持 Skia + OpenGL ES 渲染后端，确保 Android 5.0+ 旧设备/低版本电视盒子兼容。
+  - 普通 TV 版（`tv` flavor）默认使用 Flutter Impeller + Vulkan 渲染后端，推荐新设备使用，提升渲染性能与一致性。
+  - tvLegacy 版（`tvlegacy` flavor）继续禁用 Impeller，维持 Skia + OpenGL ES 渲染后端，确保 Android 5.0+ 旧设备/低版本电视盒子兼容。
   - 手机版未单独覆盖 Impeller 开关，保持与 Flutter 默认行为一致。
 
 ### 优化
 
-- **TV 版「获取日志」显示优化**
-  - 设置页「获取日志」开启后，日志下载二维码与提示文字由上下排列改为左右排列。
-  - 二维码容器从 120×120 缩小至 100×100（二维码本身 84×84），相关说明文字同步缩小，避免低分辨率电视显示不全。
-
-- **TV 版软件介绍二维码显示优化**
-  - 「我的」页软件介绍区域恢复国内仓库 / GitHub 仓库二维码横向双列布局。
-  - 单个二维码容器从 90×90 缩小至 72×72（二维码本身 62×62），仓库标签与提示文字同步缩小，避免右侧二维码在部分电视上被截断。
-
-- **TV 版更新日志字体优化**
-  - 应用内更新弹窗标题字体从 15 缩小至 13，正文字体从 14 缩小至 12，行高从 1.6 调整至 1.5，避免更新内容在 TV 对话框中溢出。
+- **TV 版界面显示优化**
+  - 优化设置页「获取日志」二维码与提示文字的布局，避免低分辨率电视显示不全。
+  - 优化「我的」页软件介绍区域仓库二维码的排列与尺寸，确保横向双列二维码完整显示。
+  - 优化应用内更新弹窗日志内容的字号与行高，避免更新说明在 TV 对话框中溢出。
 
 ### 版本号统一
 
@@ -242,6 +251,11 @@
 - 默认更新渠道改为国内渠道。
 
 </details>
+
+</details>
+
+<details>
+<summary><h2 style="display: inline;">1.1.0</h2></summary>
 
 <details>
 <summary><h2 style="display: inline;">1.1.6</h2></summary>
@@ -537,8 +551,13 @@
 
 </details>
 
+</details>
+
 <details>
 <summary><h2 style="display: inline;">1.0.0</h2></summary>
+
+<details>
+<summary><h2 style="display: inline;">1.0.3</h2></summary>
 
 ## 1.0.3
 
@@ -578,6 +597,11 @@
 
 - 应用版本号统一更新至 `1.0.3`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
 
+</details>
+
+<details>
+<summary><h2 style="display: inline;">1.0.2</h2></summary>
+
 ## 1.0.2
 
 ### 修复
@@ -607,6 +631,11 @@
 
 - **版本号**
   - 应用版本号统一更新至 `1.0.2`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
+
+</details>
+
+<details>
+<summary><h2 style="display: inline;">1.0.1</h2></summary>
 
 ## 1.0.1
 
@@ -659,6 +688,11 @@
 - 升级 `permission_handler` 到 `^12.0.3`（需 Android `compileSdkVersion 35`，当前 Flutter 版本默认提供 36）。
 - 通过 `flutter pub upgrade` 更新 `wakelock_plus`、`path_provider`、`video_player_android` 等 13 个依赖到最新兼容版本。
 
+</details>
+
+<details>
+<summary><h2 style="display: inline;">1.0.0</h2></summary>
+
 ## 1.0.0
 
 ### 新增功能
@@ -690,27 +724,7 @@
 - **个人中心**
   - 播放历史、收藏管理。
   - 扫码登录。
-  - 设置入口与 M3U8 代理配置。
 
-- **TV 遥控优化**
-  - 完整的遥控器焦点导航与方向键控制。
-  - 顶部导航栏焦点循环，分类页焦点层级管理。
-  - 筛选面板返回键优先关闭面板，避免误退出应用。
-  - 分类页按上键回到当前所在分类导航项。
-
-- **应用内更新**
-  - 检测 GitHub Releases 新版本。
-  - 点击「立即更新」先请求安装未知应用权限，再分步完成 APK 下载与安装。
-
-### 支持平台
-
-- Android TV（主要目标平台）
-- Web
-- Windows
-
-### 其他
-
-- 适配 Android TV LEANBACK_LAUNCHER。
-- Release 构建使用 `hain_tv_keystore.jks` 签名。
+</details>
 
 </details>
