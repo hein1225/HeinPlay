@@ -8,6 +8,12 @@
 -keep class com.google.firebase.** { *; }
 -dontwarn io.flutter.embedding.**
 
+# AndroidX Core：tvlegacy 强制使用 1.13.1（与 Flutter 引擎匹配），R8 full mode
+# 可能过度收缩 EditorInfoCompat 的 setStylusHandwritingEnabled 等方法，导致高版本
+# 安卓（Flutter TextInputPlugin 调用时）出现 NoSuchMethodError 闪退。
+-keep class androidx.core.view.inputmethod.EditorInfoCompat { *; }
+-keepclassmembers class androidx.core.view.inputmethod.EditorInfoCompat { *; }
+
 # video_player / ExoPlayer / AndroidX Media3
 -keep class io.flutter.plugins.videoplayer.** { *; }
 -keep class com.google.android.exoplayer2.** { *; }

@@ -258,11 +258,13 @@ configurations.all {
         && (name.contains("CompileClasspath", ignoreCase = true) || name.contains("RuntimeClasspath", ignoreCase = true))
     ) {
         resolutionStrategy {
-            // tvlegacy 需要支持 Android 5.1（API 22），新版 AndroidX Core 1.17.0
-            // 会调用 API 24 的 Configuration.getLocales() / LocaleList 等方法，导致低版本闪退。
-            // 强制使用 1.12.0。
-            force("androidx.core:core:1.12.0")
-            force("androidx.core:core-ktx:1.12.0")
+            // tvlegacy 需要支持 Android 5.0（API 21）。Flutter 3.44.8 引擎编译时依赖
+            // androidx.core:core:1.13.1，若强制使用更低版本（如 1.12.0），高版本安卓上
+            // Flutter TextInputPlugin 调用 setStylusHandwritingEnabled 等方法会出现
+            // NoSuchMethodError 闪退；若放任解析到 1.17.0+ 又会调用 API 24 方法导致低版本
+            // 闪退。因此强制使用与引擎匹配的 1.13.1。
+            force("androidx.core:core:1.13.1")
+            force("androidx.core:core-ktx:1.13.1")
 
             // 将原版 flutter_embedding_release 替换为 tvlegacy 本地仓库中的修补版本，
             // 保留原始 POM 中的传递依赖（lifecycle、fragment 等）。

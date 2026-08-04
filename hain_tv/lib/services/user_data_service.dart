@@ -40,6 +40,7 @@ class UserDataService {
   static const String _autoSwitchSourceTimeoutKey =
       'auto_switch_source_timeout_seconds';
   static const String _autoSpeedTestKey = 'auto_speed_test';
+  static const String _logEnabledKey = 'log_enabled';
   static const String _skippedVersionKey = 'skipped_update_version';
   static const String _lastUpdateCheckTimeKey = 'last_update_check_time';
   static const String _defaultUpdateChannelKey = 'default_update_channel';
@@ -497,6 +498,17 @@ class UserDataService {
     final prefs = await SharedPreferences.getInstance();
     // 默认开启自动测速，与历史行为保持一致。
     return prefs.getBool(_autoSpeedTestKey) ?? true;
+  }
+
+  static Future<void> saveLogEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_logEnabledKey, enabled);
+  }
+
+  static Future<bool> getLogEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 默认关闭文件日志，避免长期占用存储。
+    return prefs.getBool(_logEnabledKey) ?? false;
   }
 
   static Future<void> saveAutoSwitchSourceTimeout(int seconds) async {

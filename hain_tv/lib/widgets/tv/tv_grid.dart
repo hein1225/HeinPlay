@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/theme.dart';
 import 'tv_card.dart';
 
@@ -161,6 +162,55 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
     _focusNodes[target].requestFocus();
   }
 
+  Widget _buildHorizontalListView() {
+    final listView = ListView.separated(
+      controller: _scrollController,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      scrollCacheExtent: ScrollCacheExtent.pixels(double.maxFinite),
+      itemCount: widget.items.length,
+      separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.md),
+      itemBuilder: (context, index) {
+        final item = widget.items[index];
+        return SizedBox(
+          width: widget.cardWidth,
+          child: TvPosterCard(
+            autofocus: index == 0,
+            focusNode: _focusNodes[index],
+            onKeyEvent: (node, event) =>
+                _handleKeyEvent(index, node, event),
+            onFocusChange: (focused) {
+              if (focused) _scrollToIndex(index);
+            },
+            title: item.title,
+            posterUrl: item.posterUrl,
+            year: item.year,
+            subtitle: item.subtitle,
+            rating: item.rating,
+            ratingLabel: item.ratingLabel,
+            bangumiRating: item.bangumiRating,
+            onTap: item.onTap,
+          ),
+        );
+      },
+    );
+
+    // Windows 桌面版显示永久滚动条，TV 版使用默认滚动行为。
+    if (DeviceUtils.isWindows) {
+      return RawScrollbar(
+        controller: _scrollController,
+        thumbVisibility: true,
+        trackVisibility: true,
+        thickness: 6,
+        radius: const Radius.circular(3),
+        thumbColor: AppColors.textMuted.withValues(alpha: 0.6),
+        trackColor: AppColors.border,
+        child: listView,
+      );
+    }
+    return listView;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Focus(
@@ -201,37 +251,7 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
             ),
           SizedBox(
             height: 230,
-            child: ListView.separated(
-              controller: _scrollController,
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              scrollCacheExtent: ScrollCacheExtent.pixels(double.maxFinite),
-              itemCount: widget.items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.md),
-              itemBuilder: (context, index) {
-                final item = widget.items[index];
-                return SizedBox(
-                  width: widget.cardWidth,
-                  child: TvPosterCard(
-                    autofocus: index == 0,
-                    focusNode: _focusNodes[index],
-                    onKeyEvent: (node, event) =>
-                        _handleKeyEvent(index, node, event),
-                    onFocusChange: (focused) {
-                      if (focused) _scrollToIndex(index);
-                    },
-                    title: item.title,
-                    posterUrl: item.posterUrl,
-                    year: item.year,
-                    subtitle: item.subtitle,
-                    rating: item.rating,
-                    ratingLabel: item.ratingLabel,
-                    bangumiRating: item.bangumiRating,
-                    onTap: item.onTap,
-                  ),
-                );
-              },
-            ),
+            child: _buildHorizontalListView(),
           ),
         ],
       ),

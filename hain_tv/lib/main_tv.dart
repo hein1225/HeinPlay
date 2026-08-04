@@ -6,6 +6,7 @@ import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/server_latency_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/services/version_migration_service.dart';
+import 'package:hain_tv/utils/app_logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,8 @@ void main() async {
   DeviceUtils.isTvOverride = true;
   // 缓存应用版本与平台信息，供更新检测与设置页读取。
   await AppInfoService.init();
+  // 根据设置初始化文件日志，TV 端开启后可通过设置页二维码下载日志。
+  await AppLogger.initialize();
   // 版本升级时自动清理旧缓存（保留用户数据），首次安装仅记录版本号。
   await VersionMigrationService.migrate();
   // v1.2.0：将旧版 username/password/cookies 迁移到主/子账号模型。

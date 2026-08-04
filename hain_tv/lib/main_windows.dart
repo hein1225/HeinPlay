@@ -10,7 +10,7 @@ import 'package:hain_tv/services/portable_storage_windows.dart';
 import 'package:hain_tv/services/server_latency_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/services/version_migration_service.dart';
-import 'package:hain_tv/utils/windows_logger.dart';
+import 'package:hain_tv/utils/app_logger.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
@@ -27,10 +27,10 @@ void main() async {
     PathProviderPlatform.instance = PortablePathProviderWindows();
     SharedPreferencesStorePlatform.instance =
         PortableSharedPreferencesStore();
-    // 预先初始化 Windows 日志目录，确保首次写入时目录已就绪。
-    final logOk = await WindowsLogger.initialize();
+    // 根据设置初始化文件日志，Windows 端日志保存到 data/app_logs/。
+    final logOk = await AppLogger.initialize();
     if (!logOk) {
-      debugPrint('main_windows: Windows 日志初始化失败');
+      debugPrint('main_windows: 日志初始化失败');
     }
   }
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +13,9 @@ import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
+import 'package:hain_tv/utils/app_logger.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -41,6 +44,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // Windows 全屏置顶
   bool _windowsFullscreenAlwaysOnTop = false;
+  bool _logEnabled = false;
+  String _logPath = '';
+
+  // TV 端日志下载二维码相关
+  HttpServer? _logServer;
+  String? _logDownloadUrl;
 
   // 应用版本号
   String _appVersion = '';
@@ -53,7 +62,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _stopLogServer();
     super.dispose();
+  }
+
+  Future<void> _stopLogServer() async {
+    final server = _logServer;
+    _logServer = null;
+    _logDownloadUrl = null;
+    if (server != null) {
+      await server.close(force: true);
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -77,6 +96,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await UserDataService.getBangumiImageProxyUrl();
     final windowsFullscreenAlwaysOnTop =
         await UserDataService.getWindowsFullscreenAlwaysOnTop();
+    final logEnabled = await UserDataService.getLogEnabled();
+    // 若日志已开启，确保日志目录已初始化并读取保存路径。
+    String logPath = '';
+    if (logEnabled) {
+      await AppLogger.initialize();
+      logPath = AppLogger.logFilePath;
+    }
     await BangumiService.loadProxySettings();
     final appVersion = AppInfoService.version;
     setState(() {
@@ -96,8 +122,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _bangumiImageProxyType = bangumiImageProxyType;
       _bangumiImageProxyUrl = bangumiImageProxyUrl;
       _windowsFullscreenAlwaysOnTop = windowsFullscreenAlwaysOnTop;
+      _logEnabled = logEnabled;
+      _logPath = logPath;
       _appVersion = appVersion;
     });
+    if (logEnabled && DeviceUtils.isTv) {
+      _startLogServer();
+    }
   }
 
   void _showSnackBar(
@@ -237,6 +268,115 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _windowsFullscreenAlwaysOnTop = value);
   }
 
+  Future<void> _setLogEnabled(bool value) async {
+    await AppLogger.setEnabled(value);
+    final logPath = value ? AppLogger.logFilePath : '';
+    setState(() {
+      _logEnabled = value;
+      _logPath = logPath;
+    });
+    if (value && DeviceUtils.isTv && !DeviceUtils.isWindows) {
+      await _startLogServer();
+      _showSnackBar('日志已开启，请扫描二维码下载日志文件');
+    } else {
+      await _stopLogServer();
+      if (!value) {
+        _showSnackBar('日志已关闭');
+      }
+    }
+  }
+
+  Future<void> _startLogServer() async {
+    try {
+      await _stopLogServer();
+      final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+      _logServer = server;
+      final ip = await _getLocalIp();
+      final url = 'http://$ip:${server.port}/logs';
+      if (mounted) {
+        setState(() {
+          _logDownloadUrl = url;
+        });
+      }
+      server.listen((request) async {
+        try {
+          _setCorsHeaders(request.response);
+          if (request.method == 'OPTIONS') {
+            request.response
+              ..statusCode = 204
+              ..close();
+            return;
+          }
+          if (request.method == 'GET' && request.uri.path == '/logs') {
+            await AppLogger.flush();
+            final logPath = AppLogger.logFilePath;
+            if (logPath.isEmpty || !File(logPath).existsSync()) {
+              request.response
+                ..statusCode = 404
+                ..headers.contentType = ContentType.text
+                ..write('日志文件不存在，请确认已开启获取日志并产生日志内容')
+                ..close();
+              return;
+            }
+            final file = File(logPath);
+            final bytes = await file.readAsBytes();
+            final fileName =
+                'hain_tv_log_${DateTime.now().millisecondsSinceEpoch}.txt';
+            request.response
+              ..statusCode = 200
+              ..headers.contentType = ContentType('text', 'plain', charset: 'utf-8')
+              ..headers.add(
+                'Content-Disposition',
+                'attachment; filename="$fileName"',
+              )
+              ..add(bytes)
+              ..close();
+          } else {
+            request.response
+              ..statusCode = 404
+              ..write('Not Found')
+              ..close();
+          }
+        } catch (e) {
+          request.response
+            ..statusCode = 500
+            ..write('Internal Server Error')
+            ..close();
+        }
+      });
+    } catch (e) {
+      debugPrint('日志下载服务启动失败: $e');
+      if (mounted) {
+        _showSnackBar('日志下载服务启动失败', backgroundColor: Colors.red);
+      }
+    }
+  }
+
+  void _setCorsHeaders(HttpResponse response) {
+    response.headers.add('Access-Control-Allow-Origin', '*');
+    response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
+  }
+
+  Future<String> _getLocalIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: false,
+      );
+      for (final interface in interfaces) {
+        for (final addr in interface.addresses) {
+          if (!addr.isLoopback && addr.type == InternetAddressType.IPv4) {
+            return addr.address;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('获取本地IP失败: $e');
+    }
+    return '127.0.0.1';
+  }
+
   Future<void> _clearCache() async {
     final cacheService = CacheService();
     await cacheService.init();
@@ -327,6 +467,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
           ],
+          _buildSectionTitle('日志与调试'),
+          _buildLogTile(),
+          const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('关于'),
           _buildInfoTile(title: '版本', value: _appVersion.isEmpty ? '-' : _appVersion),
           _buildInfoTile(title: '作者', value: '海因茨'),
@@ -1123,6 +1266,114 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       });
     }
+  }
+
+  Widget _buildLogTile() {
+    return _buildCard(
+      child: Column(
+        children: [
+          _buildSwitchTile(
+            title: '获取日志',
+            subtitle: '作为调试核查问题使用，正常情况下请关闭选项，避免影响性能',
+            value: _logEnabled,
+            onChanged: _setLogEnabled,
+          ),
+          if (_logEnabled && _logPath.isNotEmpty) ...[
+            const Divider(height: 1, color: AppColors.border),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '日志保存路径',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    _logPath,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (_logEnabled &&
+              DeviceUtils.isTv &&
+              !DeviceUtils.isWindows &&
+              _logDownloadUrl != null) ...[
+            const Divider(height: 1, color: AppColors.border),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 100,
+                    height: 100,
+                    padding: const EdgeInsets.all(AppSpacing.xs),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: QrImageView(
+                      data: _logDownloadUrl!,
+                      version: QrVersions.auto,
+                      size: 84,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '手机扫描下载日志',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        const Text(
+                          '提示：获取日志二维码会发生变化，请在调试完再返回扫描',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          _logDownloadUrl!,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildSwitchTile({

@@ -47,6 +47,13 @@ local.properties
 /hain_tv/android/app/profile/
 /hain_tv/android/app/release/
 /hain_tv/android/.kotlin/
+/hain_tv/android/buildSrc/.gradle/
+
+# Temporary analysis / debug artifacts
+/hain_tv/temp_*/
+/hain_tv/*.diff
+/hain_tv/parse_dex_source.py
+/hain_tv/unzip_jar.py
 
 # Signing keys and passwords should never be committed
 /hain_tv/android/key.properties

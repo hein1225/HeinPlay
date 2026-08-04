@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:hain_tv/screens/windows/login_screen.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
-import 'package:hain_tv/utils/windows_logger.dart';
+import 'package:hain_tv/utils/app_logger.dart';
 import 'package:hain_tv/widgets/windows/windows_shell.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -48,12 +48,8 @@ class _HainWindowsAppState extends State<HainWindowsApp>
     // 立即触发窗口销毁，让窗口立刻响应关闭动作；后续操作均不等待。
     windowManager.destroy();
 
-    if (Platform.isWindows) {
-      // 在后台刷新日志，不阻塞窗口关闭；无论刷新成功/失败，最后都强制退出进程。
-      WindowsLogger.flush().whenComplete(() => exit(0));
-    } else {
-      exit(0);
-    }
+    // 在后台刷新日志，不阻塞窗口关闭；无论刷新成功/失败，最后都强制退出进程。
+    AppLogger.flush().whenComplete(() => exit(0));
   }
 
   /// 拦截 ESC 键：若当前有可以弹出的路由则执行返回，否则忽略。

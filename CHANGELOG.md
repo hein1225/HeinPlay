@@ -1,6 +1,39 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.2.4</h2></summary>
+
+## 1.2.4
+
+### 变更
+
+- **TV 渲染后端策略调整**
+  - 普通 TV 版（`tv` flavor）移除 `AndroidManifest.xml` 中的 `io.flutter.embedding.android.EnableImpeller=false`，默认使用 Flutter Impeller + Vulkan 渲染后端，提升新设备性能与渲染一致性。
+  - tvLegacy 版（`tvlegacy` flavor）继续保留 `EnableImpeller=false`，维持 Skia + OpenGL ES 渲染后端，确保 Android 5.0+ 旧设备/低版本电视盒子兼容。
+  - 手机版未单独覆盖 Impeller 开关，保持与 Flutter 默认行为一致。
+
+### 优化
+
+- **TV 版「获取日志」显示优化**
+  - 设置页「获取日志」开启后，日志下载二维码与提示文字由上下排列改为左右排列。
+  - 二维码容器从 120×120 缩小至 100×100（二维码本身 84×84），相关说明文字同步缩小，避免低分辨率电视显示不全。
+
+- **TV 版软件介绍二维码显示优化**
+  - 「我的」页软件介绍区域恢复国内仓库 / GitHub 仓库二维码横向双列布局。
+  - 单个二维码容器从 90×90 缩小至 72×72（二维码本身 62×62），仓库标签与提示文字同步缩小，避免右侧二维码在部分电视上被截断。
+
+- **TV 版更新日志字体优化**
+  - 应用内更新弹窗标题字体从 15 缩小至 13，正文字体从 14 缩小至 12，行高从 1.6 调整至 1.5，避免更新内容在 TV 对话框中溢出。
+
+### 版本号统一
+
+- 全项目版本号更新至 `1.2.4`（build `+16`）。
+- Release 产物命名同步为 `heinplay-1.2.4-tv.apk`、`heinplay-1.2.4-tvLegacy.apk`、`heinplay-1.2.4-mobile.apk`、`heinplay-1.2.4-windows-portable.zip`。
+- Windows EXE 资源版本号同步更新为 `1.2.4`，`AppInfoService` 兜底版本号同步更新。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.2.3</h2></summary>
 
 ## 1.2.3

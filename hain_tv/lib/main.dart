@@ -12,7 +12,7 @@ import 'services/app_info_service.dart';
 import 'services/bangumi_service.dart';
 import 'services/portable_storage_windows.dart';
 import 'services/server_latency_service.dart';
-import 'utils/windows_logger.dart';
+import 'utils/app_logger.dart';
 import 'services/user_data_service.dart';
 import 'services/version_migration_service.dart';
 
@@ -28,9 +28,10 @@ void main() async {
     PathProviderPlatform.instance = PortablePathProviderWindows();
     SharedPreferencesStorePlatform.instance =
         PortableSharedPreferencesStore();
-    // 显式初始化文件日志，确保启动后即可写入日志，方便定位问题。
-    await WindowsLogger.initialize();
   }
+
+  // 根据设置初始化文件日志，全平台统一由「获取日志」开关控制。
+  await AppLogger.initialize();
 
   // Windows 桌面端需要初始化窗口管理器，并显式设置窗口标题避免中文乱码。
   if (Platform.isWindows) {

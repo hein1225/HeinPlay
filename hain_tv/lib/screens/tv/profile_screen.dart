@@ -220,7 +220,7 @@ class ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Focus(
       onKeyEvent: _handleKeyEvent,
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -408,7 +408,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                   url: 'https://gitcode.com/gcw_QbmhmbO8/HeinPlay',
                 ),
               ),
-              const SizedBox(width: AppSpacing.xl),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: _buildRepoQrItem(
                   label: 'GitHub 仓库',
@@ -428,19 +428,19 @@ class ProfileScreenState extends State<ProfileScreen> {
       children: [
         Row(
           children: [
-            const Icon(Icons.code, color: AppColors.primary, size: 16),
+            const Icon(Icons.code, color: AppColors.primary, size: 14),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$label：',
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: 12,
                 color: AppColors.textSecondary,
               ),
             ),
             Expanded(
               child: Text(
                 url,
-                style: const TextStyle(fontSize: 13, color: AppColors.primary),
+                style: const TextStyle(fontSize: 12, color: AppColors.primary),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
               ),
@@ -449,8 +449,11 @@ class ProfileScreenState extends State<ProfileScreen> {
         ),
         const SizedBox(height: AppSpacing.sm),
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -459,7 +462,7 @@ class ProfileScreenState extends State<ProfileScreen> {
               child: QrImageView(
                 data: url,
                 version: QrVersions.auto,
-                size: 100,
+                size: 62,
                 backgroundColor: Colors.white,
               ),
             ),
@@ -468,7 +471,7 @@ class ProfileScreenState extends State<ProfileScreen> {
               child: Text(
                 '手机扫码访问$label',
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   color: AppColors.textSecondary,
                 ),
               ),

@@ -2,9 +2,11 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.3 新增自动测速开关与 TV 服务器管理二维码保留逻辑，关闭自动测速后详情页播放与选集更即时，扫码修改服务器地址时空字段不再覆盖已有配置。
+v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV 版改回 Vulkan（Impeller）以适配新设备，tvLegacy 继续用 OpenGL ES 兼容旧设备；修复 TV 版「获取日志」与软件介绍二维码显示不全的问题，并缩小 TV 更新日志字体避免内容溢出。
 
-![海因影视 TV 版界面预览](docs/screenshots/home.png)
+| TV / Windows 版界面预览 | 手机版界面预览 |
+| :--- | :--- |
+| ![海因影视 TV / Windows 版界面预览](docs/screenshots/tv_windows.png) | ![海因影视手机版界面预览](docs/screenshots/mobile.png) |
 
 ## 功能特性
 
@@ -111,10 +113,10 @@ v1.2.3 新增自动测速开关与 TV 服务器管理二维码保留逻辑，关
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.3-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航。          |
-| `heinplay-1.2.3-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备。 |
-| `heinplay-1.2.3-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.2.3-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.2.4-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航，Vulkan 渲染。 |
+| `heinplay-1.2.4-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
+| `heinplay-1.2.4-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.2.4-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 项目结构
 
@@ -220,6 +222,17 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 更新日志
 
 <details open>
+<summary><strong>1.2.4</strong></summary>
+
+- **TV 渲染后端策略调整**：普通 TV 版移除 `EnableImpeller=false`，默认使用 Flutter Impeller + Vulkan，提升新设备性能与渲染一致性；tvLegacy 版继续禁用 Impeller，维持 Skia + OpenGL ES，保证 Android 5.0+ 旧设备兼容。
+- **TV 版「获取日志」显示优化**：设置页日志下载二维码与提示文字改为左右排列，二维码与文字尺寸整体缩小，避免低分辨率电视显示不全。
+- **TV 版软件介绍二维码显示优化**：「我的」页软件介绍区域仓库二维码恢复横向双列布局，二维码尺寸缩小至 72×72，避免右侧二维码被截断。
+- **TV 版更新日志字体优化**：更新弹窗标题与正文字体分别由 15/14 缩小至 13/12，避免更新内容在 TV 对话框中溢出。
+- **版本号统一**：全项目更新至 `1.2.4`（build `+16`），Release 产物命名同步为 `heinplay-1.2.4-tv.apk`、`heinplay-1.2.4-tvLegacy.apk`、`heinplay-1.2.4-mobile.apk`、`heinplay-1.2.4-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.2.3</strong></summary>
 
 - **自动测速开关**：全版本设置页新增「进入详情页自动测速」开关，默认开启；关闭后无播放记录的豆瓣/Bangumi 详情页在搜索源完成后即可播放与选集。
@@ -382,6 +395,32 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 </details>
 
 完整更新内容请查看 [CHANGELOG.md](./CHANGELOG.md)。
+
+## 获取日志与反馈问题
+
+遇到播放失败、闪退、焦点异常、界面显示不全等问题时，欢迎通过 GitHub / GitCode Issues 或相关交流群反馈。为了高效定位问题，请按以下步骤提供日志和必要信息：
+
+### 开启并获取日志
+
+1. 进入「我的 → 软件设置 → 获取日志」，打开开关。
+2. 返回出现问题的地方，**复现一次问题**（例如播放失败、页面显示不全、闪退等），让日志记录到出错过程。
+3. 重新进入「我的 → 软件设置 → 获取日志」，按平台方式取出日志：
+   - **TV 版**：使用手机扫描页面上显示的二维码，下载日志文件到手机后发送。
+   - **手机版 / Windows 版**：页面会显示日志保存路径，进入对应目录复制 `hain_tv_log_*.txt` 文件。
+4. 反馈时请将日志文件作为附件上传；若文件较大，可压缩为 `.zip` 或 `.rar`。
+
+### 反馈问题请提供的信息
+
+- **设备型号**：如 Xiaomi TV Box 4、海信 55E3F、Samsung SM-S9360 等。
+- **系统版本**：如 Android 14、Android 10、Android 5.1、Windows 11 等。
+- **应用版本**：如 `1.2.4-tv`、`1.2.4-tvLegacy`、`1.2.4-mobile`、`1.2.4-windows`。
+- **问题描述**：具体现象是什么？能否稳定复现？
+- **复现步骤**：从哪个页面开始，点击了什么，出现了什么结果。
+- **相关截图 / 照片**：TV 版问题建议手机拍摄电视屏幕；界面显示类问题请附图。
+- **日志文件**：按上面步骤获取并附上的日志。
+- **播放源 / 影片信息**：如是播放问题，请提供影片名称、集数、使用的播放源或站点。
+
+信息越完整，定位与修复速度越快。
 
 ## 后续更新计划
 

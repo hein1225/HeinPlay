@@ -98,7 +98,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                               widget.info.title,
                               style: const TextStyle(
                                 fontFamily: 'NotoSansSC',
-                                fontSize: 15,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.textPrimary,
                               ),
@@ -111,9 +111,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
                                 : widget.info.body,
                             style: const TextStyle(
                               fontFamily: 'NotoSansSC',
-                              fontSize: 14,
+                              fontSize: 12,
                               color: AppColors.textSecondary,
-                              height: 1.6,
+                              height: 1.5,
                             ),
                           ),
                         ],
