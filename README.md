@@ -113,7 +113,7 @@ v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV �
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.4-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，遥控器焦点导航，Vulkan 渲染。 |
+| `heinplay-1.2.4-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试tvlegacy。 |
 | `heinplay-1.2.4-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
 | `heinplay-1.2.4-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
 | `heinplay-1.2.4-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
