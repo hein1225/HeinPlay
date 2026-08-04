@@ -3,12 +3,9 @@
 <details open>
 <summary><h2 style="display: inline;">1.2.0</h2></summary>
 
-<details open>
-<summary><h2 style="display: inline;">1.2.4</h2></summary>
+### 1.2.4
 
-## 1.2.4
-
-### 新增
+#### 新增
 
 - **获取日志功能**
   - 全版本设置页新增「获取日志」开关，默认关闭。
@@ -20,40 +17,35 @@
   - `README.md` 新增「获取日志与反馈问题」章节。
   - 详细说明如何开启日志、各平台取日志方式，以及反馈问题时需要提供的设备型号、系统版本、应用版本、问题描述、复现步骤、截图/照片、日志文件、播放源/影片信息等。
 
-### 变更
+#### 变更
 
 - **TV 渲染后端策略调整**
   - 普通 TV 版（`tv` flavor）默认使用 Flutter Impeller + Vulkan 渲染后端，推荐新设备使用，提升渲染性能与一致性。
   - tvLegacy 版（`tvlegacy` flavor）继续禁用 Impeller，维持 Skia + OpenGL ES 渲染后端，确保 Android 5.0+ 旧设备/低版本电视盒子兼容。
   - 手机版未单独覆盖 Impeller 开关，保持与 Flutter 默认行为一致。
 
-### 优化
+#### 优化
 
 - **TV 版界面显示优化**
   - 优化设置页「获取日志」二维码与提示文字的布局，避免低分辨率电视显示不全。
   - 优化「我的」页软件介绍区域仓库二维码的排列与尺寸，确保横向双列二维码完整显示。
   - 优化应用内更新弹窗日志内容的字号与行高，避免更新说明在 TV 对话框中溢出。
 
-### 版本号统一
+#### 版本号统一
 
 - 全项目版本号更新至 `1.2.4`（build `+16`）。
 - Release 产物命名同步为 `heinplay-1.2.4-tv.apk`、`heinplay-1.2.4-tvLegacy.apk`、`heinplay-1.2.4-mobile.apk`、`heinplay-1.2.4-windows-portable.zip`。
 - Windows EXE 资源版本号同步更新为 `1.2.4`，`AppInfoService` 兜底版本号同步更新。
 
-</details>
+### 1.2.3
 
-<details>
-<summary><h2 style="display: inline;">1.2.3</h2></summary>
-
-## 1.2.3
-
-### 新增
+#### 新增
 
 - **自动测速开关**
   - 全版本设置页新增「进入详情页自动测速」开关，默认开启，与原有行为保持一致。
   - 开关状态通过 `UserDataService.saveAutoSpeedTest` / `getAutoSpeedTest` 持久化存储。
 
-### 优化
+#### 优化
 
 - **无播放记录详情页体验**
   - 关闭自动测速后，豆瓣/Bangumi 等无播放记录详情页在搜索源完成后立即启用播放按钮与选集，无需等待测速完成。
@@ -68,21 +60,16 @@
   - 移除全局 Impeller 禁用，改为仅 TV/tvLegacy flavor 通过 `AndroidManifest.xml` 禁用 Impeller，手机版继续保留 Vulkan 渲染后端。
   - 修复部分老机顶盒/低版本电视设备因 Vulkan 驱动不支持导致的 `ErrorFormatNotSupported` 闪退，同时不影响支持 Vulkan 的移动设备性能。
 
-### 变更
+#### 变更
 
 - **版本号统一**
   - 全项目版本号更新至 `1.2.3`（build `+15`）。
   - Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
   - Windows EXE 资源版本号同步更新为 `1.2.3`，`AppInfoService` 兜底版本号同步更新。
 
-</details>
+### 1.2.2
 
-<details>
-<summary><h2 style="display: inline;">1.2.2</h2></summary>
-
-## 1.2.2
-
-### 优化
+#### 优化
 
 - **去广告播放体验优化**
   - 优化 M3U8 本地去广告与代理逻辑，提升含广告、多切片源播放稳定性。
@@ -104,7 +91,7 @@
   - 播放记录/收藏夹无豆瓣 ID 时，详情页通过标题+年份自动匹配豆瓣兜底，并用完整标题与基准名（去掉季/集/语言/版本/画质后缀）多重尝试，提升命中率。
   - 标题相似度算法增加罗马数字/圈数字归一化（如 `Ⅲ`→`3`），减少因特殊字符导致的匹配失败。
 
-### 修复
+#### 修复
 
 - **FVP 播放完未自动下一集**
   - 修复 FVP 播放完一集后未触发下一集的问题。
@@ -116,7 +103,7 @@
   - 修复 Flutter LocalizationPlugin 在 API 21/22 上调用 `Configuration.getLocales`（API 24+）导致的 `NoSuchMethodError`：通过 `FlutterEmbeddingPatcher` 替换 `LocalizationPlugin.class` 为兼容版本。
   - 修复 Android 5.x 播放源 HTTPS 证书信任失败：新增 `SslSocketFactoryProvider`，合并系统证书与内置 Let's Encrypt ISRG Root X1/X2，并通过 `VideoPlayerPlugin` 注入。
 
-### 变更
+#### 变更
 
 - **版本号统一**
   - 全项目版本号更新至 `1.2.2`（build `+14`）。
@@ -126,14 +113,9 @@
 - **CI 构建修复**
   - 修复 tvlegacy 的 `FlutterEmbeddingPatcher` 在 GitHub Actions（Ubuntu）上因 `javac` classpath 使用 Windows 分号 `;` 而编译失败的问题，改为根据操作系统自动选择 `;` 或 `:`。
 
-</details>
+### 1.2.1
 
-<details>
-<summary><h2 style="display: inline;">1.2.1</h2></summary>
-
-## 1.2.1
-
-### 新增
+#### 新增
 
 - **Windows 播放页小窗模式**
   - 播放控制栏新增「小窗播放 / 恢复窗口」按钮，一键将播放窗口切换为右下角小窗（默认 480×270），视频继续播放不被中断。
@@ -145,7 +127,7 @@
   - 播放控制栏新增「窗口置顶 / 取消置顶」按钮，普通窗口与小窗模式均可独立切换置顶状态。
   - 全屏切换时根据当前置顶设置自动同步：开启置顶后进入全屏会保持置顶，关闭置顶后退出全屏会取消置顶，避免状态冲突。
 
-### 修复
+#### 修复
 
 - **TV / Windows 搜索页焦点与灰屏**
   - 修复 TV 版在「正在补充海报信息」阶段，焦点无法从搜索历史移动到搜索结果海报的问题。
@@ -153,7 +135,7 @@
   - 根因：搜索结果海报使用的外部 `FocusNode` 在列表长度变化时被同步 `dispose`，但旧的 `FocusableWidget` 仍在 widget 树上，导致构建阶段访问已释放节点并抛异常。
   - 解决：TV / Windows 搜索页的 `_syncResultFocusNodes()` 改为将待释放节点从列表移除后，通过 `addPostFrameCallback` 延迟到下一帧再 `dispose`；`TvPosterGrid` 增加外部 `itemFocusNodes` 长度校验，长度不一致时回退到内部节点，避免越界访问。
 
-### 优化
+#### 优化
 
 - **双服务器地址连接速度**
   - 启动时及「我的-服务器管理」页手动触发测速时，所有候选地址（互联网 / 局域网）改为并发请求。
@@ -167,21 +149,16 @@
   - 本地搜索历史存储 key 由单一 `search_history` 改为 `search_history_<username>`。
   - 主账号与子账号分别保存最近搜索记录，切换账号后搜索历史互不干扰；旧版单一账号数据会在首次使用时自动迁移。
 
-### 变更
+#### 变更
 
 - **版本号统一**
   - 全项目版本号更新至 `1.2.1`（build `+13`）。
   - Release 产物命名同步为 `heinplay-1.2.1-tv.apk`、`heinplay-1.2.1-tvLegacy.apk`、`heinplay-1.2.1-mobile.apk`、`heinplay-1.2.1-windows-portable.zip`。
   - Windows EXE 资源版本号同步更新为 `1.2.1`，`AppInfoService` 兜底版本号同步更新。
 
-</details>
+### 1.2.0
 
-<details>
-<summary><h2 style="display: inline;">1.2.0</h2></summary>
-
-## 1.2.0
-
-### 新增
+#### 新增
 
 - **互联网/局域网双服务器自动切换**
   - 登录页、服务器管理页支持分别配置「互联网服务器地址」与「局域网服务器地址」，首次登录至少填写一个即可。
@@ -202,7 +179,7 @@
   - 更新 AppInfoService 平台识别逻辑，tvLegacy 版更新检测时匹配 `-tvlegacy.apk` 文件。
   - 一键构建脚本（`build_all.bat` / `build_all.ps1`）与 GitHub Actions 工作流均已集成 tvLegacy 构建。
 
-### 变更
+#### 变更
 
 - **连接状态显示优化**
   - 将图标化的连接状态恢复为文字标签形式，使用彩色背景区分：互联网已连接（蓝色）、局域网已连接（绿色）、未连接（红色）。
@@ -216,7 +193,7 @@
 - **登录界面说明文字位置调整**
   - 首次登录页「至少填写一个服务器地址」的说明文字调整至互联网服务器地址与局域网服务器地址两个输入框之间。
 
-### 修复
+#### 修复
 
 - **版本号显示与一致性**
   - 修复全平台设置页「当前版本」偶发为空或显示为 `1.1.0` 的问题。
@@ -232,7 +209,7 @@
 - **手机版全屏播放比例**
   - 修复手机版全屏播放有时不能正确识别屏幕比例、导致大黑边的问题。默认始终使用 `BoxFit.contain` 保持视频原始比例，由屏幕比例与视频比例自然决定是否出现黑边，用户仍可通过控制栏手动切换填充/拉伸模式。
 
-### 构建产物与适用设备
+#### 构建产物与适用设备
 
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
@@ -241,7 +218,7 @@
 | `heinplay-1.2.0-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
 | `heinplay-1.2.0-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，默认 `fvp` 播放，可切换 `vlc_player`。 |
 
-### 1.1.6 → 1.2.0 主要差异
+#### 1.1.6 → 1.2.0 主要差异
 
 - 新增互联网/局域网双服务器配置与自动测速切换，首页实时展示连接状态。
 - 新增主/子双账号管理，支持一键快速切换与扫码配置子账号。
@@ -252,17 +229,12 @@
 
 </details>
 
-</details>
-
 <details>
 <summary><h2 style="display: inline;">1.1.0</h2></summary>
 
-<details>
-<summary><h2 style="display: inline;">1.1.6</h2></summary>
+### 1.1.6
 
-## 1.1.6
-
-### 变更
+#### 变更
 
 - **播放器后端重构（重点）**
   - Windows 端彻底移除并抛弃长期不更新的 `flutter_mpv`（及其配套 `media_kit`），默认播放器后端切换为 `fvp`。
@@ -294,7 +266,7 @@
   - 全项目版本号统一更新至 `1.1.6`（build `+11`）。
   - 各网络请求 `User-Agent`、`关于页`、设置页版本号同步更新。
 
-### 构建产物与适用设备
+#### 构建产物与适用设备
 
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
@@ -302,7 +274,7 @@
 | `heinplay-1.1.6-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
 | `heinplay-1.1.6-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，默认 `fvp` 播放，可切换 `vlc_player`。 |
 
-### 1.1.5 → 1.1.6 主要差异
+#### 1.1.5 → 1.1.6 主要差异
 
 - Windows 播放器后端由 `flutter_mpv` 切换为 `fvp`，并新增 `vlc_player` 备用。
 - 详情页测速策略改为全部源测速，实时排序并缓存分辨率分析结果。
@@ -310,14 +282,9 @@
 - 修复 Android 因引入 `vlc_player` 导致的 `.so` 冲突与 `minSdk` 抬升问题。
 - 全项目版本号统一为 `1.1.6`。
 
-</details>
+### 1.1.5
 
-<details>
-<summary><h2 style="display: inline;">1.1.5</h2></summary>
-
-## 1.1.5
-
-### 变更
+#### 变更
 
 - **每日放送（Bangumi）中文详情与评分显示修复**
   - Bangumi API 请求新增 `Accept-Language: zh-CN` 头，优先获取中文动漫详情，避免详情页显示日文。
@@ -344,7 +311,7 @@
   - 升级 `window_manager`：`^0.4.0` → `^0.5.2`。
   - 通过 `flutter pub upgrade --major-versions` 更新 `video_player`、`wakelock_plus`、`package_info_plus`、`uuid`、`win32` 等可解析到最新兼容版本的依赖。
 
-### 构建产物与适用设备
+#### 构建产物与适用设备
 
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
@@ -352,7 +319,7 @@
 | `heinplay-1.1.5-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
 | `heinplay-1.1.5-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，使用 `flutter_mpv` 播放。 |
 
-### 1.1.4 → 1.1.5 主要差异
+#### 1.1.4 → 1.1.5 主要差异
 
 - 修复 Bangumi 详情日文问题，优先展示中文并正确区分豆瓣 / Bangumi 评分。
 - 修复设置页 SnackBar 文字颜色，提升深色主题下可读性。
@@ -360,20 +327,15 @@
 - 新增 GitHub Actions 自动构建与 Release 产物上传。
 - 全项目版本号统一为 `1.1.5`。
 
-</details>
+### 1.1.4
 
-<details>
-<summary><h2 style="display: inline;">1.1.4</h2></summary>
-
-## 1.1.4
-
-### 变更
+#### 变更
 
 - **Windows 版本播放器统一**
   - Windows 端只保留 `flutter_mpv` 一个播放器后端，不再提供其他后端切换，避免多后端兼容性问题。
   - 清理了与外部播放器相关的实验性代码和依赖。
 
-### 构建产物与适用设备
+#### 构建产物与适用设备
 
 | 文件名 | 适用设备 | 系统要求 | 说明 |
 | --- | --- | --- | --- |
@@ -381,14 +343,14 @@
 | `heinplay-1.1.4-mobile.apk` | Android 手机 / 平板 | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。 |
 | `heinplay-1.1.4-windows-portable.zip` | Windows 10/11 电脑 | Windows 10 1809+ | 解压即用，使用 `flutter_mpv` 播放。 |
 
-### 播放器后端现状
+#### 播放器后端现状
 
 - **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，可在设置中切换为 **flutter_mpv**。
 - **Windows**：仅使用 **flutter_mpv**，不支持切换其他后端。
 
 > 当前 Android 构建配置：`minSdk 24`（Android 7.0），`targetSdk 36`。
 
-### 1.1.3 → 1.1.4 主要差异
+#### 1.1.3 → 1.1.4 主要差异
 
 - **Windows 桌面端正式发布并重构**
   - 播放器后端统一为 `flutter_mpv`，移除其他后端切换选项，解决 Windows 下多后端兼容性问题。
@@ -412,14 +374,9 @@
   - Android 手机：`heinplay-{version}-mobile.apk`
   - Windows：`heinplay-{version}-windows-portable.zip`
 
-</details>
+### 1.1.3
 
-<details>
-<summary><h2 style="display: inline;">1.1.3</h2></summary>
-
-## 1.1.3
-
-### 新增
+#### 新增
 
 - **手机版正式发布**
   - 新增 Android 手机版入口，与 TV 版共用一套业务层，拥有独立的竖屏触屏 UI。
@@ -434,44 +391,34 @@
 - **TV 版「我的」页仓库二维码**
   - 在 TV 版「我的」页面软件介绍区域新增国内仓库与 GitHub 仓库的二维码，方便手机扫码下载。
 
-### 变更
+#### 变更
 
 - 应用版本号统一更新至 `1.1.3`（`pubspec.yaml`、关于页、`UpdateService`）。
 
-</details>
-
-<details>
-<summary><h2 style="display: inline;">1.1.2</h2></summary>
-
-## 1.1.2
+### 1.1.2
 
 > **紧急更新**：解决 Bangumi 被墙导致的动漫「每日放送」数据与图片无法加载的问题。
 
-### 新增
+#### 新增
 
 - **Bangumi 代理设置**
   - 新增「Bangumi 数据代理」与「Bangumi 图片代理」选项，默认使用 CMLiussss 反代，解决 Bangumi 官方 API 与图片域名在国内无法访问的问题。
   - 支持自定义反代地址，满足不同网络环境需求。
   - 在「我的」页面新增 GitHub 仓库地址，方便用户下载手机版与 Windows 版本。
 
-### 优化
+#### 优化
 
 - **动漫分类默认页**
   - 动漫分类默认进入「番剧」，避免启动时因 Bangumi 访问失败而直接展示错误。
   - 切换「每日放送」到「番剧」/「剧场版」时，立即中断 Bangumi 请求，防止旧请求结果覆盖当前页面。
 
-### 变更
+#### 变更
 
 - **应用版本号**统一更新至 `1.1.2`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
 
-</details>
+### 1.1.1
 
-<details>
-<summary><h2 style="display: inline;">1.1.1</h2></summary>
-
-## 1.1.1
-
-### 新增 / 优化
+#### 新增 / 优化
 
 - **LunaTV 搜索体验增强**
   - 搜索超时由 8 秒延长至 30 秒，匹配 Selene 项目配置，解决长篇动漫（如《名侦探柯南》）搜索结果集体积过大导致的超时失败。
@@ -490,7 +437,7 @@
 - **品牌视觉**
   - 顶部导航栏「海因影视」标题改为 Logo 风格：加大字号、加重字重、增加字间距与红色发光阴影。
 
-### 变更
+#### 变更
 
 - **详情页布局紧凑化**
   - 海报尺寸从 `280×420` 减小至 `210×320`。
@@ -501,7 +448,7 @@
   - 动漫「每日放送」条目详情页优先展示豆瓣信息；豆瓣信息缺失时回退到 Bangumi。
   - 详情页评分区同时展示豆瓣评分与 Bangumi 评分（后者以粉色徽章区分）。
 
-### 修复
+#### 修复
 
 - **播放记录刷新**
   - 详情页退出播放后，播放记录立即刷新，无需退回首页。
@@ -515,21 +462,16 @@
   - 修复设置页 M3U8 去广告开关初始状态与实际存储值不一致的问题。
   - `AdFilterEngine` 增加真实开关值日志，便于排查状态。
 
-</details>
+### 1.1.0
 
-<details>
-<summary><h2 style="display: inline;">1.1.0</h2></summary>
-
-## 1.1.0
-
-### 新增
+#### 新增
 
 - **动漫分类焦点重构**
   - 「番剧」「剧场版」按下键时焦点正确移动到筛选行第一个按钮（标签/地区/年代/排序等），不再误切换分类。
   - 新增自定义 `_DimensionButton` 控件，直接使用 `Focus` 管理焦点，绕过 `FocusableWidget`/`FocusableActionDetector` 在动态重建时 FocusNode 无法挂载的问题。
   - 「每日放送」星期行保持原有逻辑不变，支持完整左右循环。
 
-### 变更
+#### 变更
 
 - **电影分类排序精简**
   - 电影分类「全部」移除「综合排序」选项，仅保留「近期热度」「首映时间」「高分优先」。
@@ -538,7 +480,7 @@
   - 电影、电视剧、综艺「全部」以及动漫「番剧」「剧场版」默认排序改为「近期热度」（`U`）。
   - 同步调整 `DoubanService` 排序参数处理逻辑，确保「近期热度」正确透传。
 
-### 修复
+#### 修复
 
 - **海报墙上键焦点层级**
   - 修复分类页（电影、电视剧、综艺、动漫）与首页在海报墙/内容区按住上键不放时，焦点直接跳到「我的」的问题。
@@ -551,17 +493,12 @@
 
 </details>
 
-</details>
-
 <details>
 <summary><h2 style="display: inline;">1.0.0</h2></summary>
 
-<details>
-<summary><h2 style="display: inline;">1.0.3</h2></summary>
+### 1.0.3
 
-## 1.0.3
-
-### 新增
+#### 新增
 
 - **M3U8 本地去广告**
   - 参考 TVBox 广告过滤思路，在客户端本地完成 M3U8 广告过滤，不再依赖 LunaTV 服务端广告配置。
@@ -574,7 +511,7 @@
   - 电影、电视剧、综艺、动漫分类中，除「近期热门」外，所有小分类（含「全部」）默认排序改为「首映时间」。
   - 切换小分类时自动重置为默认排序；「近期热门」仍保持排序维度隐藏。
 
-### 修复
+#### 修复
 
 - **播放失败自动切换源**
   - 设置页将「自动切换源」开关与等待时间选项合并为同一卡片，关闭开关时隐藏等待时间选项。
@@ -593,18 +530,13 @@
 - **关于页**
   - 开源仓库地址改为国内 GitCode 地址 `https://gitcode.com/gcw_QbmhmbO8/HeinPlay`。
 
-### 变更
+#### 变更
 
 - 应用版本号统一更新至 `1.0.3`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
 
-</details>
+### 1.0.2
 
-<details>
-<summary><h2 style="display: inline;">1.0.2</h2></summary>
-
-## 1.0.2
-
-### 修复
+#### 修复
 
 - **收藏夹实时同步**
   - 修复详情页添加/取消收藏后“我的”页面未实时刷新的问题。
@@ -620,7 +552,7 @@
   - 现在方向键同时支持 `KeyDownEvent` 与 `KeyRepeatEvent`，避免长按遥控器导致重复焦点遍历。
   - 海报网格行内循环：行尾按右进入下一行首个海报，行首按左进入上一行末尾海报；仅首个海报按左返回筛选/排序栏。
 
-### 新增 / 优化
+#### 新增 / 优化
 
 - **“我的”页面弹窗重构**
   - 播放记录与收藏夹弹窗改为屏幕 92%×88% 的居中 Dialog，展示更多内容。
@@ -632,14 +564,9 @@
 - **版本号**
   - 应用版本号统一更新至 `1.0.2`（`pubspec.yaml`、关于页、`UpdateService`、`LunaTV User-Agent`）。
 
-</details>
+### 1.0.1
 
-<details>
-<summary><h2 style="display: inline;">1.0.1</h2></summary>
-
-## 1.0.1
-
-### 修复
+#### 修复
 
 - **全屏播放遥控器确认键**
   - 修复控制栏隐藏时按确认键无法播放/暂停的问题。
@@ -665,7 +592,7 @@
   - 跳过配置对话框新增“广告”类型，广告片段默认自动跳过。
   - M3U8 广告过滤默认关闭，可在播放器设置中手动开启。
 
-### 新增
+#### 新增
 
 - **应用内更新双渠道**
   - 默认使用国内渠道（GitCode）检查更新。
@@ -683,19 +610,14 @@
   - 全屏播放时启用屏幕常亮，退出播放后自动释放。
   - 播放器后端初始化失败时输出更详细的日志，便于排查问题。
 
-### 变更
+#### 变更
 
 - 升级 `permission_handler` 到 `^12.0.3`（需 Android `compileSdkVersion 35`，当前 Flutter 版本默认提供 36）。
 - 通过 `flutter pub upgrade` 更新 `wakelock_plus`、`path_provider`、`video_player_android` 等 13 个依赖到最新兼容版本。
 
-</details>
+### 1.0.0
 
-<details>
-<summary><h2 style="display: inline;">1.0.0</h2></summary>
-
-## 1.0.0
-
-### 新增功能
+#### 新增功能
 
 - **首页与分类浏览**
   - 首页智能推荐，聚合热门影视内容。
@@ -724,7 +646,5 @@
 - **个人中心**
   - 播放历史、收藏管理。
   - 扫码登录。
-
-</details>
 
 </details>

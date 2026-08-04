@@ -224,8 +224,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 <details open>
 <summary><strong>1.2.0</strong></summary>
 
-<details open>
-<summary><strong>1.2.4</strong></summary>
+### 1.2.4
 
 - **TV 渲染后端策略调整**：普通 TV 版默认使用 **Vulkan（Impeller）** 渲染后端，推荐新设备使用；tvLegacy 版维持 **OpenGL ES** 渲染，继续兼容 Android 5.0+ 旧设备与低版本电视盒子。
 - **新增获取日志功能**：全版本设置页新增「获取日志」开关；开启后 TV 版显示局域网日志下载二维码，手机版与 Windows 版显示日志保存路径，方便反馈问题时导出日志。
@@ -233,10 +232,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **TV 版界面显示优化**：优化设置页「获取日志」二维码、软件介绍仓库二维码与更新日志弹窗的布局与字号，避免低分辨率电视显示不全。
 - **版本号统一**：全项目更新至 `1.2.4`（build `+16`），Release 产物命名同步为 `heinplay-1.2.4-tv.apk`、`heinplay-1.2.4-tvLegacy.apk`、`heinplay-1.2.4-mobile.apk`、`heinplay-1.2.4-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.2.3</strong></summary>
+### 1.2.3
 
 - **自动测速开关**：全版本设置页新增「进入详情页自动测速」开关，默认开启；关闭后无播放记录的豆瓣/Bangumi 详情页在搜索源完成后即可播放与选集。
 - **手动测速后台继续**：关闭自动测速后，用户手动触发测速仍可进入播放，测速在后台继续完成排序，行为与有播放记录时一致。
@@ -244,10 +240,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **TV 兼容性优化**：移除全局 Impeller 禁用，改为仅 TV/tvLegacy  flavor 禁用 Impeller，手机版继续保留 Vulkan，提升老机顶盒/低版本电视设备兼容性。
 - **版本号统一**：全项目更新至 `1.2.3`（build `+15`），Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.2.2</strong></summary>
+### 1.2.2
 
 - **去广告播放优化**：优化 M3U8 本地去广告与代理逻辑，提升含广告源播放稳定性；修复去广告开关状态在设置页偶发不一致的问题。
 - **服务器连接判断优化**：启动与手动测速时并发探测互联网/局域网服务器，首个可用地址立即生效，降低无网或慢网场景下的等待与误判。
@@ -258,10 +251,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **详情页手动模糊搜索统一**：自动搜索无源时的手动模糊搜索改为与「搜索」分类页一致的搜索逻辑。
 - **版本号统一**：全项目更新至 `1.2.2`，Release 产物命名同步为 `heinplay-1.2.2-tv.apk`、`heinplay-1.2.2-tvLegacy.apk`、`heinplay-1.2.2-mobile.apk`、`heinplay-1.2.2-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.2.1</strong></summary>
+### 1.2.1
 
 - **Windows 播放页小窗模式**：播放控制栏新增「小窗播放/恢复窗口」按钮，可将播放窗口一键切换为右下角小窗（默认 480×270）并继续播放；小窗支持鼠标拖动、双击恢复/全屏、四周热区自由拉伸，退出小窗后自动恢复原窗口尺寸或全屏状态。
 - **Windows 播放页窗口置顶**：播放控制栏新增「窗口置顶/取消置顶」按钮，普通窗口与小窗模式均可切换置顶，全屏切换时自动同步置顶状态。
@@ -271,10 +261,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **搜索页焦点与灰屏修复**：修复 TV 版在「正在补充海报信息」阶段焦点无法移动到搜索结果海报的问题，修复 Windows 版搜索过程中结果区偶发灰屏的问题；根因是搜索结果海报 `FocusNode` 被同步 dispose 导致旧 widget 访问已释放节点，已改为延迟释放并增加长度校验防御。
 - **版本号统一**：全项目更新至 `1.2.1`，Release 产物命名同步为 `heinplay-1.2.1-tv.apk`、`heinplay-1.2.1-tvLegacy.apk`、`heinplay-1.2.1-mobile.apk`、`heinplay-1.2.1-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.2.0</strong></summary>
+### 1.2.0
 
 - **互联网/局域网双服务器自动切换**：登录页与服务器管理页支持分别配置互联网服务器与局域网服务器，启动时自动测速并选择延迟最低的可用地址，首页实时显示当前连接状态（互联网/局域网/未连接）。
 - **主/子双账号快速切换**：新增账号管理页面，支持保存主账号与子账号，一键切换无需重新输入密码；TV 端支持手机扫码快速配置子账号，方便使用不同播放源的账号。
@@ -285,13 +272,10 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 </details>
 
-</details>
-
 <details>
 <summary><strong>1.1.0</strong></summary>
 
-<details>
-<summary><strong>1.1.6</strong></summary>
+### 1.1.6
 
 - **播放器后端重构**：Windows 端抛弃长期不更新的 `flutter_mpv`，默认切换为 `fvp`，并新增 `vlc_player` 作为备用后端，解决部分源播放失败问题。
 - **视频缓冲与测速优选优化**：重构详情页播放源测速逻辑，自动对所有源进行连通性与响应速度测试，按速度实时排序；无播放记录时完成测速后再启用播放按钮。
@@ -299,10 +283,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **构建与依赖**：`vlc_player` 改为仅 Windows 平台的本地依赖，避免 Android 构建引入 `libvlc-all` 导致 `.so` 冲突与 `minSdk` 抬升。
 - **版本号统一**：全项目更新至 `1.1.6`，Release 产物命名同步为 `heinplay-1.1.6-tv.apk`、`heinplay-1.1.6-mobile.apk`、`heinplay-1.1.6-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.1.5</strong></summary>
+### 1.1.5
 
 - **每日放送中文详情与评分修复**：Bangumi 请求优先获取中文内容，详情页优先展示豆瓣评分并在无匹配时回退到 Bangumi，海报墙评分标签统一按分数段着色。
 - **设置页提示可读性修复**：TV / 手机设置页所有切换操作 SnackBar 提示文字统一为白色，避免深色背景下看不清。
@@ -312,38 +293,26 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **依赖升级**：`window_manager` 升级至 `^0.5.2`，并更新多个兼容依赖。
 - **版本号统一**：全项目更新至 `1.1.5`，Release 产物命名同步为 `heinplay-1.1.5-tv.apk`、`heinplay-1.1.5-mobile.apk`、`heinplay-1.1.5-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.1.4</strong></summary>
+### 1.1.4
 
 - **Windows 桌面端正式发布**：统一使用 `flutter_mpv`，新增 Windows 日志、用户数据便携化、ESC 返回与全屏切换等桌面交互。
 - **全平台数据刷新重构**：首次进入首页强制全量同步播放记录与收藏夹并缓存，播放后增量刷新首页与「我的」。
 - **播放体验优化**：收藏夹点击统一进入详情页，详情页与播放页实时同步播放源，换源永久可用并显示测速排名。
 - **Release 文件命名统一**：`heinplay-1.1.4-tv.apk`、`heinplay-1.1.4-mobile.apk`、`heinplay-1.1.4-windows-portable.zip`。
 
-</details>
-
-<details>
-<summary><strong>1.1.3</strong></summary>
+### 1.1.3
 
 - **手机版正式发布**：新增 Android 手机版入口，与 TV 版共用业务层但拥有独立的竖屏触屏 UI；支持首页、分类、搜索、个人中心四大模块；播放器支持屏幕旋转与横竖屏自适应；构建产物区分 `tv` / `mobile` 两个 Flavor，使用不同包名与签名密钥。手机版 APK 可在 GitCode / GitHub Release 页面下载。
 - **TV 版「我的」页仓库二维码**：在软件介绍区域新增国内仓库与 GitHub 仓库二维码，方便手机扫码下载。
 - 应用版本号统一更新至 `1.1.3`。
 
-</details>
-
-<details>
-<summary><strong>1.1.2（紧急更新）</strong></summary>
+### 1.1.2（紧急更新）
 
 - **解决 Bangumi 被墙问题**：新增 Bangumi 数据代理与图片代理设置，默认使用 CMLiussss 反代，恢复动漫「每日放送」的数据与海报加载。
 - **动漫分类默认页调整**：默认进入「番剧」而非「每日放送」，避免启动时因 Bangumi 访问失败直接报错。
 - **分类切换请求取消**：从「每日放送」切到「番剧」/「剧场版」时立即中断 Bangumi 请求，防止旧请求结果覆盖当前页面。
 
-</details>
-
-<details>
-<summary><strong>1.1.1</strong></summary>
+### 1.1.1
 
 - **搜索体验优化**：LunaTV 搜索超时从 8 秒延长至 30 秒，彻底解决长篇动漫（如《名侦探柯南》）因搜索结果集过大导致的超时失败；模糊搜索新增基础标题变体生成，自动剥离「年番/季/部」等后缀，带后缀标题也能命中播放源。
 - **详情页搜索源增量显示**：详情页搜索播放源时搜到一个立即显示一个，不再等全部变体搜完，显著减少搜索等待和黑屏时间。
@@ -353,10 +322,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **焦点交互修复**：分类标签按下键仅移动焦点到筛选行，不再误切换分类；修复设置页 M3U8 去广告开关状态不一致的问题。
 - **品牌视觉优化**：顶部「海因影视」标题改为 Logo 风格发光字。
 
-</details>
-
-<details>
-<summary><strong>1.1.0</strong></summary>
+### 1.1.0
 
 - **分类架构重构**：对电影、电视剧、综艺、动漫全分类进行底层焦点逻辑重构，统一顶部导航 → 筛选栏 → 海报墙的焦点层级，彻底解决长期存在的焦点跳转异常问题，TV 遥控体验一致性大幅提升。
 - **影片加载优化**：调整播放器初始化时机与预加载策略，修复切换播放源时的双加载圈问题，显著减少点播过程中的黑屏等待时间，低配置设备上效果更明显。
@@ -368,13 +334,10 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 </details>
 
-</details>
-
 <details>
 <summary><strong>1.0.0</strong></summary>
 
-<details>
-<summary><strong>1.0.3</strong></summary>
+### 1.0.3
 
 - **M3U8 本地去广告**：参考 TVBox 思路实现客户端本地过滤，支持三种播放器后端，默认关闭。
 - **自动切换源优化**：开关与等待时间合并为同一设置项，等待时间现在会真正生效。
@@ -383,20 +346,14 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **更新弹窗优化**：弹窗更大、日志更完整，下载进度条固定在底部始终可见。
 - **分类页默认排序**：电影、电视剧、综艺、动漫除「近期热门」外，默认排序改为「首映时间」。
 
-</details>
-
-<details>
-<summary><strong>1.0.2</strong></summary>
+### 1.0.2
 
 - **收藏夹实时同步**：详情页添加/取消收藏后，“我的”页面立即刷新，无需重启。
 - **“我的”页面弹窗重构**：播放记录与收藏夹弹窗更大，支持批量选择、删除与清空，并同步 LunaTV 服务器。
 - **分类页海报墙焦点优化**：支持方向键长按、行尾循环跳转，避免焦点异常跳回筛选栏。
 - **跳过片头片尾优化**：电视剧自动识别跳过配置，焦点导航更顺畅。
 
-</details>
-
-<details>
-<summary><strong>1.0.1</strong></summary>
+### 1.0.1
 
 - **TV 遥控修复**：控制栏隐藏时确认键可正常播放/暂停；下键显示控制栏后优先聚焦“跳过”按钮。
 - **焦点导航修复**：分类页子分类/筛选栏按上键正确返回当前分类导航；筛选面板返回键优先关闭面板，不再误触发退出。
@@ -404,8 +361,6 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 - **应用内更新**：支持国内（GitCode）与 GitHub 双渠道，下载前请求安装权限。
 - **跳过片头片尾**：支持 LunaTV 跳过配置，可自动跳过片头、片尾与广告。
 - **依赖升级**：`permission_handler` 升级至 `^12.0.3`，并更新多个兼容依赖。
-
-</details>
 
 </details>
 
