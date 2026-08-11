@@ -52,7 +52,7 @@ class AppLogger {
     final oldEnabled = _enabled;
     _enabled = enabled;
     await UserDataService.saveLogEnabled(enabled);
-    if (enabled && !oldEnabled) {
+    if (enabled && _logDir == null) {
       await _ensureInitialized();
       if (_logDir != null) {
         _hookDebugPrint();
@@ -88,7 +88,9 @@ class AppLogger {
   }
 
   static Future<void> _ensureInitialized() async {
-    if (_initialized) return;
+    // 已经初始化且日志目录已创建才直接返回；
+    // 否则允许重新初始化（例如启动时日志关闭，_initialized 为 true 但 _logDir 为空，后续开启时需要创建目录）。
+    if (_initialized && _logDir != null) return;
     try {
       if (Platform.isWindows) {
         await PortableStorageWindows.initialize();

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'app_info_service.dart';
 import 'lunatv_service.dart';
 import 'user_data_service.dart';
@@ -96,9 +97,9 @@ class ConnectivityService {
 
       final base = serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
       final cookies = await UserDataService.getCookies();
-      final client = LunaTVService.createApiClient();
-      try {
-        final response = await client
+
+      Future<http.Response> doCheck(http.Client client) async {
+        return client
             .get(
               Uri.parse('$base/api/playrecords').replace(
                 queryParameters: {
@@ -109,25 +110,71 @@ class ConnectivityService {
               headers: {
                 'Accept': 'application/json, text/plain, */*',
                 'User-Agent': AppInfoService.userAgent,
+                'Host': Uri.parse('$base/api/playrecords').host,
                 if (cookies != null && cookies.isNotEmpty) 'Cookie': cookies,
               },
             )
             .timeout(_requestTimeout);
-
-      // 只有登录态有效且接口返回 200 才算连接成功
-      var connected = response.statusCode == 200;
-      // 若本次探测失败，但近期有业务接口实际调用成功，则仍保持已连接状态，
-      // 避免探测 URL 与业务 URL 不一致或瞬时波动导致状态误报。
-      if (!connected &&
-          _lastSuccessAt != null &&
-          DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
-        connected = true;
       }
-      final serverType = await UserDataService.getCurrentServerType();
-      _updateStatus(connected, serverType);
-      return;
-      } finally {
-        client.close();
+
+      try {
+        final client = await LunaTVService.createApiClient();
+        final response;
+        try {
+          response = await doCheck(client);
+        } finally {
+          client.close();
+        }
+
+        // 只有登录态有效且接口返回 200 才算连接成功
+        var connected = response.statusCode == 200;
+        // 若本次探测失败，但近期有业务接口实际调用成功，则仍保持已连接状态，
+        // 避免探测 URL 与业务 URL 不一致或瞬时波动导致状态误报。
+        if (!connected &&
+            _lastSuccessAt != null &&
+            DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
+          connected = true;
+        }
+        final serverType = await UserDataService.getCurrentServerType();
+        _updateStatus(connected, serverType);
+        return;
+      } catch (e) {
+        if (LunaTVService.isNetworkUnreachable(e)) {
+          final dnsPreference =
+              await UserDataService.getInternetServerDnsPreference();
+          if (dnsPreference == InternetServerDnsPreference.ipv6) {
+            try {
+              final client = await LunaTVService.createApiClient(
+                forceAutoDns: true,
+              );
+              final response;
+              try {
+                response = await doCheck(client);
+              } finally {
+                client.close();
+              }
+              var connected = response.statusCode == 200;
+              if (!connected &&
+                  _lastSuccessAt != null &&
+                  DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
+                connected = true;
+              }
+              final serverType = await UserDataService.getCurrentServerType();
+              _updateStatus(connected, serverType);
+              return;
+            } catch (_) {
+              // 兜底失败，继续走下方异常处理。
+            }
+          }
+        }
+        // 异常失败时同样参考最近业务成功记录，避免误报未连接。
+        if (_lastSuccessAt != null &&
+            DateTime.now().difference(_lastSuccessAt!) <= _checkInterval) {
+          final serverType = await UserDataService.getCurrentServerType();
+          _updateStatus(true, serverType);
+        } else {
+          _updateStatus(false, 'internet');
+        }
       }
     } catch (e) {
       // 异常失败时同样参考最近业务成功记录，避免误报未连接。

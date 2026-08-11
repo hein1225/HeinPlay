@@ -3,6 +3,28 @@
 <details open>
 <summary><h2 style="display: inline;">1.2.0</h2></summary>
 
+### 1.2.5
+
+#### 新增
+
+- **互联网服务器 IPv6 优先解析**
+  - 全版本「我的-服务器管理」新增「互联网服务器地址优先解析 IPv6」开关，默认关闭。
+  - 开启后优先解析互联网服务器域名的 IPv6 地址；当 IPv6 网络不可达时自动回退到 IPv4，无需手动切换。
+  - 仅作用于互联网服务器，局域网服务器继续沿用系统默认 Happy Eyeballs 解析策略，不受影响。
+  - 针对目前国内大量软件对 IPv6 地址解析与回退适配不完善的问题，提升仅有 IPv6 公网环境下的服务器连通性与访问成功率。
+  - 实现底层使用 `HttpClient.connectionFactory` 自定义 DNS 解析与连接，HTTPS 场景通过 `SecureSocket` 完成 TLS 握手并正确携带 SNI。
+
+- **LunaTV API 共享 HTTP 客户端**
+  - 多个 LunaTV API 请求复用同一 `http.Client`（底层 `HttpClient`），减少重复的 DNS 解析与 TCP/TLS 连接开销。
+  - 服务器地址或 DNS 偏好变更时自动重置并重建共享客户端，确保配置变更立即生效。
+  - 兜底/独立请求（如强制系统默认 DNS 回退、Windows 兜底客户端、请求取消）仍使用独立客户端，避免污染共享连接。
+
+#### 版本号统一
+
+- 全项目版本号更新至 `1.2.5`（build `+17`）。
+- Release 产物命名同步为 `heinplay-1.2.5-tv.apk`、`heinplay-1.2.5-tvLegacy.apk`、`heinplay-1.2.5-mobile.apk`、`heinplay-1.2.5-windows-portable.zip`。
+- Windows EXE 资源版本号同步更新为 `1.2.5`，`AppInfoService` 兜底版本号同步更新。
+
 ### 1.2.4
 
 #### 新增

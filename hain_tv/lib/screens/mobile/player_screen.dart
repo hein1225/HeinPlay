@@ -66,6 +66,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
+  double _playbackSpeed = 1.0;
 
   EpisodeSkipConfig? _skipConfig;
   bool _skipConfigLoading = false;
@@ -1284,6 +1285,31 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     _showControls();
   }
 
+  void _cyclePlaybackSpeed() {
+    setState(() {
+      switch (_playbackSpeed) {
+        case 1.0:
+          _playbackSpeed = 1.25;
+          break;
+        case 1.25:
+          _playbackSpeed = 1.5;
+          break;
+        case 1.5:
+          _playbackSpeed = 2.0;
+          break;
+        default:
+          _playbackSpeed = 1.0;
+      }
+    });
+    _backend?.setSpeed(_playbackSpeed);
+    _showControls();
+  }
+
+  String _playbackSpeedLabel(double speed) {
+    if (speed == 1.0) return '倍速';
+    return '${speed}x';
+  }
+
   String _videoFitLabel(BoxFit fit) {
     switch (fit) {
       case BoxFit.contain:
@@ -1893,6 +1919,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
           active: _skipConfig != null && _skipConfig!.segments.isNotEmpty,
           loading: _skipConfigLoading,
         ),
+      _buildControlButton(
+        onTap: _cyclePlaybackSpeed,
+        icon: Icons.speed,
+        label: _playbackSpeedLabel(_playbackSpeed),
+      ),
       _buildControlButton(
         onTap: _cycleVideoFit,
         icon: Icons.aspect_ratio,

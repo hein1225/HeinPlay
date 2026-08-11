@@ -15,10 +15,14 @@ enum BangumiApiProxyType { direct, cmliussss, custom }
 
 enum BangumiImageProxyType { direct, cmliussss, custom }
 
+enum InternetServerDnsPreference { ipv4, ipv6, any }
+
 class UserDataService {
   static const String _serverUrlKey = 'server_url';
   static const String _backupServerUrlKey = 'backup_server_url';
   static const String _lastSelectedServerUrlKey = 'last_selected_server_url';
+  static const String _internetServerDnsPreferenceKey =
+      'internet_server_dns_preference';
   static const String _usernameKey = 'username';
   static const String _passwordKey = 'password';
   static const String _cookiesKey = 'cookies';
@@ -119,6 +123,25 @@ class UserDataService {
   static Future<String?> getLastSelectedServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_lastSelectedServerUrlKey);
+  }
+
+  static Future<InternetServerDnsPreference> getInternetServerDnsPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = prefs.getInt(_internetServerDnsPreferenceKey);
+    if (index == null) return InternetServerDnsPreference.any;
+    final value = InternetServerDnsPreference.values[index];
+    // 旧版本保存的 ipv4 已改为自动选择，避免强制走 IPv4 导致不可用。
+    if (value == InternetServerDnsPreference.ipv4) {
+      return InternetServerDnsPreference.any;
+    }
+    return value;
+  }
+
+  static Future<void> saveInternetServerDnsPreference(
+    InternetServerDnsPreference value,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_internetServerDnsPreferenceKey, value.index);
   }
 
   static Future<void> clearLastSelectedServerUrl() async {

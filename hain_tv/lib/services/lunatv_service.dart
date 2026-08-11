@@ -32,15 +32,55 @@ class LunaTVConfig {
   static const Duration favoritesCacheTtl = Duration(minutes: 30);
 }
 
+/// 包装 [http.Client]，忽略 [close] 调用，用于共享客户端场景。
+///
+/// 请求方按原习惯调用 `client.close()` 不会真正关闭底层连接，
+/// 底层连接由 [LunaTVService] 统一管理并在配置变化时重建。
+class _NonClosingClient extends http.BaseClient {
+  final http.Client _inner;
+
+  _NonClosingClient(this._inner);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request);
+
+  @override
+  void close() {
+    // 共享客户端的生命周期由 LunaTVService 管理，此处不关闭底层连接。
+  }
+}
+
 class LunaTVService {
   static final CacheService _cacheService = CacheService();
   static bool _cacheInitialized = false;
+
+  /// 共享 HTTP 客户端配置标识，配置变化时需要重建客户端。
+  static ({bool bypassCert, String primaryHost, InternetServerDnsPreference preference})?
+      _sharedClientConfig;
+
+  /// 共享的真实 HttpClient（IOClient 内部持有），用于在配置变化时真正关闭。
+  static http.Client? _sharedInnerClient;
+
+  /// 对外返回的共享客户端包装，忽略 close() 调用，避免请求方关闭共享连接。
+  static http.Client? _sharedClient;
 
   static Future<void> _initCache() async {
     if (!_cacheInitialized) {
       await _cacheService.init();
       _cacheInitialized = true;
     }
+  }
+
+  /// 强制重置共享客户端。
+  ///
+  /// 当服务器地址、DNS 偏好等配置发生变化时调用，使下一次请求使用新配置建立连接。
+  static void resetSharedClient() {
+    _log('LunaTVService', '重置共享 HTTP 客户端');
+    _sharedInnerClient?.close();
+    _sharedInnerClient = null;
+    _sharedClient = null;
+    _sharedClientConfig = null;
   }
 
   /// 创建 LunaTV API 请求专用 HTTP 客户端。
@@ -56,28 +96,283 @@ class LunaTVService {
     }
   }
 
-  static http.Client createApiClient() {
-    if (Platform.isWindows) {
+  /// 判断异常是否由「网络不可达 / 无路由」导致，用于触发 IPv6->IPv4 回退。
+  static bool isNetworkUnreachable(Object? error) {
+    if (error is SocketException) {
+      return error.osError?.errorCode == 101 ||
+          error.message.toLowerCase().contains('network is unreachable') ||
+          error.message.toLowerCase().contains('no route to host');
+    }
+    final errorString = error.toString().toLowerCase();
+    return errorString.contains('network is unreachable') ||
+        errorString.contains('no route to host') ||
+        errorString.contains('errno = 101');
+  }
+
+  /// 创建 LunaTV API 请求专用 HTTP 客户端。
+  ///
+  /// 默认返回共享客户端，多个请求可复用同一底层连接，减少重复解析与连接开销。
+  /// [forceAutoDns] 为 true 时返回独立客户端，用于 IPv6 失败后的系统默认 DNS 兜底，
+  /// 调用方需要自行关闭。
+  static Future<http.Client> createApiClient({bool forceAutoDns = false}) async {
+    final bypassCert = Platform.isWindows;
+
+    // 兜底/独立客户端不走共享池，避免污染当前配置的长连接。
+    if (forceAutoDns) {
       final httpClient = HttpClient();
+      if (bypassCert) {
+        httpClient.badCertificateCallback =
+            (X509Certificate cert, String host, int port) => true;
+        httpClient.findProxy = (uri) => 'DIRECT';
+      }
+      httpClient.idleTimeout = const Duration(seconds: 30);
+      await _applyInternetServerDnsPreference(
+        httpClient,
+        forceAutoDns: true,
+        bypassCert: bypassCert,
+      );
+      return IOClient(httpClient);
+    }
+
+    final preference = await UserDataService.getInternetServerDnsPreference();
+    String primaryHost = '';
+    try {
+      final primaryUrl = await UserDataService.getServerUrl();
+      if (primaryUrl != null && primaryUrl.trim().isNotEmpty) {
+        primaryHost = Uri.tryParse(primaryUrl.trim())?.host ?? '';
+      }
+    } catch (_) {}
+
+    final config = (
+      bypassCert: bypassCert,
+      primaryHost: primaryHost,
+      preference: preference,
+    );
+
+    if (_sharedClient != null && _sharedClientConfig == config) {
+      _log('LunaTVService', '复用共享 HTTP 客户端');
+      return _sharedClient!;
+    }
+
+    // 配置变化：关闭旧共享客户端并重建。
+    _log('LunaTVService', '创建新的共享 HTTP 客户端');
+    _sharedInnerClient?.close();
+    _sharedInnerClient = null;
+    _sharedClient = null;
+    _sharedClientConfig = null;
+
+    final httpClient = HttpClient();
+    if (bypassCert) {
       httpClient.badCertificateCallback =
           (X509Certificate cert, String host, int port) => true;
       httpClient.findProxy = (uri) => 'DIRECT';
-      httpClient.idleTimeout = const Duration(seconds: 30);
-      return IOClient(httpClient);
     }
-    return http.Client();
+    httpClient.idleTimeout = const Duration(seconds: 30);
+    await _applyInternetServerDnsPreference(
+      httpClient,
+      bypassCert: bypassCert,
+    );
+    final inner = IOClient(httpClient);
+    _sharedInnerClient = inner;
+    _sharedClient = _NonClosingClient(inner);
+    _sharedClientConfig = config;
+    return _sharedClient!;
+  }
+
+  /// 根据用户在服务器管理中设置的「互联网服务器地址 DNS 偏好」，
+  /// 对互联网服务器域名强制解析为 IPv4 或 IPv6。
+  /// 局域网/备用服务器以及非 LunaTV 域名保持默认解析行为。
+  static Future<void> _applyInternetServerDnsPreference(
+    HttpClient client, {
+    bool forceAutoDns = false,
+    bool bypassCert = false,
+  }) async {
+    final savedPreference = await UserDataService.getInternetServerDnsPreference();
+    final preference = forceAutoDns ? InternetServerDnsPreference.any : savedPreference;
+    // 默认/自动模式下不覆盖连接工厂，让系统按 Happy Eyeballs 自动选择 IPv4/IPv6。
+    if (preference == InternetServerDnsPreference.any) {
+      if (forceAutoDns) {
+        _log('LunaTVService', '强制使用系统自动 DNS 选择');
+      }
+      return;
+    }
+
+    String primaryHost = '';
+    try {
+      final primaryUrl = await UserDataService.getServerUrl();
+      if (primaryUrl != null && primaryUrl.trim().isNotEmpty) {
+        primaryHost = Uri.tryParse(primaryUrl.trim())?.host ?? '';
+      }
+    } catch (_) {
+      // 读取主服务器地址失败时保持空字符串，后续按默认解析处理。
+    }
+
+    if (preference == InternetServerDnsPreference.ipv6) {
+      _log(
+        'LunaTVService',
+        '已启用互联网服务器 IPv6 优先解析（无 IPv6 时自动回退 IPv4），主服务器域名: $primaryHost',
+      );
+    } else {
+      _log(
+        'LunaTVService',
+        '互联网服务器使用系统自动 DNS（Happy Eyeballs），主服务器域名: $primaryHost',
+      );
+    }
+
+    client.connectionFactory = (
+      Uri url,
+      String? proxyHost,
+      int? proxyPort,
+    ) async {
+      _log(
+        'LunaTVService',
+        'connectionFactory 调用: ${url.host}:${url.port}, '
+        'proxyHost=$proxyHost, primaryHost=$primaryHost',
+      );
+
+      // 优先处理代理连接：解析代理主机并建立连接。
+      if (proxyHost != null) {
+        final proxyAddresses = await InternetAddress.lookup(
+          proxyHost,
+          type: InternetAddressType.any,
+        );
+        if (proxyAddresses.isEmpty) {
+          throw SocketException('无法解析代理主机 $proxyHost');
+        }
+        return Socket.startConnect(
+          proxyAddresses.first,
+          proxyPort ?? 80,
+        );
+      }
+
+      /// 根据 URL 协议选择普通 Socket 或 SecureSocket 发起连接。
+      ///
+      /// HTTPS 请求必须在 connectionFactory 内直接完成 TLS 握手，否则 HttpClient
+      /// 会把返回的 Socket 当成明文连接，导致「plain HTTP request was sent to
+      /// HTTPS port」错误。
+      ///
+      /// 传入 [host] 为 InternetAddress 时，其 [InternetAddress.host] 会用于 TLS
+      /// SNI 与证书校验；传入 String 时则同时用于解析和 SNI。
+      Future<ConnectionTask<Socket>> _startConnect(Object host) async {
+        if (url.scheme == 'https') {
+          return SecureSocket.startConnect(
+            host,
+            url.port,
+            onBadCertificate: bypassCert ? (_) => true : null,
+          );
+        }
+        return Socket.startConnect(host, url.port);
+      }
+
+      // 仅对互联网服务器（主服务器地址）应用 DNS 偏好；
+      // 局域网/备用服务器等其他域名保持默认解析行为。
+      if (primaryHost.isEmpty || url.host != primaryHost) {
+        _log('LunaTVService', '非主服务器域名，使用系统默认解析: ${url.host}');
+        return _startConnect(url.host);
+      }
+
+      Future<ConnectionTask<Socket>> tryConnect(
+        InternetAddress address,
+        InternetAddressType type,
+      ) async {
+        _log(
+          'LunaTVService',
+          '尝试 ${type.name} 连接: ${url.host} -> ${address.address}:${url.port}',
+        );
+        final task = await _startConnect(address);
+        try {
+          // 等待真实连接/TLS 握手建立，才能把「网络不可达」等错误暴露出来并回退。
+          await task.socket;
+          _log(
+            'LunaTVService',
+            '${type.name} 连接成功: ${url.host} -> ${address.address}:${url.port}',
+          );
+          return task;
+        } catch (e) {
+          _log(
+            'LunaTVService',
+            '${type.name} 连接失败: ${url.host} -> ${address.address}:${url.port}, $e',
+          );
+          task.cancel();
+          rethrow;
+        }
+      }
+
+      Future<List<InternetAddress>> lookupOrEmpty(
+        String host,
+        InternetAddressType type,
+      ) async {
+        try {
+          return await InternetAddress.lookup(host, type: type);
+        } on SocketException {
+          return const <InternetAddress>[];
+        }
+      }
+
+      const lookupType = InternetAddressType.IPv6;
+      var addresses = await lookupOrEmpty(url.host, lookupType);
+      // 按偏好解析无结果时回退到另一种地址族。
+      if (addresses.isEmpty && lookupType != InternetAddressType.any) {
+        _log(
+          'LunaTVService',
+          '${lookupType.name} 解析无结果，回退到 IPv4: ${url.host}',
+        );
+        addresses = await lookupOrEmpty(url.host, InternetAddressType.IPv4);
+      }
+      if (addresses.isEmpty) {
+        throw SocketException('无法解析主机 ${url.host}');
+      }
+      final address = addresses.firstWhere(
+        (a) => a.type == lookupType,
+        orElse: () => addresses.first,
+      );
+
+      try {
+        return await tryConnect(address, lookupType);
+      } on SocketException catch (e) {
+        // 当按偏好地址族连接时出现「网络不可达」，自动回退到 IPv4 再试一次。
+        final isUnreachable = e.osError?.errorCode == 101 ||
+            e.message.toLowerCase().contains('network is unreachable') ||
+            e.message.toLowerCase().contains('no route to host');
+        if (isUnreachable && lookupType != InternetAddressType.any) {
+          _log(
+            'LunaTVService',
+            '${lookupType.name} 不可达，准备回退到 IPv4: ${url.host}',
+          );
+          final fallbackAddresses = await lookupOrEmpty(
+            url.host,
+            InternetAddressType.IPv4,
+          );
+          if (fallbackAddresses.isNotEmpty) {
+            _log(
+              'LunaTVService',
+              '回退到 IPv4: ${url.host} -> ${fallbackAddresses.first.address}',
+            );
+            return await tryConnect(
+              fallbackAddresses.first,
+              InternetAddressType.IPv4,
+            );
+          }
+        }
+        rethrow;
+      }
+    };
   }
 
   /// Windows 专用兜底 HTTP 客户端。
   ///
   /// 当 [createApiClient] 仍然失败时（如系统代理/TLS 版本等边缘情况），
   /// 尝试使用未经自定义的默认客户端再请求一次，便于诊断问题。
-  static http.Client _createFallbackClient() {
+  static Future<http.Client> _createFallbackClient() async {
     if (Platform.isWindows) {
       try {
         final httpClient = HttpClient()
           ..badCertificateCallback =
               (X509Certificate cert, String host, int port) => true;
+        await _applyInternetServerDnsPreference(
+          httpClient,
+          bypassCert: true,
+        );
         return IOClient(httpClient);
       } catch (_) {
         return http.Client();
@@ -100,10 +395,11 @@ class LunaTVService {
     return backup.trim().replaceAll(RegExp(r'/+$'), '');
   }
 
-  static Future<Map<String, String>> _headers() async {
+  static Future<Map<String, String>> _headers({String? host}) async {
     final headers = <String, String>{
       'Accept': 'application/json, text/plain, */*',
       'User-Agent': AppInfoService.userAgent,
+      if (host != null && host.isNotEmpty) 'Host': host,
     };
     final cookies = await UserDataService.getCookies();
     if (cookies != null && cookies.isNotEmpty) {
@@ -126,7 +422,7 @@ class LunaTVService {
     final uri = Uri.parse(
       base + path,
     ).replace(queryParameters: queryParameters);
-    final headers = await _headers();
+    final headers = await _headers(host: uri.host);
     final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
 
     _log(
@@ -136,16 +432,22 @@ class LunaTVService {
     );
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
-      final client = cancelClient ?? createApiClient();
+      final client = cancelClient ?? await createApiClient();
       final shouldCloseClient = cancelClient == null;
       try {
         final response = await client
             .get(uri, headers: headers)
             .timeout(effectiveTimeout);
+        final bodyPreview = response.statusCode >= 400
+            ? response.body.length > 200
+                ? '${response.body.substring(0, 200)}...'
+                : response.body
+            : '';
         _log(
           'LunaTVService._get',
           '响应 ${response.statusCode}, '
-          'bodyLength=${response.body.length}, uri=$uri',
+          'bodyLength=${response.body.length}, uri=$uri'
+          '${bodyPreview.isNotEmpty ? ', body=$bodyPreview' : ''}',
         );
         // 业务接口返回 200/401 都表示服务器可达，主动同步连接状态。
         if (response.statusCode == 200 || response.statusCode == 401) {
@@ -161,9 +463,42 @@ class LunaTVService {
       }
     }
 
+    // 当用户开启「优先 IPv6」且因网络不可达导致失败时，再尝试一次系统自动 DNS 选择，
+    // 作为 IPv6 无法连通时的最后兜底。
+    if (isNetworkUnreachable(lastError)) {
+      final dnsPreference = await UserDataService.getInternetServerDnsPreference();
+      if (dnsPreference == InternetServerDnsPreference.ipv6) {
+        _log(
+          'LunaTVService._get',
+          'IPv6 优先模式连接失败，尝试系统自动 DNS 选择: $uri',
+        );
+        final autoClient = cancelClient ?? await createApiClient(forceAutoDns: true);
+        final shouldCloseAuto = cancelClient == null;
+        try {
+          final response = await autoClient
+              .get(uri, headers: headers)
+              .timeout(effectiveTimeout);
+          _log(
+            'LunaTVService._get',
+            '自动 DNS 选择响应 ${response.statusCode}, '
+            'bodyLength=${response.body.length}, uri=$uri',
+          );
+          if (response.statusCode == 200 || response.statusCode == 401) {
+            unawaited(ConnectivityService.instance.reportSuccess(base));
+          }
+          return response;
+        } catch (e) {
+          _log('LunaTVService._get', '自动 DNS 选择请求失败: $e, uri=$uri');
+          lastError = e is Exception ? e : Exception(e.toString());
+        } finally {
+          if (shouldCloseAuto) autoClient.close();
+        }
+      }
+    }
+
     // Windows 兜底：使用更保守的客户端再试一次，便于区分是自定义配置还是网络本身问题
     if (Platform.isWindows) {
-      final fallbackClient = cancelClient ?? _createFallbackClient();
+      final fallbackClient = cancelClient ?? await _createFallbackClient();
       final shouldCloseFallback = cancelClient == null;
       try {
         _log('LunaTVService._get', 'Windows 兜底请求 $uri');
@@ -190,28 +525,22 @@ class LunaTVService {
     throw lastError ?? Exception('请求失败: $path');
   }
 
-  static Future<http.Response> _post(
-    String path, {
-    required String body,
-    Duration? timeout,
+  /// 带重试和 IPv6 自动回退的请求执行器。
+  ///
+  /// 当用户开启「优先 IPv6」且请求因网络不可达失败时，会再尝试一次系统默认的
+  /// Happy Eyeballs DNS 选择，作为 IPv6 无法连通时的兜底。
+  static Future<http.Response> _executeWithRetryAndFallback(
+    Future<http.Response> Function(http.Client client) requestBuilder, {
+    required String base,
+    required Duration effectiveTimeout,
+    required String path,
+    String? logUri,
   }) async {
-    final base = await _baseUrl();
-    if (base == null) {
-      throw Exception('未配置 LunaTV 服务器地址');
-    }
-
-    final uri = Uri.parse(base + path);
-    final headers = await _headers();
-    headers['Content-Type'] = 'application/json';
-    final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
-
     Exception? lastError;
     for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
-      final client = createApiClient();
+      final client = await createApiClient();
       try {
-        final response = await client
-            .post(uri, headers: headers, body: body)
-            .timeout(effectiveTimeout);
+        final response = await requestBuilder(client).timeout(effectiveTimeout);
         if (response.statusCode == 200 || response.statusCode == 401) {
           unawaited(ConnectivityService.instance.reportSuccess(base));
         }
@@ -223,7 +552,63 @@ class LunaTVService {
         client.close();
       }
     }
+
+    if (isNetworkUnreachable(lastError)) {
+      final dnsPreference =
+          await UserDataService.getInternetServerDnsPreference();
+      if (dnsPreference == InternetServerDnsPreference.ipv6) {
+        final uri = logUri ?? '$base$path';
+        _log(
+          'LunaTVService',
+          'IPv6 优先模式连接失败，尝试系统自动 DNS 选择: $uri',
+        );
+        final autoClient = await createApiClient(forceAutoDns: true);
+        try {
+          final response =
+              await requestBuilder(autoClient).timeout(effectiveTimeout);
+          _log(
+            'LunaTVService',
+            '自动 DNS 选择响应 ${response.statusCode}, '
+            'bodyLength=${response.body.length}, uri=$uri',
+          );
+          if (response.statusCode == 200 || response.statusCode == 401) {
+            unawaited(ConnectivityService.instance.reportSuccess(base));
+          }
+          return response;
+        } catch (e) {
+          _log('LunaTVService', '自动 DNS 选择请求失败: $e, uri=$uri');
+          lastError = e is Exception ? e : Exception(e.toString());
+        } finally {
+          autoClient.close();
+        }
+      }
+    }
+
     throw lastError ?? Exception('请求失败: $path');
+  }
+
+  static Future<http.Response> _post(
+    String path, {
+    required String body,
+    Duration? timeout,
+  }) async {
+    final base = await _baseUrl();
+    if (base == null) {
+      throw Exception('未配置 LunaTV 服务器地址');
+    }
+
+    final uri = Uri.parse(base + path);
+    final headers = await _headers(host: uri.host);
+    headers['Content-Type'] = 'application/json';
+    final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
+
+    return _executeWithRetryAndFallback(
+      (client) => client.post(uri, headers: headers, body: body),
+      base: base,
+      effectiveTimeout: effectiveTimeout,
+      path: path,
+      logUri: uri.toString(),
+    );
   }
 
   static Future<http.Response> _delete(
@@ -239,25 +624,16 @@ class LunaTVService {
     final uri = Uri.parse(
       base + path,
     ).replace(queryParameters: queryParameters);
-    final headers = await _headers();
+    final headers = await _headers(host: uri.host);
     final effectiveTimeout = timeout ?? LunaTVConfig.defaultTimeout;
 
-    Exception? lastError;
-    for (var attempt = 0; attempt <= LunaTVConfig.maxRetryCount; attempt++) {
-      final client = createApiClient();
-      try {
-        final response = await client
-            .delete(uri, headers: headers)
-            .timeout(effectiveTimeout);
-        return response;
-      } catch (e) {
-        lastError = e is Exception ? e : Exception(e.toString());
-        if (attempt == LunaTVConfig.maxRetryCount) break;
-      } finally {
-        client.close();
-      }
-    }
-    throw lastError ?? Exception('请求失败: $path');
+    return _executeWithRetryAndFallback(
+      (client) => client.delete(uri, headers: headers),
+      base: base,
+      effectiveTimeout: effectiveTimeout,
+      path: path,
+      logUri: uri.toString(),
+    );
   }
 
   static Map<String, dynamic> _decodeBody(http.Response response) {
@@ -276,42 +652,68 @@ class LunaTVService {
     }
 
     final body = <String, String>{'username': username, 'password': password};
+    final loginUri = Uri.parse('$base/api/login');
+
+    Future<ApiResponse<String>> doLogin(http.Client client) async {
+      final response = await client
+          .post(
+            loginUri,
+            headers: {
+              'Accept': 'application/json, text/plain, */*',
+              'Content-Type': 'application/json',
+              'User-Agent': AppInfoService.userAgent,
+              'Host': loginUri.host,
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final setCookie = response.headers['set-cookie'];
+        if (setCookie != null && setCookie.isNotEmpty) {
+          return ApiResponse.success(
+            setCookie,
+            statusCode: response.statusCode,
+          );
+        }
+        return ApiResponse.success('', statusCode: response.statusCode);
+      }
+
+      final data = _decodeBody(response);
+      return ApiResponse.error(
+        data['error']?.toString() ?? '登录失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
+    }
 
     try {
-      final client = createApiClient();
+      final client = await createApiClient();
       try {
-        final response = await client
-            .post(
-              Uri.parse('$base/api/login'),
-              headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'Content-Type': 'application/json',
-                'User-Agent': AppInfoService.userAgent,
-              },
-              body: json.encode(body),
-            )
-            .timeout(const Duration(seconds: 15));
-
-        if (response.statusCode == 200) {
-          final setCookie = response.headers['set-cookie'];
-          if (setCookie != null && setCookie.isNotEmpty) {
-            return ApiResponse.success(
-              setCookie,
-              statusCode: response.statusCode,
-            );
-          }
-          return ApiResponse.success('', statusCode: response.statusCode);
-        }
-
-        final data = _decodeBody(response);
-        return ApiResponse.error(
-          data['error']?.toString() ?? '登录失败: ${response.statusCode}',
-          statusCode: response.statusCode,
-        );
+        return await doLogin(client);
       } finally {
         client.close();
       }
     } catch (e) {
+      if (isNetworkUnreachable(e)) {
+        final dnsPreference =
+            await UserDataService.getInternetServerDnsPreference();
+        if (dnsPreference == InternetServerDnsPreference.ipv6) {
+          _log(
+            'LunaTVService',
+            '登录：IPv6 优先模式失败，尝试系统自动 DNS 选择: $loginUri',
+          );
+          try {
+            final client = await createApiClient(forceAutoDns: true);
+            try {
+              return await doLogin(client);
+            } finally {
+              client.close();
+            }
+          } catch (e2) {
+            return ApiResponse.error('登录请求异常: $e2');
+          }
+        }
+      }
       return ApiResponse.error('登录请求异常: $e');
     }
   }

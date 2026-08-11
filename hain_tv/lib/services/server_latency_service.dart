@@ -14,10 +14,11 @@ class ServerLatencyService {
     final base = url.trim().replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/api/playrecords?limit=1');
     final stopwatch = Stopwatch()..start();
-    final client = LunaTVService.createApiClient();
+    final client = await LunaTVService.createApiClient();
     try {
       final response = await client.get(uri, headers: {
         'User-Agent': AppInfoService.userAgent,
+        'Host': uri.host,
       }).timeout(_testTimeout);
       stopwatch.stop();
       final ok = response.statusCode == 200 || response.statusCode == 401;
@@ -26,7 +27,34 @@ class ServerLatencyService {
         latencyMs: stopwatch.elapsedMilliseconds,
         reachable: ok,
       );
-    } catch (_) {
+    } catch (e) {
+      // IPv6 优先模式失败时，尝试系统自动 DNS 选择。
+      if (LunaTVService.isNetworkUnreachable(e)) {
+        final dnsPreference =
+            await UserDataService.getInternetServerDnsPreference();
+        if (dnsPreference == InternetServerDnsPreference.ipv6) {
+          final autoClient = await LunaTVService.createApiClient(
+            forceAutoDns: true,
+          );
+          try {
+            final response = await autoClient.get(uri, headers: {
+              'User-Agent': AppInfoService.userAgent,
+              'Host': uri.host,
+            }).timeout(_testTimeout);
+            stopwatch.stop();
+            final ok = response.statusCode == 200 || response.statusCode == 401;
+            return (
+              url: url,
+              latencyMs: stopwatch.elapsedMilliseconds,
+              reachable: ok,
+            );
+          } catch (_) {
+            // 兜底失败，返回不可达。
+          } finally {
+            autoClient.close();
+          }
+        }
+      }
       return (
         url: url,
         latencyMs: _testTimeout.inMilliseconds,

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/server_latency_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -21,6 +22,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
   String _primaryServerUrl = '';
   String _backupServerUrl = '';
   bool _autoSelectLowLatency = true;
+  bool _preferIpv6 = false;
   bool _speedTesting = false;
 
   final _remoteInputService = RemoteInputService();
@@ -46,11 +48,13 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     final backupServerUrl = await UserDataService.getBackupServerUrl();
     final autoSelectLowLatency =
         await UserDataService.getAutoSelectLowLatencyServer();
+    final dnsPreference = await UserDataService.getInternetServerDnsPreference();
     if (mounted) {
       setState(() {
         _primaryServerUrl = primaryServerUrl;
         _backupServerUrl = backupServerUrl;
         _autoSelectLowLatency = autoSelectLowLatency;
+        _preferIpv6 = dnsPreference == InternetServerDnsPreference.ipv6;
       });
     }
   }
@@ -77,6 +81,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     final trimmed = url.trim();
     await UserDataService.saveServerUrl(trimmed);
     await UserDataService.clearLastSelectedServerUrl();
+    LunaTVService.resetSharedClient();
     setState(() => _primaryServerUrl = trimmed);
   }
 
@@ -84,12 +89,21 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     final trimmed = url.trim();
     await UserDataService.saveBackupServerUrl(trimmed);
     await UserDataService.clearLastSelectedServerUrl();
+    LunaTVService.resetSharedClient();
     setState(() => _backupServerUrl = trimmed);
   }
 
   Future<void> _setAutoSelectLowLatency(bool value) async {
     await UserDataService.setAutoSelectLowLatencyServer(value);
     setState(() => _autoSelectLowLatency = value);
+  }
+
+  Future<void> _setPreferIpv6(bool value) async {
+    await UserDataService.saveInternetServerDnsPreference(
+      value ? InternetServerDnsPreference.ipv6 : InternetServerDnsPreference.any,
+    );
+    LunaTVService.resetSharedClient();
+    setState(() => _preferIpv6 = value);
   }
 
   Future<void> _runSpeedTest() async {
@@ -302,6 +316,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
           _buildBackupServerAddressTile(),
           _buildServerHintTile(),
           _buildAutoSpeedTestSwitch(),
+          _buildDnsPreferenceTile(),
           _buildManualSpeedTestButton(),
           if (DeviceUtils.isTv && !DeviceUtils.isWindows)
             _buildQrModifyServerButton(),
@@ -450,6 +465,34 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
         style: const TextStyle(
           fontSize: 12,
           color: AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDnsPreferenceTile() {
+    return _buildCard(
+      child: Builder(
+        builder: (context) => FocusableWidget(
+          onTap: () => _setPreferIpv6(!_preferIpv6),
+          onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
+          child: SwitchListTile(
+            title: const Text(
+              '互联网服务器地址优先解析 IPv6',
+              style: TextStyle(color: AppColors.textPrimary),
+            ),
+            subtitle: Text(
+              _preferIpv6 ? '优先解析 IPv6 地址' : '自动选择可用地址',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            value: _preferIpv6,
+            onChanged: _setPreferIpv6,
+            activeThumbColor: AppColors.primary,
+            inactiveThumbColor: AppColors.textMuted,
+          ),
         ),
       ),
     );

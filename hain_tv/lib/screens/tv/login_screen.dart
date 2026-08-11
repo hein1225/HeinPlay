@@ -226,6 +226,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await UserDataService.saveServerUrl(normalized.internet);
       await UserDataService.saveBackupServerUrl(normalized.lan);
       await UserDataService.clearLastSelectedServerUrl();
+      LunaTVService.resetSharedClient();
       await UserDataService.saveUserData(
         serverUrl: normalized.internet,
         username: username,

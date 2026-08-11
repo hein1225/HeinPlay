@@ -64,6 +64,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
+  double _playbackSpeed = 1.0;
 
   // Windows 小窗播放状态
   bool _isMiniPlayer = false;
@@ -1353,6 +1354,31 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _showControlsWithoutFocusShift();
   }
 
+  void _cyclePlaybackSpeed() {
+    setState(() {
+      switch (_playbackSpeed) {
+        case 1.0:
+          _playbackSpeed = 1.25;
+          break;
+        case 1.25:
+          _playbackSpeed = 1.5;
+          break;
+        case 1.5:
+          _playbackSpeed = 2.0;
+          break;
+        default:
+          _playbackSpeed = 1.0;
+      }
+    });
+    _backend?.setSpeed(_playbackSpeed);
+    _showControlsWithoutFocusShift();
+  }
+
+  String _playbackSpeedLabel(double speed) {
+    if (speed == 1.0) return '倍速';
+    return '${speed}x';
+  }
+
   String _videoFitLabel(BoxFit fit) {
     switch (fit) {
       case BoxFit.contain:
@@ -2318,6 +2344,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   icon: Icons.settings_applications,
                   label: _playerBackendLabel(_currentPlayerBackend),
                   tooltip: '切换播放器',
+                ),
+                const SizedBox(width: AppSpacing.md),
+                _buildControlTextButton(
+                  onTap: _cyclePlaybackSpeed,
+                  icon: Icons.speed,
+                  label: _playbackSpeedLabel(_playbackSpeed),
+                  tooltip: '切换倍速',
                 ),
                 const SizedBox(width: AppSpacing.md),
                 if (_canSwitchSource)

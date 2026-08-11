@@ -2,7 +2,7 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV 版改回 Vulkan（Impeller）以适配新设备，tvLegacy 继续用 OpenGL ES 兼容旧设备；修复 TV 版「获取日志」与软件介绍二维码显示不全的问题，并缩小 TV 更新日志字体避免内容溢出。
+v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内仅有 IPv6 公网、IPv4 受限的环境提供 IPv6 优先解析与自动回退 IPv4 能力，并统一复用 LunaTV API 的 HTTP 客户端，减少重复连接开销；v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV 版改回 Vulkan（Impeller）以适配新设备，tvLegacy 继续用 OpenGL ES 兼容旧设备，修复 TV 版「获取日志」与软件介绍二维码显示不全的问题，并缩小 TV 更新日志字体避免内容溢出。
 
 | TV / Windows 版界面预览 | 手机版界面预览 |
 | :--- | :--- |
@@ -42,6 +42,10 @@ v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV �
 - **启动自动测速**：每次启动时自动对两个服务器地址进行延迟测速，选择当前可达且延迟最低的地址作为实际连接服务器。
 - **实时连接状态**：首页顶部显示服务器连接状态：互联网已连接（蓝色）、局域网已连接（绿色）、未连接（红色），一目了然当前走哪条线路。
 - **一键手动切换**：在「我的-服务器管理」中可手动触发测速并立即切换到最优服务器。
+
+### IPv6 优先解析
+
+针对目前国内仅有 IPv6 公网、IPv4 受限或访问不畅的环境，「我的-服务器管理」中新增「互联网服务器地址优先解析 IPv6」开关（默认关闭）。开启后，App 会优先解析互联网服务器的 IPv6 地址；当 IPv6 网络不可达时自动回退到 IPv4，无需手动切换。该设置仅作用于互联网服务器，局域网服务器不受影响，继续沿用系统默认解析策略。目前国内大量软件对 IPv6 地址解析与回退的适配仍不完善，该功能可在纯 IPv6 环境下提升服务器连通性与访问成功率。
 
 ### 双账号快速切换
 
@@ -113,10 +117,10 @@ v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV �
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.4-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试tvlegacy。 |
-| `heinplay-1.2.4-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
-| `heinplay-1.2.4-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.2.4-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.2.5-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
+| `heinplay-1.2.5-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
+| `heinplay-1.2.5-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.2.5-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 项目结构
 
@@ -223,6 +227,12 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 <details open>
 <summary><strong>1.2.0</strong></summary>
+
+### 1.2.5
+
+- **互联网服务器 IPv6 优先解析**：全版本「我的-服务器管理」新增「互联网服务器地址优先解析 IPv6」开关，默认关闭。开启后优先解析互联网服务器的 IPv6 地址，IPv6 不可达时自动回退到 IPv4，无需手动切换；仅作用于互联网服务器，局域网服务器不受影响。针对目前国内大量软件对 IPv6 解析与回退适配不完善的问题，提升仅有 IPv6 公网环境下的服务器连通性与访问成功率。
+- **LunaTV API 共享 HTTP 客户端**：多个 LunaTV API 请求复用同一 HTTP 客户端，减少重复的 DNS 解析与 TCP/TLS 连接开销；服务器地址或 DNS 偏好变更时自动重建连接。
+- **版本号统一**：全项目更新至 `1.2.5`（build `+17`），Release 产物命名同步为 `heinplay-1.2.5-tv.apk`、`heinplay-1.2.5-tvLegacy.apk`、`heinplay-1.2.5-mobile.apk`、`heinplay-1.2.5-windows-portable.zip`。
 
 ### 1.2.4
 

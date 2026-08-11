@@ -64,6 +64,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _switchingSource = false;
   late PlayerBackendType _currentPlayerBackend;
   BoxFit _videoFit = BoxFit.contain;
+  double _playbackSpeed = 1.0;
 
   EpisodeSkipConfig? _skipConfig;
   bool _skipConfigLoading = false;
@@ -1542,6 +1543,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showControlsWithoutFocusShift();
   }
 
+  void _cyclePlaybackSpeed() {
+    setState(() {
+      switch (_playbackSpeed) {
+        case 1.0:
+          _playbackSpeed = 1.25;
+          break;
+        case 1.25:
+          _playbackSpeed = 1.5;
+          break;
+        case 1.5:
+          _playbackSpeed = 2.0;
+          break;
+        default:
+          _playbackSpeed = 1.0;
+      }
+    });
+    _backend?.setSpeed(_playbackSpeed);
+    _showControlsWithoutFocusShift();
+  }
+
+  String _playbackSpeedLabel(double speed) {
+    if (speed == 1.0) return '倍速';
+    return '${speed}x';
+  }
+
   String _videoFitLabel(BoxFit fit) {
     switch (fit) {
       case BoxFit.contain:
@@ -2037,6 +2063,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         const SizedBox(width: AppSpacing.xs),
                         Text(
                           _playerBackendLabel(_currentPlayerBackend),
+                          style: const TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _cyclePlaybackSpeed,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.speed,
+                          color: AppColors.textPrimary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _playbackSpeedLabel(_playbackSpeed),
                           style: const TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 13,
