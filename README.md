@@ -232,6 +232,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 - **互联网服务器 IPv6 优先解析**：全版本「我的-服务器管理」新增「互联网服务器地址优先解析 IPv6」开关，默认关闭。开启后优先解析互联网服务器的 IPv6 地址，IPv6 不可达时自动回退到 IPv4，无需手动切换；仅作用于互联网服务器，局域网服务器不受影响。针对目前国内大量软件对 IPv6 解析与回退适配不完善的问题，提升仅有 IPv6 公网环境下的服务器连通性与访问成功率。
 - **LunaTV API 共享 HTTP 客户端**：多个 LunaTV API 请求复用同一 HTTP 客户端，减少重复的 DNS 解析与 TCP/TLS 连接开销；服务器地址或 DNS 偏好变更时自动重建连接。
+- **倍速播放**：全平台增加倍速播放功能。
 - **版本号统一**：全项目更新至 `1.2.5`（build `+17`），Release 产物命名同步为 `heinplay-1.2.5-tv.apk`、`heinplay-1.2.5-tvLegacy.apk`、`heinplay-1.2.5-mobile.apk`、`heinplay-1.2.5-windows-portable.zip`。
 
 ### 1.2.4
