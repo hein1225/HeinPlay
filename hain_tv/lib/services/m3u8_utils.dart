@@ -83,7 +83,7 @@ class M3u8Utils {
         return (segmentUrls: const <String>[], resolution: null);
       }
 
-      return resolveSegmentUrlsFromContent(
+      return await resolveSegmentUrlsFromContent(
         url,
         response.body,
         maxDepth: maxDepth,
@@ -218,7 +218,7 @@ class M3u8Utils {
         debugPrint('测速前广告过滤失败: $e');
       }
 
-      return resolveSegmentUrlsFromContent(
+      return await resolveSegmentUrlsFromContent(
         url,
         content,
         maxDepth: 3,

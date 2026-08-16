@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../screens/windows/category_screen.dart';
 import '../../screens/windows/home_screen.dart';
+import '../../screens/windows/live_screen.dart';
 import '../../screens/windows/profile_screen.dart';
 import '../../screens/windows/search_screen.dart';
 import '../../services/connectivity_service.dart';
@@ -30,9 +31,10 @@ class WindowsShell extends StatefulWidget {
 }
 
 class _WindowsShellState extends State<WindowsShell> {
-  int _selectedIndex = 2;
+  int _selectedIndex = 3;
   final _profileScreenKey = GlobalKey<ProfileScreenState>();
   final _searchScreenKey = GlobalKey<SearchScreenState>();
+  final _liveScreenKey = GlobalKey<WindowsLiveScreenState>();
   final _homeScreenKey = GlobalKey<HomeScreenState>();
   final _movieScreenKey = GlobalKey<CategoryScreenState>();
   final _tvScreenKey = GlobalKey<CategoryScreenState>();
@@ -42,6 +44,7 @@ class _WindowsShellState extends State<WindowsShell> {
   final List<_NavItem> _items = const [
     _NavItem(label: '我的', icon: Icons.person_outline),
     _NavItem(label: '搜索', icon: Icons.search),
+    _NavItem(label: '直播', icon: Icons.live_tv_outlined),
     _NavItem(label: '首页', icon: Icons.home_outlined),
     _NavItem(label: '电影', icon: Icons.movie_outlined),
     _NavItem(label: '电视剧', icon: Icons.tv_outlined),
@@ -82,6 +85,10 @@ class _WindowsShellState extends State<WindowsShell> {
     // 切换到搜索页时让搜索框获得焦点，便于键盘/遥控器直接输入。
     if (index == 1) {
       _searchScreenKey.currentState?.requestSearchBoxFocus();
+    }
+    // 切换到直播页时让频道列表获得焦点，便于键盘直接选择。
+    if (index == 2) {
+      _liveScreenKey.currentState?.requestListFocus();
     }
   }
 
@@ -256,6 +263,7 @@ class _WindowsShellState extends State<WindowsShell> {
                   children: [
                     ProfileScreen(key: _profileScreenKey),
                     SearchScreen(key: _searchScreenKey),
+                    WindowsLiveScreen(key: _liveScreenKey),
                     HomeScreen(key: _homeScreenKey),
                     CategoryScreen(
                       key: _movieScreenKey,

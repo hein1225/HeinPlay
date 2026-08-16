@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import 'buffer_profile_config.dart';
 
@@ -15,6 +16,8 @@ abstract class VideoPlayerBackend {
     Map<String, String>? headers,
     bool proxyMode = false,
     BufferProfileConfig? bufferConfig,
+    bool isLive = false,
+    VideoFormat? formatHint,
   });
 
   Future<void> play();

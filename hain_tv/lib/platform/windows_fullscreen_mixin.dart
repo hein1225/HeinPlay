@@ -282,8 +282,11 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
         await syncWindowsFullscreenState();
       } else if (mounted) {
         Navigator.of(context).maybePop();
+        return;
       }
-      await WindowsWindowUtils.ensureResizableFrame();
+      if (mounted) {
+        await WindowsWindowUtils.ensureResizableFrame();
+      }
     } catch (e) {
       debugPrint('Windows ESC 处理失败: $e');
     }

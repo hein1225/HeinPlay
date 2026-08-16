@@ -289,7 +289,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                   child: _buildMenuCard(
                     icon: Icons.settings_outlined,
                     title: '软件设置',
-                    subtitle: '播放器、数据源、缓存',
+                    subtitle: '播放器、直播、数据源、缓存',
                     onTap: _openSettings,
                     focusNode: _menuRow2FocusNodes[1],
                   ),

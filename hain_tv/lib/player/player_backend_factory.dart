@@ -59,6 +59,16 @@ class PlayerBackendFactory {
     return create(type);
   }
 
+  static Future<VideoPlayerBackend> createForLive() async {
+    var type = await UserDataService.getLivePlayerBackend();
+    // 若直播设置中的后端在当前平台不可用，回退到平台默认。
+    if (!availableBackends.contains(type)) {
+      type = platformDefault;
+      await UserDataService.saveLivePlayerBackend(type);
+    }
+    return create(type);
+  }
+
   static Future<VideoPlayerBackend> createForVideo(
     String source,
     String id,

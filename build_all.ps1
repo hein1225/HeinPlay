@@ -58,9 +58,44 @@ function Invoke-FlutterPubGet {
     Push-Location $hainDir
     try {
         if ($Clean) {
+            # flutter clean 会删除整个 build 目录，但 Windows 插件依赖（如 vlc_player、
+            # fvp 下载的 mdk-sdk 等）体积大且下载困难，需要保留。
+            # 同时保留 _deps 目录（包含 nuget.exe 等 CMake 下载的构建工具），避免每次构建重复下载。
+            $buildDir = Join-Path $hainDir 'build\windows\x64'
+            $backupDir = Join-Path $env:TEMP "heinplay_build_backup_$(Get-Random)"
+            $hasBackup = $false
+            if (Test-Path $buildDir) {
+                Write-Host "备份 Windows 构建依赖目录..." -ForegroundColor Cyan
+                New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+                $subDirs = @('plugins', '_deps')
+                foreach ($subDir in $subDirs) {
+                    $srcPath = Join-Path $buildDir $subDir
+                    if (Test-Path $srcPath) {
+                        $dstPath = Join-Path $backupDir $subDir
+                        Copy-Item -Path $srcPath -Destination $dstPath -Recurse -Force
+                        $hasBackup = $true
+                    }
+                }
+            }
+
             flutter clean
             $cleanOk = ($LASTEXITCODE -eq 0)
             if (-not $cleanOk) { Write-Warn 'flutter clean 返回非零，继续执行 pub get' }
+
+            if ($hasBackup -and (Test-Path $backupDir)) {
+                Write-Host "恢复 Windows 构建依赖目录..." -ForegroundColor Cyan
+                New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+                $subDirs = @('plugins', '_deps')
+                foreach ($subDir in $subDirs) {
+                    $srcPath = Join-Path $backupDir $subDir
+                    if (Test-Path $srcPath) {
+                        $dstPath = Join-Path $buildDir $subDir
+                        New-Item -ItemType Directory -Force -Path $dstPath | Out-Null
+                        Copy-Item -Path "$srcPath\*" -Destination $dstPath -Recurse -Force
+                    }
+                }
+                Remove-Item -Path $backupDir -Recurse -Force
+            }
         }
 
         flutter pub get

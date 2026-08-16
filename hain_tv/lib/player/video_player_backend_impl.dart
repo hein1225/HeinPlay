@@ -115,31 +115,30 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     Map<String, String>? headers,
     bool proxyMode = false,
     BufferProfileConfig? bufferConfig,
+    bool isLive = false,
+    VideoFormat? formatHint,
   }) async {
     await dispose();
     _completedReported = false;
 
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
-    final proxyUrl = await UserDataService.getM3u8ProxyUrl();
-    final adFilterEnabled = await AdFilterService.isEnabled();
+
+    // 直播流不应用点播源的代理、去广告等设置。
+    final proxyUrl = isLive ? '' : await UserDataService.getM3u8ProxyUrl();
+    final adFilterEnabled = isLive ? false : await AdFilterService.isEnabled();
     final isLocalProxy = _isLocalProxyUrl(url);
     final isM3u8 = lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/');
     // 统一逻辑：仅当源本身声明 proxyMode，或去广告开启且配置了全局 M3U8 代理且当前是 M3U8 时，
     // 才走全局代理；去广告关闭时直接播放原始 URL，与 Selene 保持一致。
-    final needsProxy = !isLocalProxy &&
+    final needsProxy = !isLive &&
+        !isLocalProxy &&
         (proxyMode || (adFilterEnabled && proxyUrl.isNotEmpty && isM3u8));
     if (needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }
 
-    final effectiveHeaders = <String, String>{
-      'User-Agent': _defaultUserAgent,
-      'Accept': '*/*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      ..._refererFor(url),
-      ...?headers,
-    };
+    // 直播流优先使用低延迟缓冲配置；实际缓冲配置由后端包装类（ExoPlayerBackend / FvpBackend）在调用 open 前设置。
 
     final lowerFinalUrl = finalUrl.toLowerCase();
     final isNetwork =
@@ -147,20 +146,56 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
         lowerFinalUrl.startsWith('https://');
     final isFile = lowerFinalUrl.startsWith('file://');
 
-    VideoFormat? formatHint;
-    if (lowerFinalUrl.contains('.m3u8') || lowerFinalUrl.contains('/hls/')) {
-      formatHint = VideoFormat.hls;
-    } else if (lowerFinalUrl.contains('.mpd')) {
-      formatHint = VideoFormat.dash;
-    } else if (lowerFinalUrl.contains('.ism')) {
-      formatHint = VideoFormat.ss;
-    } else if (lowerFinalUrl.contains('.mp4') ||
-        lowerFinalUrl.contains('.mkv') ||
-        lowerFinalUrl.contains('.flv') ||
-        lowerFinalUrl.contains('.avi') ||
-        lowerFinalUrl.contains('.mov') ||
-        lowerFinalUrl.contains('.webm')) {
-      formatHint = VideoFormat.other;
+    final effectiveHeaders = <String, String>{
+      'User-Agent': _defaultUserAgent,
+      'Accept': isLive
+          ? 'application/vnd.apple.mpegurl,application/x-mpegurl,video/*,*/*;q=0.9'
+          : '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      if (!isLive) ..._refererFor(url),
+      ...?headers,
+    };
+
+    // 直播流补充 Referer / Origin，与 LunaTV 代理使用的请求头保持一致，
+    // 提高 IPTV 源兼容性。
+    if (isLive && isNetwork) {
+      try {
+        final uri = Uri.parse(finalUrl);
+        final referer = '${uri.scheme}://${uri.host}${uri.path}';
+        final origin = '${uri.scheme}://${uri.host}';
+        effectiveHeaders.putIfAbsent('Referer', () => referer);
+        effectiveHeaders.putIfAbsent('Origin', () => origin);
+      } catch (_) {
+        // 忽略 URL 解析异常
+      }
+    }
+
+    VideoFormat? effectiveFormatHint = formatHint;
+    if (effectiveFormatHint == null) {
+      // udpxy 等 RTP over HTTP 代理以及原始 RTP/UDP/RTSP 组播通常传输 MPEG-TS，
+      // 需要按普通媒体源播放，否则 ExoPlayer 会误按 HLS playlist 解析。
+      if (lowerFinalUrl.contains('/rtp/') ||
+          lowerFinalUrl.startsWith('rtp://') ||
+          lowerFinalUrl.startsWith('udp://') ||
+          lowerFinalUrl.startsWith('rtsp://')) {
+        effectiveFormatHint = VideoFormat.other;
+      } else if (lowerFinalUrl.contains('.m3u8') ||
+          lowerFinalUrl.contains('.m3u') ||
+          lowerFinalUrl.contains('/hls/')) {
+        effectiveFormatHint = VideoFormat.hls;
+      } else if (lowerFinalUrl.contains('.mpd')) {
+        effectiveFormatHint = VideoFormat.dash;
+      } else if (lowerFinalUrl.contains('.ism')) {
+        effectiveFormatHint = VideoFormat.ss;
+      } else if (lowerFinalUrl.contains('.mp4') ||
+          lowerFinalUrl.contains('.mkv') ||
+          lowerFinalUrl.contains('.flv') ||
+          lowerFinalUrl.contains('.avi') ||
+          lowerFinalUrl.contains('.mov') ||
+          lowerFinalUrl.contains('.webm') ||
+          lowerFinalUrl.contains('.ts')) {
+        effectiveFormatHint = VideoFormat.other;
+      }
     }
 
     debugPrint('VideoPlayerBackendImpl open: $finalUrl');
@@ -169,7 +204,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       _controller = VideoPlayerController.networkUrl(
         Uri.parse(finalUrl),
         httpHeaders: effectiveHeaders,
-        formatHint: formatHint,
+        formatHint: effectiveFormatHint,
         // Windows 端 FVP/libmdk 使用 texture view 更稳定，
         // platform view 在部分 Windows 环境会导致初始化失败或无法发起网络请求。
         viewType: Platform.isWindows
@@ -296,7 +331,13 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     _timer = null;
     _completedReported = false;
     _controller?.removeListener(_onControllerValueChanged);
-    await _controller?.dispose();
+    try {
+      await _controller?.dispose();
+    } catch (e) {
+      // 初始化失败时底层 playerId 可能不存在，dispose 会抛 IllegalStateException，
+      // 忽略该异常避免影响下一次播放。
+      debugPrint('VideoPlayerBackendImpl dispose 忽略异常: $e');
+    }
     _controller = null;
   }
 }

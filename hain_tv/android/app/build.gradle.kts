@@ -41,7 +41,7 @@ android {
         // tvlegacy 需要支持到 Android 5.0（API 21），默认值设 21；
         // tv/mobile flavor 再各自覆盖为 24。
         // 必须写死数字，避免 Flutter 插件把 flutter.minSdkVersion 解析为 24 或 current。
-        minSdk = 21
+        minSdk = flutter.minSdkVersion
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -63,7 +63,7 @@ android {
         create("tvlegacy") {
             applicationId = "com.heinplay.hain_tv_legacy"
             versionNameSuffix = "-tvlegacy"
-            minSdk = 21
+            minSdk = flutter.minSdkVersion
         }
         create("mobile") {
             applicationId = "com.heinplay.mobile"

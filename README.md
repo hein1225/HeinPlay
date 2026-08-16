@@ -2,7 +2,7 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内仅有 IPv6 公网、IPv4 受限的环境提供 IPv6 优先解析与自动回退 IPv4 能力，并统一复用 LunaTV API 的 HTTP 客户端，减少重复连接开销；v1.2.4 优化 TV 版渲染后端策略与若干界面显示问题：普通 TV 版改回 Vulkan（Impeller）以适配新设备，tvLegacy 继续用 OpenGL ES 兼容旧设备，修复 TV 版「获取日志」与软件介绍二维码显示不全的问题，并缩小 TV 更新日志字体避免内容溢出。
+v1.3.0 正式引入「电视直播与节目回放」功能。我们希望在点播体验之外，把直播也做到好用、易用，而不是像 LunaTV 上那样只是“能用”——因此迟迟未上线直播。1.3.0 从源管理、EPG 节目单、频道切换、时移回放到 TV/手机/Windows 三端交互都进行了完整设计：支持 M3U/TXT 自定义直播源与 LunaTV 内置源、自动拉取并缓存 XMLTV 节目单、左右键/手势时移回放、返回键从回放切回直播等。v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内仅有 IPv6 公网、IPv4 受限的环境提供 IPv6 优先解析与自动回退 IPv4 能力，并统一复用 LunaTV API 的 HTTP 客户端，减少重复连接开销。
 
 | TV / Windows 版界面预览 | 手机版界面预览 |
 | :--- | :--- |
@@ -33,8 +33,16 @@ v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内�
 ### 多播放器后端
 
 - **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，适配 HLS、DASH、普通 MP4 等主流网络格式。
-- **Windows**：抛弃长期未更新的 `flutter_mpv`，默认使用 **fvp**，并保留 **vlc_player** 作为备用后端，提升桌面端格式兼容性与播放稳定性。
+- **Windows**：抛弃长期未更新的 `flutter_mpv`，默认使用 **fvp**，并保留 **vlc_player** 作为备用后端，可在设置中手动切换。
 - 优化视频缓冲配置与测速优选逻辑，详情页自动对所有播放源测速并按响应速度排序，无播放记录时完成测速后再允许播放。
+
+### 电视直播与节目回放
+
+- **完整直播体系**：支持 LunaTV 内置源、M3U/TXT 自定义直播源，内置源置顶且不可编辑，自定义源支持增删改、排序、启用/禁用与扫码管理。
+- **EPG 节目单**：自动解析 M3U 头中的 `url-tvg` / `x-tvg-url` 并拉取 XMLTV 节目单，按 `tvg-id` 与频道名匹配；节目单与频道列表一并缓存，退出重进后可立即恢复，减少重复请求。
+- **三端统一交互**：TV/Windows 方向键切换频道、左右键切换备选源、右键/节目单按钮查看完整节目单；手机竖屏上下滑动换台、左右滑动切换备选源、点击节目单按钮进入回放。
+- **时移回放**：支持 `catchup` / `catchup-source` 的回放源，选中已播节目即可时移回看；回放模式下左右键/手势快进快退，定位后直接播放，返回键回到直播而非退出播放。
+- **北京时间强制对齐**：回放 URL 的时间变量统一按北京时间（UTC+8）格式化，避免 OpenClash 代理或设备时区差异导致回放内容与选择节目不对应。
 
 ### 互联网与局域网自动切换
 
@@ -117,10 +125,10 @@ v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内�
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.2.5-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
-| `heinplay-1.2.5-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
-| `heinplay-1.2.5-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.2.5-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.3.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
+| `heinplay-1.3.0-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
+| `heinplay-1.3.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.3.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 项目结构
 
@@ -226,6 +234,20 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 更新日志
 
 <details open>
+<summary><strong>1.3.0</strong></summary>
+
+### 1.3.0
+
+- **全新电视直播与节目回放**：正式上线直播功能，而不是 LunaTV 上“只是能用”的简单实现。支持 LunaTV 内置源与 M3U/TXT 自定义直播源、EPG 节目单自动拉取与缓存、TV/手机/Windows 三端频道切换、备选源切换、时移回放与返回直播等完整交互。
+- **直播源管理**：内置 LunaTV 源置顶并标识为「Server」，不可编辑/删除/开关；自定义源支持新增、编辑、删除、排序、启用/禁用与扫码管理；TV 端顶部新增「手机管理」入口，扫码后在手机上直接管理直播源。
+- **EPG 节目单**：自动解析 M3U 头中的 `url-tvg` / `x-tvg-url`，按 `tvg-id` 与频道名匹配 XMLTV 节目单；节目单随频道列表一起缓存，退出重进后可立即恢复并按当前时间刷新当前节目，减少重复拉取与积分消耗。
+- **直播三端交互统一**：TV/Windows 版方向键切换频道、左右键切换备选源、右键/节目单按钮查看完整节目单；手机版上下滑动换台、左右滑动切换备选源、点击节目单按钮进入回放。
+- **时移回放**：支持 `catchup` / `catchup-source` 回放眼移；选中已播节目即可回看，回放 URL 时间变量强制按北京时间（UTC+8）格式化，避免 OpenClash 代理或设备时区导致回放内容与选择节目不对应；快进/快退后定位直接播放，返回键退出回放回到直播。
+- **版本号统一**：全项目更新至 `1.3.0`（build `+18`），Release 产物命名同步为 `heinplay-1.3.0-tv.apk`、`heinplay-1.3.0-tvLegacy.apk`、`heinplay-1.3.0-mobile.apk`、`heinplay-1.3.0-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.2.0</strong></summary>
 
 ### 1.2.5
@@ -394,7 +416,7 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 
 - **设备型号**：如 Xiaomi TV Box 4、海信 55E3F、Samsung SM-S9360 等。
 - **系统版本**：如 Android 14、Android 10、Android 5.1、Windows 11 等。
-- **应用版本**：如 `1.2.4-tv`、`1.2.4-tvLegacy`、`1.2.4-mobile`、`1.2.4-windows`。
+- **应用版本**：如 `1.3.0-tv`、`1.3.0-tvLegacy`、`1.3.0-mobile`、`1.3.0-windows`。
 - **问题描述**：具体现象是什么？能否稳定复现？
 - **复现步骤**：从哪个页面开始，点击了什么，出现了什么结果。
 - **相关截图 / 照片**：TV 版问题建议手机拍摄电视屏幕；界面显示类问题请附图。

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 import 'package:vlc_player/vlc_player.dart';
 
 import '../services/ad_filter_service.dart';
@@ -87,12 +88,14 @@ class VlcBackend implements VideoPlayerBackend {
     Map<String, String>? headers,
     bool proxyMode = false,
     BufferProfileConfig? bufferConfig,
+    bool isLive = false,
+    VideoFormat? formatHint,
   }) async {
     await dispose();
     _completedReported = false;
 
-    debugPrint('VlcBackend open: $url');
-    WindowsLogger.log('VlcBackend', 'open url=$url proxyMode=$proxyMode');
+    debugPrint('VlcBackend open: $url isLive=$isLive');
+    WindowsLogger.log('VlcBackend', 'open url=$url proxyMode=$proxyMode isLive=$isLive');
 
     // 与 FVP 后端保持一致：源声明 proxyMode 或去广告+M3U8 代理配置时走全局代理。
     final lowerUrl = url.toLowerCase();
@@ -118,9 +121,9 @@ class VlcBackend implements VideoPlayerBackend {
       ...?headers,
     };
 
-    // vlc_player 暂未接入分级缓冲配置，使用固定默认值。
-    const networkCaching = 3000;
-    const fileCaching = 3000;
+    // 直播流使用较低缓存以减少延迟，点播使用默认缓存。
+    final networkCaching = isLive ? 1000 : 3000;
+    final fileCaching = isLive ? 1000 : 3000;
 
     final mediaOptions = [
       ':network-caching=$networkCaching',

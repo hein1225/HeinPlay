@@ -204,14 +204,14 @@ class DoubanService {
         );
         return ApiResponse.success(items, statusCode: response.statusCode);
       }
-      return _fallbackToRecentHot(
+      return await _fallbackToRecentHot(
         type: type,
         tag: tag,
         pageSize: pageSize,
         pageStart: pageStart,
       );
     } catch (e) {
-      return _fallbackToRecentHot(
+      return await _fallbackToRecentHot(
         type: type,
         tag: tag,
         pageSize: pageSize,

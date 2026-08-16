@@ -10,6 +10,7 @@ import 'package:hain_tv/services/cache_service.dart';
 import 'package:hain_tv/services/hain_tv_cache_manager.dart';
 import 'package:hain_tv/player/buffer_profile_config.dart';
 import 'package:hain_tv/player/player_backend_factory.dart';
+import 'package:hain_tv/services/live_source_refresh_notifier.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
@@ -26,6 +27,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   PlayerBackendType _playerBackend = PlayerBackendType.exo;
+  PlayerBackendType _livePlayerBackend = PlayerBackendType.exo;
   DoubanDataSource _doubanSource = DoubanDataSource.direct;
   bool _autoSkipOpeningEnding = true;
   bool _autoPlayNextEpisode = true;
@@ -36,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _adFilterEnabled = false;
   bool _hardwareDecoding = true;
   BufferProfile _bufferProfile = BufferProfile.standard;
+  bool _lunaTvLiveEnabled = true;
+  int _liveSourceCacheHours = 24;
   BangumiApiProxyType _bangumiApiProxyType = BangumiApiProxyType.cmliussss;
   String _bangumiApiProxyUrl = '';
   BangumiImageProxyType _bangumiImageProxyType =
@@ -77,6 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final backend = await UserDataService.getPlayerBackend();
+    final liveBackend = await UserDataService.getLivePlayerBackend();
     final douban = await UserDataService.getDoubanDataSource();
     final skip = await UserDataService.getAutoSkipOpeningEnding();
     final next = await UserDataService.getAutoPlayNextEpisode();
@@ -88,6 +93,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final adFilterEnabled = await AdFilterService.isEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
     final bufferProfile = await UserDataService.getBufferProfile();
+    final lunaTvLiveEnabled = await UserDataService.getLunaTvLiveEnabled();
+    final liveSourceCacheHours = await UserDataService.getLiveSourceCacheHours();
     final bangumiApiProxyType = await UserDataService.getBangumiApiProxyType();
     final bangumiApiProxyUrl = await UserDataService.getBangumiApiProxyUrl();
     final bangumiImageProxyType =
@@ -107,6 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final appVersion = AppInfoService.version;
     setState(() {
       _playerBackend = backend;
+      _livePlayerBackend = liveBackend;
       _doubanSource = douban;
       _autoSkipOpeningEnding = skip;
       _autoPlayNextEpisode = next;
@@ -117,6 +125,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _adFilterEnabled = adFilterEnabled;
       _hardwareDecoding = hardwareDecoding;
       _bufferProfile = bufferProfile;
+      _lunaTvLiveEnabled = lunaTvLiveEnabled;
+      _liveSourceCacheHours = liveSourceCacheHours;
       _bangumiApiProxyType = bangumiApiProxyType;
       _bangumiApiProxyUrl = bangumiApiProxyUrl;
       _bangumiImageProxyType = bangumiImageProxyType;
@@ -190,6 +200,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setPlayerBackend(PlayerBackendType value) async {
     await UserDataService.savePlayerBackend(value);
     setState(() => _playerBackend = value);
+  }
+
+  Future<void> _setLivePlayerBackend(PlayerBackendType value) async {
+    await UserDataService.saveLivePlayerBackend(value);
+    setState(() => _livePlayerBackend = value);
+  }
+
+  Future<void> _setLunaTvLiveEnabled(bool value) async {
+    await UserDataService.saveLunaTvLiveEnabled(value);
+    setState(() => _lunaTvLiveEnabled = value);
+    // 通知直播相关页面立即刷新，开启后第一时间获取服务器直播源。
+    LiveSourceRefreshNotifier.instance.notify();
+  }
+
+  Future<void> _setLiveSourceCacheHours(int hours) async {
+    await UserDataService.saveLiveSourceCacheHours(hours);
+    setState(() => _liveSourceCacheHours = hours);
+    _showSnackBar('直播源缓存时间已设为 ${hours ~/ 24} 天');
   }
 
   Future<void> _setAutoSkip(bool value) async {
@@ -438,6 +466,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: _setHardwareDecoding,
           ),
           const SizedBox(height: AppSpacing.lg),
+          _buildSectionTitle('直播设置'),
+          _buildLivePlayerBackendTile(),
+          _buildSwitchTile(
+            title: '启用 LunaTV 服务器直播源',
+            subtitle: '关闭后将不再获取 LunaTV 服务端提供的直播频道',
+            value: _lunaTvLiveEnabled,
+            onChanged: _setLunaTvLiveEnabled,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _buildLiveSourceCacheTile(),
+          const SizedBox(height: AppSpacing.lg),
           _buildSectionTitle('缓冲模式'),
           _buildBufferProfileTile(),
           const SizedBox(height: AppSpacing.lg),
@@ -535,7 +574,115 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
-    return _buildCard(child: Column(children: tiles));
+    return _buildCard(
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            child: const Text(
+              '点播源默认播放器',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          ...tiles,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLivePlayerBackendTile() {
+    final tiles = <Widget>[];
+    for (final type in PlayerBackendFactory.availableBackends) {
+      if (tiles.isNotEmpty) {
+        tiles.add(const Divider(height: 1, color: AppColors.border));
+      }
+      tiles.add(
+        _buildRadioTile<PlayerBackendType>(
+          title: _playerBackendTitle(type),
+          subtitle: _playerBackendSubtitle(type),
+          value: type,
+          groupValue: _livePlayerBackend,
+          onChanged: _setLivePlayerBackend,
+        ),
+      );
+    }
+
+    return _buildCard(
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            child: const Text(
+              '直播默认播放器',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          ...tiles,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveSourceCacheTile() {
+    return _buildCard(
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            child: Text(
+              '直播源缓存时间：${_liveSourceCacheHours ~/ 24} 天',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          _buildRadioTile<int>(
+            title: '1 天',
+            subtitle: '默认缓存时间',
+            value: 24,
+            groupValue: _liveSourceCacheHours,
+            onChanged: _setLiveSourceCacheHours,
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          _buildRadioTile<int>(
+            title: '2 天',
+            subtitle: '48小时缓存',
+            value: 48,
+            groupValue: _liveSourceCacheHours,
+            onChanged: _setLiveSourceCacheHours,
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          _buildRadioTile<int>(
+            title: '3 天',
+            subtitle: '72小时缓存',
+            value: 72,
+            groupValue: _liveSourceCacheHours,
+            onChanged: _setLiveSourceCacheHours,
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          _buildRadioTile<int>(
+            title: '7 天',
+            subtitle: '最长缓存时间',
+            value: 168,
+            groupValue: _liveSourceCacheHours,
+            onChanged: _setLiveSourceCacheHours,
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildBufferProfileTile() {

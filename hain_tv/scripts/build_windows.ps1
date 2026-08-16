@@ -26,6 +26,25 @@ $version = $versionFull.Split('+')[0]
 
 Push-Location $projectDir
 try {
+    # 预下载 nuget.exe 到 CMake 期望的位置，避免构建时因网络问题下载失败。
+    $nugetDir = Join-Path $projectDir "build\windows\x64\_deps\nuget-subbuild\nuget-populate-prefix\src"
+    $nugetExe = Join-Path $nugetDir "nuget.exe"
+    $nugetUrl = "https://dist.nuget.org/win-x86-commandline/v6.0.0/nuget.exe"
+    if (-not (Test-Path $nugetExe)) {
+        Write-Output "预下载 nuget.exe 到 $nugetDir ..."
+        New-Item -ItemType Directory -Force -Path $nugetDir | Out-Null
+        try {
+            Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetExe -UseBasicParsing -TimeoutSec 30
+            Write-Output "nuget.exe 下载完成"
+        }
+        catch {
+            Write-Warning "nuget.exe 预下载失败: $_，构建时将尝试自动下载"
+        }
+    }
+    else {
+        Write-Output "nuget.exe 已存在，跳过下载"
+    }
+
     flutter build windows --target lib/main_windows.dart --release
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {

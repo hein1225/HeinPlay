@@ -65,6 +65,9 @@ class LunaTVService {
   /// 对外返回的共享客户端包装，忽略 close() 调用，避免请求方关闭共享连接。
   static http.Client? _sharedClient;
 
+  /// 防止多个请求并发创建共享客户端的锁。
+  static Future<http.Client>? _creatingClient;
+
   static Future<void> _initCache() async {
     if (!_cacheInitialized) {
       await _cacheService.init();
@@ -154,29 +157,47 @@ class LunaTVService {
       return _sharedClient!;
     }
 
-    // 配置变化：关闭旧共享客户端并重建。
-    _log('LunaTVService', '创建新的共享 HTTP 客户端');
-    _sharedInnerClient?.close();
-    _sharedInnerClient = null;
-    _sharedClient = null;
-    _sharedClientConfig = null;
-
-    final httpClient = HttpClient();
-    if (bypassCert) {
-      httpClient.badCertificateCallback =
-          (X509Certificate cert, String host, int port) => true;
-      httpClient.findProxy = (uri) => 'DIRECT';
+    // 串行化共享客户端创建，避免启动时多个并发请求各自创建独立客户端。
+    while (_creatingClient != null) {
+      await _creatingClient;
+      if (_sharedClient != null && _sharedClientConfig == config) {
+        _log('LunaTVService', '复用共享 HTTP 客户端');
+        return _sharedClient!;
+      }
     }
-    httpClient.idleTimeout = const Duration(seconds: 30);
-    await _applyInternetServerDnsPreference(
-      httpClient,
-      bypassCert: bypassCert,
-    );
-    final inner = IOClient(httpClient);
-    _sharedInnerClient = inner;
-    _sharedClient = _NonClosingClient(inner);
-    _sharedClientConfig = config;
-    return _sharedClient!;
+
+    Future<http.Client> doCreate() async {
+      // 配置变化：关闭旧共享客户端并重建。
+      _log('LunaTVService', '创建新的共享 HTTP 客户端');
+      _sharedInnerClient?.close();
+      _sharedInnerClient = null;
+      _sharedClient = null;
+      _sharedClientConfig = null;
+
+      final httpClient = HttpClient();
+      if (bypassCert) {
+        httpClient.badCertificateCallback =
+            (X509Certificate cert, String host, int port) => true;
+        httpClient.findProxy = (uri) => 'DIRECT';
+      }
+      httpClient.idleTimeout = const Duration(seconds: 30);
+      await _applyInternetServerDnsPreference(
+        httpClient,
+        bypassCert: bypassCert,
+      );
+      final inner = IOClient(httpClient);
+      _sharedInnerClient = inner;
+      _sharedClient = _NonClosingClient(inner);
+      _sharedClientConfig = config;
+      return _sharedClient!;
+    }
+
+    _creatingClient = doCreate();
+    try {
+      return await _creatingClient!;
+    } finally {
+      _creatingClient = null;
+    }
   }
 
   /// 根据用户在服务器管理中设置的「互联网服务器地址 DNS 偏好」，
@@ -207,16 +228,22 @@ class LunaTVService {
       // 读取主服务器地址失败时保持空字符串，后续按默认解析处理。
     }
 
-    if (preference == InternetServerDnsPreference.ipv6) {
-      _log(
-        'LunaTVService',
-        '已启用互联网服务器 IPv6 优先解析（无 IPv6 时自动回退 IPv4），主服务器域名: $primaryHost',
-      );
-    } else {
-      _log(
-        'LunaTVService',
-        '互联网服务器使用系统自动 DNS（Happy Eyeballs），主服务器域名: $primaryHost',
-      );
+    switch (preference) {
+      case InternetServerDnsPreference.ipv6:
+        _log(
+          'LunaTVService',
+          '已启用互联网服务器 IPv6 优先解析（无 IPv6 时自动回退 IPv4），主服务器域名: $primaryHost',
+        );
+      case InternetServerDnsPreference.ipv4:
+        _log(
+          'LunaTVService',
+          '已启用互联网服务器 IPv4 优先解析（无 IPv4 时自动回退 IPv6），主服务器域名: $primaryHost',
+        );
+      case InternetServerDnsPreference.any:
+        _log(
+          'LunaTVService',
+          '互联网服务器使用系统自动 DNS（Happy Eyeballs），主服务器域名: $primaryHost',
+        );
     }
 
     client.connectionFactory = (
@@ -282,7 +309,8 @@ class LunaTVService {
         final task = await _startConnect(address);
         try {
           // 等待真实连接/TLS 握手建立，才能把「网络不可达」等错误暴露出来并回退。
-          await task.socket;
+          // 单次连接尝试限制 3 秒，避免在 HTTP 15 秒超时前没有回退机会。
+          await task.socket.timeout(const Duration(seconds: 3));
           _log(
             'LunaTVService',
             '${type.name} 连接成功: ${url.host} -> ${address.address}:${url.port}',
@@ -309,15 +337,21 @@ class LunaTVService {
         }
       }
 
-      const lookupType = InternetAddressType.IPv6;
+      // 根据用户偏好决定优先解析的地址族；any 模式已在上文直接返回。
+      final lookupType = preference == InternetServerDnsPreference.ipv6
+          ? InternetAddressType.IPv6
+          : InternetAddressType.IPv4;
       var addresses = await lookupOrEmpty(url.host, lookupType);
       // 按偏好解析无结果时回退到另一种地址族。
       if (addresses.isEmpty && lookupType != InternetAddressType.any) {
+        final fallbackType = lookupType == InternetAddressType.IPv6
+            ? InternetAddressType.IPv4
+            : InternetAddressType.IPv6;
         _log(
           'LunaTVService',
-          '${lookupType.name} 解析无结果，回退到 IPv4: ${url.host}',
+          '${lookupType.name} 解析无结果，回退到 ${fallbackType.name}: ${url.host}',
         );
-        addresses = await lookupOrEmpty(url.host, InternetAddressType.IPv4);
+        addresses = await lookupOrEmpty(url.host, fallbackType);
       }
       if (addresses.isEmpty) {
         throw SocketException('无法解析主机 ${url.host}');
@@ -330,29 +364,50 @@ class LunaTVService {
       try {
         return await tryConnect(address, lookupType);
       } on SocketException catch (e) {
-        // 当按偏好地址族连接时出现「网络不可达」，自动回退到 IPv4 再试一次。
+        // 当按偏好地址族连接时出现「网络不可达」，自动回退到另一种地址族再试一次。
         final isUnreachable = e.osError?.errorCode == 101 ||
             e.message.toLowerCase().contains('network is unreachable') ||
             e.message.toLowerCase().contains('no route to host');
         if (isUnreachable && lookupType != InternetAddressType.any) {
+          final fallbackType = lookupType == InternetAddressType.IPv6
+              ? InternetAddressType.IPv4
+              : InternetAddressType.IPv6;
           _log(
             'LunaTVService',
-            '${lookupType.name} 不可达，准备回退到 IPv4: ${url.host}',
+            '${lookupType.name} 不可达，准备回退到 ${fallbackType.name}: ${url.host}',
           );
-          final fallbackAddresses = await lookupOrEmpty(
-            url.host,
-            InternetAddressType.IPv4,
-          );
+          final fallbackAddresses = await lookupOrEmpty(url.host, fallbackType);
           if (fallbackAddresses.isNotEmpty) {
             _log(
               'LunaTVService',
-              '回退到 IPv4: ${url.host} -> ${fallbackAddresses.first.address}',
+              '回退到 ${fallbackType.name}: ${url.host} -> ${fallbackAddresses.first.address}',
             );
             return await tryConnect(
               fallbackAddresses.first,
-              InternetAddressType.IPv4,
+              fallbackType,
             );
           }
+        }
+        rethrow;
+      } on TimeoutException catch (_) {
+        // 连接尝试超时（如 IPv6 可达但无法完成握手），回退到另一种地址族再试。
+        final fallbackType = lookupType == InternetAddressType.IPv6
+            ? InternetAddressType.IPv4
+            : InternetAddressType.IPv6;
+        _log(
+          'LunaTVService',
+          '${lookupType.name} 连接超时，准备回退到 ${fallbackType.name}: ${url.host}',
+        );
+        final fallbackAddresses = await lookupOrEmpty(url.host, fallbackType);
+        if (fallbackAddresses.isNotEmpty) {
+          _log(
+            'LunaTVService',
+            '回退到 ${fallbackType.name}: ${url.host} -> ${fallbackAddresses.first.address}',
+          );
+          return await tryConnect(
+            fallbackAddresses.first,
+            fallbackType,
+          );
         }
         rethrow;
       }
@@ -890,6 +945,31 @@ class LunaTVService {
       );
     } catch (e) {
       return ApiResponse.error('LunaTV 直播频道异常: $e');
+    }
+  }
+
+  /// 获取 LunaTV 服务端配置的所有直播源（过滤已禁用的源）。
+  static Future<ApiResponse<List<Map<String, dynamic>>>> getLiveSources() async {
+    try {
+      final response = await _get(
+        '/api/live/sources',
+        timeout: LunaTVConfig.liveTimeout,
+      );
+      if (response.statusCode == 200) {
+        final data = _decodeBody(response);
+        final sourcesData = data['data'] as List<dynamic>? ?? <dynamic>[];
+        final sources = sourcesData
+            .cast<Map<String, dynamic>>()
+            .where((e) => e['disabled'] != true)
+            .toList();
+        return ApiResponse.success(sources, statusCode: response.statusCode);
+      }
+      return ApiResponse.error(
+        'LunaTV 直播源列表失败: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
+    } catch (e) {
+      return ApiResponse.error('LunaTV 直播源列表异常: $e');
     }
   }
 
@@ -1959,5 +2039,18 @@ class LunaTVService {
       await addFavorite(key: key, favorite: favorite);
       return true;
     }
+  }
+
+  /// 构建 LunaTV 直播流代理播放 URL。
+  ///
+  /// LunaTV 直播频道需要通过服务器 `/api/proxy/stream` 接口代理播放，
+  /// 不能直接播放原始 URL。
+  static Future<String?> getProxyStreamUrl(
+    String channelUrl,
+    String sourceKey,
+  ) async {
+    final base = await _baseUrl();
+    if (base == null) return null;
+    return '$base/api/proxy/stream?url=${Uri.encodeComponent(channelUrl)}&moontv-source=$sourceKey';
   }
 }

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+
+import '../services/user_data_service.dart';
 import 'buffer_profile_config.dart';
 import 'exo_player_buffer_config.dart';
 import 'video_player_backend.dart';
@@ -27,8 +30,12 @@ class ExoPlayerBackend implements VideoPlayerBackend {
     Map<String, String>? headers,
     bool proxyMode = false,
     BufferProfileConfig? bufferConfig,
+    bool isLive = false,
+    VideoFormat? formatHint,
   }) async {
-    final effectiveConfig = bufferConfig ?? await BufferProfileConfig.current();
+    final effectiveConfig = isLive
+        ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
+        : (bufferConfig ?? await BufferProfileConfig.current());
     try {
       await ExoPlayerBufferConfig.apply(effectiveConfig);
     } catch (e) {
@@ -40,6 +47,8 @@ class ExoPlayerBackend implements VideoPlayerBackend {
       headers: headers,
       proxyMode: proxyMode,
       bufferConfig: effectiveConfig,
+      isLive: isLive,
+      formatHint: formatHint,
     );
   }
 

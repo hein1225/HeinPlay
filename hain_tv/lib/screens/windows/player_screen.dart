@@ -146,7 +146,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       0,
       _sources.isEmpty ? 0 : _sources.length - 1,
     );
-    _initialSourceKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+    _initialSourceKey =
+        _sources.isNotEmpty && _currentSourceIndex < _sources.length
         ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
         : '${_currentVideoDetail.source}+${_currentVideoDetail.id}';
     _currentPlayerBackend = widget.playerBackend;
@@ -175,9 +176,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           } else {
             _previousWindowBounds = null;
           }
-          debugPrint(
-            'Windows 播放页初始化保存窗口边界: $_previousWindowBounds',
-          );
+          debugPrint('Windows 播放页初始化保存窗口边界: $_previousWindowBounds');
         } catch (e) {
           debugPrint('Windows 播放页初始化保存窗口边界失败: $e');
         }
@@ -348,8 +347,10 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
     // 跳过 seek 冷却：触发一次跳过后 3 秒内不再重复触发，避免 seek 后画面未更新
     // 导致位置流仍报告在片头片尾区间内而连续 seek。
-    final skipSeekCooldown = _lastSkipSeekAt != null &&
-        DateTime.now().difference(_lastSkipSeekAt!) < const Duration(seconds: 3);
+    final skipSeekCooldown =
+        _lastSkipSeekAt != null &&
+        DateTime.now().difference(_lastSkipSeekAt!) <
+            const Duration(seconds: 3);
 
     if (_skipConfig != null && _skipConfig!.segments.isNotEmpty) {
       for (final segment in _skipConfig!.segments) {
@@ -552,7 +553,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       }
     }
 
-    bool success = await tryOpen(
+    var success = await tryOpen(
       url,
       initialPositionMs: _pendingInitialPositionMs,
     );
@@ -1449,9 +1450,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           final restoredBounds = await windowManager.getBounds();
           if (restoredBounds.width < _kNormalMinSize.width ||
               restoredBounds.height < _kNormalMinSize.height) {
-            debugPrint(
-              '小窗恢复后尺寸异常，强制恢复默认尺寸: $restoredBounds',
-            );
+            debugPrint('小窗恢复后尺寸异常，强制恢复默认尺寸: $restoredBounds');
             await windowManager.setSize(_kNormalMinSize);
             await windowManager.center();
             await WindowsWindowUtils.ensureResizableFrame();
@@ -1565,9 +1564,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         final restoredBounds = await windowManager.getBounds();
         if (restoredBounds.width < _kNormalMinSize.width ||
             restoredBounds.height < _kNormalMinSize.height) {
-          debugPrint(
-            '退出播放页恢复后尺寸异常，强制恢复默认尺寸: $restoredBounds',
-          );
+          debugPrint('退出播放页恢复后尺寸异常，强制恢复默认尺寸: $restoredBounds');
           await windowManager.setSize(_kNormalMinSize);
           await windowManager.center();
           await WindowsWindowUtils.ensureResizableFrame();
@@ -1623,19 +1620,20 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         if (_initialSourceKey != null && _initialSourceKey!.isNotEmpty)
           _initialSourceKey!,
       ];
-      final currentKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+      final currentKey =
+          _sources.isNotEmpty && _currentSourceIndex < _sources.length
           ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
           : null;
-      if (currentKey != null && currentKey.isNotEmpty && !candidates.contains(currentKey)) {
+      if (currentKey != null &&
+          currentKey.isNotEmpty &&
+          !candidates.contains(currentKey)) {
         candidates.add(currentKey);
       }
 
       var newIndex = -1;
       for (final key in candidates) {
         if (key.isEmpty || key == '+') continue;
-        final index = _sources.indexWhere(
-          (s) => '${s.source}+${s.id}' == key,
-        );
+        final index = _sources.indexWhere((s) => '${s.source}+${s.id}' == key);
         if (index >= 0) {
           newIndex = index;
           break;
@@ -2031,76 +2029,76 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           ),
         ),
         child: Stack(
-        children: [
-          Row(
-            children: [
-              IconButton(
-                onPressed: () async {
-                  if (isWindowsFullScreen) {
-                    await toggleWindowsFullscreen();
-                  } else {
-                    Navigator.of(context).pop();
-                  }
-                },
-                icon: const Icon(
-                  Icons.arrow_back,
-                  color: AppColors.textPrimary,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () async {
+                    if (isWindowsFullScreen) {
+                      await toggleWindowsFullscreen();
+                    } else {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  icon: const Icon(
+                    Icons.arrow_back,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _currentVideoDetail.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _currentVideoDetail.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
-                    ),
-                    Text(
-                      _episodeTitle,
-                      style: const TextStyle(
-                        fontFamily: 'NotoSansSC',
-                        fontSize: 14,
-                        color: AppColors.textSecondary,
+                      Text(
+                        _episodeTitle,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 14,
+                          color: AppColors.textSecondary,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-          Positioned.fill(
-            child: Center(
-              child: Text(
-                _formatClock(_currentTime),
-                style: const TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
-                  shadows: [
-                    Shadow(
-                      color: Colors.black54,
-                      blurRadius: 4,
-                      offset: Offset(0, 1),
-                    ),
-                  ],
+              ],
+            ),
+            Positioned.fill(
+              child: Center(
+                child: Text(
+                  _formatClock(_currentTime),
+                  style: const TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black54,
+                        blurRadius: 4,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
   }
 
   Widget _buildMiniPlayerControls() {
@@ -2125,38 +2123,36 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           ),
         ),
         child: SafeArea(
-        child: Wrap(
-          alignment: WrapAlignment.center,
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.xs,
-          children: [
-            _buildMiniControlIconButton(
-              onTap: _togglePlay,
-              icon: _playing ? Icons.pause : Icons.play_arrow,
-              tooltip: _playing ? '暂停' : '播放',
-            ),
-            _buildMiniControlIconButton(
-              onTap: _nextEpisode,
-              icon: Icons.skip_next,
-              tooltip: '下一集',
-            ),
-            _buildMiniControlIconButton(
-              onTap: _toggleMiniPlayer,
-              icon: Icons.open_in_full,
-              tooltip: '恢复窗口',
-            ),
-            _buildMiniControlIconButton(
-              onTap: _toggleAlwaysOnTop,
-              icon: _isAlwaysOnTop
-                  ? Icons.push_pin
-                  : Icons.push_pin_outlined,
-              tooltip: _isAlwaysOnTop ? '取消置顶' : '窗口置顶',
-            ),
-          ],
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
+            children: [
+              _buildMiniControlIconButton(
+                onTap: _togglePlay,
+                icon: _playing ? Icons.pause : Icons.play_arrow,
+                tooltip: _playing ? '暂停' : '播放',
+              ),
+              _buildMiniControlIconButton(
+                onTap: _nextEpisode,
+                icon: Icons.skip_next,
+                tooltip: '下一集',
+              ),
+              _buildMiniControlIconButton(
+                onTap: _toggleMiniPlayer,
+                icon: Icons.open_in_full,
+                tooltip: '恢复窗口',
+              ),
+              _buildMiniControlIconButton(
+                onTap: _toggleAlwaysOnTop,
+                icon: _isAlwaysOnTop ? Icons.push_pin : Icons.push_pin_outlined,
+                tooltip: _isAlwaysOnTop ? '取消置顶' : '窗口置顶',
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
   }
 
   Widget _buildMiniControlIconButton({
@@ -2175,11 +2171,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
             color: AppColors.bgElevated.withValues(alpha: 0.8),
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          child: Icon(
-            icon,
-            color: AppColors.textPrimary,
-            size: 22,
-          ),
+          child: Icon(icon, color: AppColors.textPrimary, size: 22),
         ),
       ),
     );
@@ -2226,7 +2218,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       LinearProgressIndicator(
                         value: _duration.inMilliseconds > 0
                             ? _buffered.inMilliseconds /
-                                _duration.inMilliseconds
+                                  _duration.inMilliseconds
                             : 0.0,
                         backgroundColor: AppColors.border,
                         valueColor: const AlwaysStoppedAnimation<Color>(
@@ -2236,7 +2228,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       LinearProgressIndicator(
                         value: _duration.inMilliseconds > 0
                             ? _position.inMilliseconds /
-                                _duration.inMilliseconds
+                                  _duration.inMilliseconds
                             : 0.0,
                         backgroundColor: Colors.transparent,
                         valueColor: const AlwaysStoppedAnimation<Color>(
@@ -2316,17 +2308,15 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     _currentVideoDetail.id.isNotEmpty)
                   _buildControlTextButton(
                     onTap: _showSkipConfigDialog,
-                    icon: _skipConfigLoading
-                        ? null
-                        : Icons.skip_next,
+                    icon: _skipConfigLoading ? null : Icons.skip_next,
                     label: '跳过',
                     tooltip: '跳过片头片尾',
-                    foregroundColor: _skipConfig != null &&
-                            _skipConfig!.segments.isNotEmpty
+                    foregroundColor:
+                        _skipConfig != null && _skipConfig!.segments.isNotEmpty
                         ? AppColors.primary
                         : AppColors.textPrimary,
-                    backgroundColor: _skipConfig != null &&
-                            _skipConfig!.segments.isNotEmpty
+                    backgroundColor:
+                        _skipConfig != null && _skipConfig!.segments.isNotEmpty
                         ? AppColors.primaryTint
                         : AppColors.bgElevated,
                     isLoading: _skipConfigLoading,

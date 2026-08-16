@@ -100,7 +100,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
 
   Future<void> _setPreferIpv6(bool value) async {
     await UserDataService.saveInternetServerDnsPreference(
-      value ? InternetServerDnsPreference.ipv6 : InternetServerDnsPreference.any,
+      value ? InternetServerDnsPreference.ipv6 : InternetServerDnsPreference.ipv4,
     );
     LunaTVService.resetSharedClient();
     setState(() => _preferIpv6 = value);
@@ -482,7 +482,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
               style: TextStyle(color: AppColors.textPrimary),
             ),
             subtitle: Text(
-              _preferIpv6 ? '优先解析 IPv6 地址' : '自动选择可用地址',
+              _preferIpv6 ? '优先解析 IPv6 地址' : '优先解析 IPv4 地址',
               style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,

@@ -4,6 +4,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/live_source_config.dart';
+import 'live_service.dart';
+import 'live_source_storage.dart';
+
 class RemoteInputService {
   static final RemoteInputService _instance = RemoteInputService._internal();
   factory RemoteInputService() => _instance;
@@ -16,7 +20,7 @@ class RemoteInputService {
 
   void _setCorsHeaders(HttpResponse response) {
     response.headers.add('Access-Control-Allow-Origin', '*');
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
   }
 
@@ -33,6 +37,177 @@ class RemoteInputService {
 
   final _subAccountController = StreamController<Map<String, String>>.broadcast();
   Stream<Map<String, String>> get onSubAccount => _subAccountController.stream;
+
+  final _liveSourcesChangedController = StreamController<void>.broadcast();
+  Stream<void> get onLiveSourcesChanged => _liveSourcesChangedController.stream;
+
+  String _getLiveSourcesPageHTML(String serverUrl) {
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <title>海因影视 - 管理电视直播源</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; background-color: #121212; color: white; padding: 16px; box-sizing: border-box; }
+    h3 { color: #eee; margin: 0 0 8px 0; }
+    p { color: #888; font-size: 14px; margin: 0 0 16px 0; }
+    .card { background-color: #1e1e1e; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .name { font-size: 15px; font-weight: 600; color: #fff; word-break: break-all; }
+    .url { font-size: 12px; color: #888; word-break: break-all; margin-top: 4px; }
+    .badge { display: inline-block; font-size: 11px; color: #E50914; border: 1px solid #E50914; border-radius: 4px; padding: 1px 6px; margin-left: 8px; }
+    .actions { display: flex; gap: 8px; margin-top: 10px; }
+    button { border: none; border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+    .btn-primary { background-color: #E50914; color: white; }
+    .btn-primary:active { background-color: #b20710; }
+    .btn-secondary { background-color: #333; color: white; }
+    .btn-danger { background-color: #5c1a1a; color: #ff6b6b; }
+    .field { margin-bottom: 12px; }
+    label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
+    input, textarea { width: 100%; padding: 12px; font-size: 15px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
+    textarea { min-height: 80px; resize: vertical; }
+    #editor { display: none; margin-bottom: 16px; }
+    #status { margin-top: 12px; font-size: 14px; color: #888; }
+    .empty { text-align: center; color: #666; padding: 40px 0; }
+  </style>
+</head>
+<body>
+  <h3>电视直播源管理</h3>
+  <p>在此添加、编辑或删除直播源，电视将自动同步</p>
+  <div id="editor" class="card">
+    <input type="hidden" id="editId" />
+    <div class="field">
+      <label>源名称</label>
+      <input id="editName" placeholder="例如：央视卫视" />
+    </div>
+    <div class="field">
+      <label>M3U/M3U8/JSON 地址或内容</label>
+      <textarea id="editUrl" placeholder="支持网络地址或粘贴文本内容"></textarea>
+    </div>
+    <div class="actions">
+      <button class="btn-primary" onclick="saveSource()">保存</button>
+      <button class="btn-secondary" onclick="cancelEdit()">取消</button>
+    </div>
+  </div>
+  <button class="btn-primary" id="addBtn" onclick="showAdd()" style="width:100%; margin-bottom:16px;">添加直播源</button>
+  <div id="list"></div>
+  <div id="status"></div>
+  <script>
+    let sources = [];
+    function setStatus(msg, color) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.style.color = color || "#888";
+    }
+    async function loadSources() {
+      try {
+        const r = await fetch("/api/live_sources");
+        const data = await r.json();
+        sources = data.sources || [];
+        renderList();
+      } catch (e) {
+        setStatus("加载失败，请检查网络", "#FF6B6B");
+      }
+    }
+    function renderList() {
+      const list = document.getElementById("list");
+      const userSources = sources.filter(s => !s.isBuiltin);
+      if (userSources.length === 0) {
+        list.innerHTML = '<div class="empty">暂无自定义直播源，点击上方添加</div>';
+        return;
+      }
+      list.innerHTML = userSources.map(s => `
+        <div class="card">
+          <div class="card-header">
+            <span class="name">\${escapeHtml(s.name)}</span>
+            \${s.enabled !== false ? '' : '<span class="badge">已禁用</span>'}
+          </div>
+          <div class="url">\${escapeHtml(s.url)}</div>
+          <div class="actions">
+            <button class="btn-secondary" onclick="editSource('\${s.id}')">编辑</button>
+            <button class="btn-danger" onclick="deleteSource('\${s.id}')">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    function showAdd() {
+      document.getElementById("editId").value = "";
+      document.getElementById("editName").value = "";
+      document.getElementById("editUrl").value = "";
+      document.getElementById("editor").style.display = "block";
+      document.getElementById("addBtn").style.display = "none";
+    }
+    function editSource(id) {
+      const s = sources.find(x => x.id === id);
+      if (!s) return;
+      document.getElementById("editId").value = s.id;
+      document.getElementById("editName").value = s.name;
+      document.getElementById("editUrl").value = s.url;
+      document.getElementById("editor").style.display = "block";
+      document.getElementById("addBtn").style.display = "none";
+    }
+    function cancelEdit() {
+      document.getElementById("editor").style.display = "none";
+      document.getElementById("addBtn").style.display = "block";
+    }
+    async function saveSource() {
+      const id = document.getElementById("editId").value.trim();
+      const name = document.getElementById("editName").value.trim();
+      const url = document.getElementById("editUrl").value.trim();
+      if (!name || !url) {
+        setStatus("名称和地址不能为空", "#FF6B6B");
+        return;
+      }
+      setStatus("保存中...", "#888");
+      try {
+        const existing = sources.find(s => s.id === id);
+        const enabled = existing ? (existing.enabled !== false) : true;
+        const r = await fetch("/api/live_sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, name, url, enabled })
+        });
+        const data = await r.json();
+        if (data.status === "ok") {
+          setStatus("保存成功", "#4CAF50");
+          cancelEdit();
+          await loadSources();
+        } else {
+          setStatus("保存失败: " + (data.error || ""), "#FF6B6B");
+        }
+      } catch (e) {
+        setStatus("保存失败，请检查网络", "#FF6B6B");
+      }
+    }
+    async function deleteSource(id) {
+      if (!confirm("确定删除该直播源吗？")) return;
+      setStatus("删除中...", "#888");
+      try {
+        const r = await fetch("/api/live_sources?id=" + encodeURIComponent(id), { method: "DELETE" });
+        const data = await r.json();
+        if (data.status === "ok") {
+          setStatus("删除成功", "#4CAF50");
+          await loadSources();
+        } else {
+          setStatus("删除失败: " + (data.error || ""), "#FF6B6B");
+        }
+      } catch (e) {
+        setStatus("删除失败，请检查网络", "#FF6B6B");
+      }
+    }
+    loadSources();
+  </script>
+</body>
+</html>
+''';
+  }
 
   String _getRemotePageHTML(
     String serverUrl, {
@@ -370,11 +545,20 @@ class RemoteInputService {
             return;
           }
           if (request.method == 'GET' && request.uri.path == '/') {
-            final loginMode = request.uri.queryParameters['mode'] == 'login';
-            final serverConfigMode =
-                request.uri.queryParameters['mode'] == 'server_config';
-            final subAccountMode =
-                request.uri.queryParameters['mode'] == 'sub_account';
+            final mode = request.uri.queryParameters['mode'] ?? '';
+            if (mode == 'live_sources') {
+              final html = _getLiveSourcesPageHTML(_serverUrl!);
+              _setCorsHeaders(request.response);
+              request.response
+                ..statusCode = 200
+                ..headers.contentType = ContentType.html
+                ..write(html)
+                ..close();
+              return;
+            }
+            final loginMode = mode == 'login';
+            final serverConfigMode = mode == 'server_config';
+            final subAccountMode = mode == 'sub_account';
             final html = _getRemotePageHTML(
               _serverUrl!,
               loginMode: loginMode,
@@ -484,6 +668,8 @@ class RemoteInputService {
                 ..write(jsonEncode({'status': 'error', 'error': '缺少用户名或密码'}))
                 ..close();
             }
+          } else if (request.uri.path == '/api/live_sources') {
+            await _handleLiveSourcesRequest(request);
           } else {
             _setCorsHeaders(request.response);
             request.response
@@ -511,6 +697,123 @@ class RemoteInputService {
     _server?.close(force: true);
     _server = null;
     _serverUrl = null;
+  }
+
+  Future<void> _handleLiveSourcesRequest(HttpRequest request) async {
+    try {
+      if (request.method == 'GET') {
+        final sources = await LiveService.getAllSources();
+        _setCorsHeaders(request.response);
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'status': 'ok',
+            'sources': sources.map((e) => e.toJson()).toList(),
+          }))
+          ..close();
+        return;
+      }
+
+      if (request.method == 'POST') {
+        final body = await utf8.decoder.bind(request).join();
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        final id = (data['id'] as String?)?.trim() ?? '';
+        final name = (data['name'] as String?)?.trim() ?? '';
+        final url = (data['url'] as String?)?.trim() ?? '';
+        final enabled = data['enabled'] != false;
+
+        if (name.isEmpty || url.isEmpty) {
+          _setCorsHeaders(request.response);
+          request.response
+            ..statusCode = 400
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'status': 'error', 'error': '名称和地址不能为空'}))
+            ..close();
+          return;
+        }
+
+        if (id == LiveService.lunaTvBuiltinSourceId) {
+          _setCorsHeaders(request.response);
+          request.response
+            ..statusCode = 403
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'status': 'error', 'error': '系统内置源不允许修改'}))
+            ..close();
+          return;
+        }
+
+        final existing = await LiveSourceStorage.getConfigs();
+        final oldConfig = existing.cast<LiveSourceConfig?>().firstWhere(
+              (c) => c!.id == id,
+              orElse: () => null,
+            );
+        final config = oldConfig != null
+            ? oldConfig.copyWith(name: name, url: url, enabled: enabled)
+            : LiveSourceConfig(
+                id: LiveSourceConfig.generateId(),
+                name: name,
+                url: url,
+                isLocal: true,
+                enabled: enabled,
+                createTime: DateTime.now(),
+              );
+        await LiveSourceStorage.saveConfig(config);
+        _liveSourcesChangedController.add(null);
+        _setCorsHeaders(request.response);
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({'status': 'ok'}))
+          ..close();
+        return;
+      }
+
+      if (request.method == 'DELETE') {
+        final id = request.uri.queryParameters['id'];
+        if (id == null || id.isEmpty) {
+          _setCorsHeaders(request.response);
+          request.response
+            ..statusCode = 400
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'status': 'error', 'error': '缺少直播源 ID'}))
+            ..close();
+          return;
+        }
+        if (id == LiveService.lunaTvBuiltinSourceId) {
+          _setCorsHeaders(request.response);
+          request.response
+            ..statusCode = 403
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'status': 'error', 'error': '系统内置源不允许删除'}))
+            ..close();
+          return;
+        }
+        await LiveSourceStorage.deleteConfig(id);
+        _liveSourcesChangedController.add(null);
+        _setCorsHeaders(request.response);
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({'status': 'ok'}))
+          ..close();
+        return;
+      }
+
+      _setCorsHeaders(request.response);
+      request.response
+        ..statusCode = 405
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'status': 'error', 'error': '不支持的请求方法'}))
+        ..close();
+    } catch (e) {
+      _setCorsHeaders(request.response);
+      request.response
+        ..statusCode = 500
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'status': 'error', 'error': '服务器内部错误: $e'}))
+        ..close();
+    }
   }
 
   Future<String> _getLocalIp() async {

@@ -1,6 +1,78 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.3.0</h2></summary>
+
+### 1.3.0
+
+#### 新增
+
+- **电视直播与节目回放（正式上线）**
+  - 而不是 LunaTV 上“只是能用”的简单实现，v1.3.0 把直播作为完整功能引入：支持 LunaTV 内置源、M3U/TXT 自定义直播源、EPG 节目单、频道切换、备选源切换、时移回放与三端统一交互。
+  - 直播入口位于底部/顶部导航「直播」页，进入后直接展示直播源管理列表。
+
+- **直播源管理**
+  - 内置 LunaTV 源自动置顶，标识为「Server」，不可编辑、删除、切换开关。
+  - 自定义源支持新增、编辑、删除、排序、启用/禁用；TV 端顶部新增「手机管理」按钮，扫码后手机端可直接增删改直播源。
+  - 支持 TXT 格式直播源：以分组作为频道分类，名称与 URL 按第一个逗号分隔。
+  - 每个直播源列表项新增「清除缓存」按钮，内置 LunaTV 源调用 `LiveService.clearLunaTvCache()`，自定义源按 `sourceKey` 删除缓存。
+
+- **EPG 节目单**
+  - 自动解析 M3U 头中的 `url-tvg` / `x-tvg-url`，拉取 XMLTV 节目单。
+  - 按 `tvg-id` 优先、频道名次之进行匹配；解析时按 `start+stop+title` 去重，支持 `catchup-source` 大小写不敏感解析。
+  - 节目单随频道列表一起缓存到 `CacheService`，退出重进后可立即恢复；缓存命中时仅按当前时间重新匹配当前节目，无需重复拉取 EPG，减少网络请求与积分消耗。
+  - 频道列表右侧展示节目单按钮/当前节目信息，Windows/手机端点击节目单按钮查看完整节目单，TV 端在频道列表按右键查看。
+
+- **直播三端统一交互**
+  - TV/Windows 播放页：上下键换台，左右键切换备选源，确认键显示台标与播放信息，长按确认/菜单键显示频道列表，返回键隐藏列表或退出播放。
+  - 手机播放页：上下滑动换台，左右滑动切换备选源，轻触显示/隐藏控制栏与台标信息，点击节目单按钮查看完整节目单。
+  - TV/Windows 频道列表：左侧分类、右侧频道，焦点按导航栏 → 功能行 → 源列表移动；当前频道左侧显示指示器，频道行高 82、图标 52×52、圆角改为直角。
+
+- **时移回放**
+  - 支持 `catchup="append"`、`catchup="default"`、`catchup="shift"` 及 `catchup-source` 自定义模板。
+  - 选中已播节目进入回放，回放 URL 的时间变量统一按北京时间（UTC+8）格式化，避免 OpenClash 代理或设备时区差异导致回放内容与选择节目不对应。
+  - 回放模式下：TV/Windows 左右键快进/快退，手机左右滑动快进/快退，上下键/上下滑动禁用换台；快进/快退定位后直接播放，无需再按确认键。
+  - 回放模式下返回键（Android 系统返回/TV 返回/Windows ESC）退出回放并回到当前频道直播，不会直接退出播放。
+  - 顶部切换卡片宽度扩展至 520，显示大图标、当前节目名、时间段、进度条与备选源数量；若存在 `catchup-source` 则显示「节目回放」按钮。
+
+- **Windows 直播页适配**
+  - 合并返回按钮与控制栏、频道列表，统一显示/隐藏逻辑，5 秒无操作自动隐藏。
+  - 小窗播放模式支持键盘上下键切换频道。
+  - 控制栏新增全屏/退出全屏按钮（Windows 独占）。
+
+- **直播解析与播放适配**
+  - RTP/UDP/RTSP URL 与 `.m3u`/`.ts` 扩展名正确识别为 MPEG-TS 流，防止 ExoPlayer 误判为 HLS 播放列表。
+  - 连续同名/同分组 `#EXTINF` 条目合并为单一频道，所有 URL 作为备选源。
+  - LunaTV 内置源直接播放原始 URL，不再通过 `LunaTVService.getProxyStreamUrl()` 代理。
+
+#### 修复
+
+- **回放时间与节目单不对应**
+  - 根因：回放 URL 时间变量受设备时区或代理影响，生成的时间戳与节目单实际时间偏差 8 小时。
+  - 修复：新增 `_toWallClockInOffset` 辅助函数，强制按 UTC+8 格式化 `${(b)yyyyMMddHHmmss}`、`${(e)yyyyMMddHHmmss}`、`${start}`、`${stop}` 等变量，并在调试日志中输出原始时间与格式化结果以便核对。
+
+- **回放模式返回键错误退出播放（Android/非 Windows）**
+  - 根因：`PopScope.canPop` 与硬件返回键处理已区分回放/直播模式，但手机手势层在回放模式下仍执行换台/切源逻辑，导致体验不一致。
+  - 修复：回放模式下左右滑动手势改为快进/快退，上下滑动手势禁用；`PopScope` 与 `_handleHardwareKeyEvent` 统一优先调用 `_exitReplayMode()`。
+
+- **退出后重新进入直播无节目单**
+  - 根因：原 `EpgProgram` 不参与序列化，节目单仅存在于运行时内存，退出后丢失。
+  - 修复：为 `EpgProgram` 增加 `toJson`/`fromJson`，`LiveChannel` 序列化时包含 `programs`；自定义源加载时读取缓存，EPG 拉取成功后回写缓存；缓存命中时通过 `LiveService.refreshCurrentPrograms` 按当前时间刷新当前节目。
+
+- **节目单重复显示**
+  - 根因：XMLTV 解析未对相同 `start+stop+title` 的节目去重。
+  - 修复：`_parseXmltv` 中使用 `Set<String>` 对已解析的节目键去重。
+
+#### 变更
+
+- **版本号统一**
+  - 全项目版本号更新至 `1.3.0`（build `+18`）。
+  - Release 产物命名同步为 `heinplay-1.3.0-tv.apk`、`heinplay-1.3.0-tvLegacy.apk`、`heinplay-1.3.0-mobile.apk`、`heinplay-1.3.0-windows-portable.zip`。
+  - Windows EXE 资源版本号同步更新为 `1.3.0`，`AppInfoService` 兜底版本号同步更新。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.2.0</h2></summary>
 
 ### 1.2.5

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/screens/tv/category_screen.dart';
 import 'package:hain_tv/screens/tv/home_screen.dart';
+import 'package:hain_tv/screens/tv/live_screen.dart';
 import 'package:hain_tv/screens/tv/profile_screen.dart';
 import 'package:hain_tv/screens/tv/search_screen.dart';
 import 'package:hain_tv/services/app_info_service.dart';
@@ -28,11 +29,12 @@ class TvShell extends StatefulWidget {
 }
 
 class _TvShellState extends State<TvShell> {
-  int _selectedIndex = 2;
+  int _selectedIndex = 3;
   final List<FocusNode> _navFocusNodes = [];
   bool _exitDialogShowing = false;
   final _profileScreenKey = GlobalKey<ProfileScreenState>();
   final _searchScreenKey = GlobalKey<SearchScreenState>();
+  final _liveScreenKey = GlobalKey<TvLiveScreenState>();
   final _homeScreenKey = GlobalKey<HomeScreenState>();
   final _movieScreenKey = GlobalKey<CategoryScreenState>();
   final _tvScreenKey = GlobalKey<CategoryScreenState>();
@@ -42,6 +44,7 @@ class _TvShellState extends State<TvShell> {
   final List<_NavItem> _items = const [
     _NavItem(label: '我的', icon: Icons.person_outline),
     _NavItem(label: '搜索', icon: Icons.search),
+    _NavItem(label: '直播', icon: Icons.live_tv_outlined),
     _NavItem(label: '首页', icon: Icons.home_outlined),
     _NavItem(label: '电影', icon: Icons.movie_outlined),
     _NavItem(label: '电视剧', icon: Icons.tv_outlined),
@@ -136,22 +139,26 @@ class _TvShellState extends State<TvShell> {
               return KeyEventResult.handled;
             }
             if (index == 2) {
-              _homeScreenKey.currentState?.focusFirstContent();
+              _liveScreenKey.currentState?.requestListFocus();
               return KeyEventResult.handled;
             }
             if (index == 3) {
-              _movieScreenKey.currentState?.focusFilterButton();
+              _homeScreenKey.currentState?.focusFirstContent();
               return KeyEventResult.handled;
             }
             if (index == 4) {
-              _tvScreenKey.currentState?.focusFilterButton();
+              _movieScreenKey.currentState?.focusFilterButton();
               return KeyEventResult.handled;
             }
             if (index == 5) {
-              _showScreenKey.currentState?.focusFilterButton();
+              _tvScreenKey.currentState?.focusFilterButton();
               return KeyEventResult.handled;
             }
             if (index == 6) {
+              _showScreenKey.currentState?.focusFilterButton();
+              return KeyEventResult.handled;
+            }
+            if (index == 7) {
               _animeScreenKey.currentState?.focusFilterButton();
               return KeyEventResult.handled;
             }
@@ -337,14 +344,27 @@ class _TvShellState extends State<TvShell> {
             return KeyEventResult.ignored;
           }
 
-          // 上键兜底：当页面内找不到上方焦点时，回到顶部导航栏
+          // 上键兜底：当页面内找不到上方焦点时，回到顶部导航栏。
+          // 直播页（index 2）有自己的内部焦点导航（功能行 ↔ 列表 ↔ 预览），
+          // 在此不做拦截，交给直播页自己的键盘处理器处理。
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            if (_selectedIndex == 2) {
+              // 直播页：只要内部（功能行/源列表/预览区）持有焦点，
+              // 上键就交给直播页自己处理，不做兜底跳回导航栏，避免焦点错误跳到"我的"或"电影"。
+              final liveState = _liveScreenKey.currentState;
+              if (liveState != null && liveState.hasInternalFocus) {
+                return KeyEventResult.ignored;
+              }
+              // 直播页没有内部焦点时，回到顶部导航栏"直播"
+              _navFocusNodes[2].requestFocus();
+              return KeyEventResult.handled;
+            }
             final currentFocus = FocusManager.instance.primaryFocus;
             if (currentFocus != null &&
                 !_navFocusNodes.contains(currentFocus)) {
-              // 首页、搜索/我的页面、电影/电视剧/综艺/动漫分类页：按上直接回到当前顶部导航项，
+              // 首页、搜索/直播/我的页面、电影/电视剧/综艺/动漫分类页：按上直接回到当前顶部导航项，
               // 避免 ReadingOrderTraversalPolicy 按几何位置找到错误的导航项。
-              if (_selectedIndex >= 0 && _selectedIndex <= 6) {
+              if (_selectedIndex >= 0 && _selectedIndex <= 7) {
                 _navFocusNodes[_selectedIndex].requestFocus();
                 return KeyEventResult.handled;
               }
@@ -405,6 +425,12 @@ class _TvShellState extends State<TvShell> {
                   children: [
                     ProfileScreen(key: _profileScreenKey),
                     SearchScreen(key: _searchScreenKey),
+                    TvLiveScreen(
+                    key: _liveScreenKey,
+                    onRequestNavFocus: () {
+                      _navFocusNodes[2].requestFocus();
+                    },
+                  ),
                     HomeScreen(key: _homeScreenKey),
                     CategoryScreen(
                       key: _movieScreenKey,

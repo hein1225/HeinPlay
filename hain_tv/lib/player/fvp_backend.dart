@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fvp/fvp.dart';
+import 'package:video_player/video_player.dart';
+
+import '../services/user_data_service.dart';
 import '../utils/windows_logger.dart';
 import 'buffer_profile_config.dart';
 import 'video_player_backend.dart';
@@ -28,9 +31,11 @@ class FvpBackend implements VideoPlayerBackend {
     Map<String, String>? headers,
     bool proxyMode = false,
     BufferProfileConfig? bufferConfig,
+    bool isLive = false,
+    VideoFormat? formatHint,
   }) async {
-    debugPrint('FvpBackend open: $url');
-    WindowsLogger.log('FvpBackend', 'open url=$url proxyMode=$proxyMode');
+    debugPrint('FvpBackend open: $url isLive=$isLive');
+    WindowsLogger.log('FvpBackend', 'open url=$url proxyMode=$proxyMode isLive=$isLive');
     try {
       await _impl.open(
         url,
@@ -38,8 +43,12 @@ class FvpBackend implements VideoPlayerBackend {
         headers: headers,
         proxyMode: proxyMode,
         bufferConfig: bufferConfig,
+        isLive: isLive,
+        formatHint: formatHint,
       );
-      final effectiveConfig = bufferConfig ?? await BufferProfileConfig.current();
+      final effectiveConfig = isLive
+          ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
+          : (bufferConfig ?? await BufferProfileConfig.current());
       final controller = _impl.controller;
       if (controller != null) {
         try {

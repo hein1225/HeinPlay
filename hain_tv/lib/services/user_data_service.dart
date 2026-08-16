@@ -36,6 +36,7 @@ class UserDataService {
       'auto_select_low_latency_server';
   static const String _doubanDataSourceKey = 'app_douban_source';
   static const String _playerBackendKey = 'player_backend';
+  static const String _livePlayerBackendKey = 'live_player_backend';
   static const String _autoSkipOpeningEndingKey = 'auto_skip_opening_ending';
   static const String _autoPlayNextEpisodeKey = 'auto_play_next_episode';
   static const String _defaultQualityKey = 'default_quality';
@@ -56,6 +57,10 @@ class UserDataService {
   static const String _m3u8ProxyUrlKey = 'm3u8_proxy_url';
   static const String _hardwareDecodingKey = 'hardware_decoding';
   static const String _bufferProfileKey = 'buffer_profile';
+
+  // 直播设置
+  static const String _lunaTvLiveEnabledKey = 'lunatv_live_enabled';
+  static const String _liveSourceCacheHoursKey = 'live_source_cache_hours';
 
   // Bangumi 代理设置
   static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
@@ -128,13 +133,9 @@ class UserDataService {
   static Future<InternetServerDnsPreference> getInternetServerDnsPreference() async {
     final prefs = await SharedPreferences.getInstance();
     final index = prefs.getInt(_internetServerDnsPreferenceKey);
-    if (index == null) return InternetServerDnsPreference.any;
-    final value = InternetServerDnsPreference.values[index];
-    // 旧版本保存的 ipv4 已改为自动选择，避免强制走 IPv4 导致不可用。
-    if (value == InternetServerDnsPreference.ipv4) {
-      return InternetServerDnsPreference.any;
-    }
-    return value;
+    // 默认优先解析 IPv4，避免在 IPv6 不完整网络下因系统 Happy Eyeballs 等待过久而加载慢。
+    if (index == null) return InternetServerDnsPreference.ipv4;
+    return InternetServerDnsPreference.values[index];
   }
 
   static Future<void> saveInternetServerDnsPreference(
@@ -462,6 +463,21 @@ class UserDataService {
     );
   }
 
+  static Future<void> saveLivePlayerBackend(PlayerBackendType type) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_livePlayerBackendKey, type.name);
+  }
+
+  static Future<PlayerBackendType> getLivePlayerBackend() async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = prefs.getString(_livePlayerBackendKey);
+    if (key == null || key.isEmpty) return _platformDefaultBackend;
+    return PlayerBackendType.values.firstWhere(
+      (e) => e.name == key,
+      orElse: () => _platformDefaultBackend,
+    );
+  }
+
   static Future<void> saveAutoSkipOpeningEnding(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_autoSkipOpeningEndingKey, enabled);
@@ -585,6 +601,28 @@ class UserDataService {
       return BufferProfile.values[index];
     }
     return BufferProfile.standard;
+  }
+
+  static Future<void> saveLunaTvLiveEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_lunaTvLiveEnabledKey, enabled);
+  }
+
+  static Future<bool> getLunaTvLiveEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_lunaTvLiveEnabledKey) ?? true;
+  }
+
+  /// 直播源缓存时间（小时），默认 24 小时（1 天）。
+  static Future<int> getLiveSourceCacheHours() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_liveSourceCacheHoursKey) ?? 24;
+  }
+
+  /// 保存直播源缓存时间（小时）。
+  static Future<void> saveLiveSourceCacheHours(int hours) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_liveSourceCacheHoursKey, hours);
   }
 
   static String _perVideoBackendKey(String source, String id) {

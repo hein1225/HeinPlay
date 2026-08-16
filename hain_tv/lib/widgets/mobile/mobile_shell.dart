@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hain_tv/screens/mobile/category_screen.dart';
 import 'package:hain_tv/screens/mobile/home_screen.dart';
+import 'package:hain_tv/screens/mobile/live_screen.dart';
 import 'package:hain_tv/screens/mobile/profile_screen.dart';
 import 'package:hain_tv/screens/mobile/search_screen.dart';
 import 'package:hain_tv/services/update_service.dart';
@@ -50,6 +51,11 @@ class _MobileShellState extends State<MobileShell> {
       label: '分类',
     ),
     NavigationDestination(
+      icon: Icon(Icons.live_tv_outlined),
+      selectedIcon: Icon(Icons.live_tv),
+      label: '直播',
+    ),
+    NavigationDestination(
       icon: Icon(Icons.search_outlined),
       selectedIcon: Icon(Icons.search),
       label: '搜索',
@@ -74,6 +80,7 @@ class _MobileShellState extends State<MobileShell> {
         children: const [
           MobileHomeScreen(key: ValueKey('mobile_home')),
           MobileCategoryScreen(key: ValueKey('mobile_category')),
+          MobileLiveScreen(key: ValueKey('mobile_live')),
           MobileSearchScreen(key: ValueKey('mobile_search')),
           MobileProfileScreen(key: ValueKey('mobile_profile')),
         ],
