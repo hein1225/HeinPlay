@@ -130,107 +130,6 @@ v1.3.0 正式引入「电视直播与节目回放」功能。我们希望在点�
 | `heinplay-1.3.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
 | `heinplay-1.3.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
-## 项目结构
-
-```
-hain_tv/
-├── android/              # Android 平台配置
-│   ├── app/build.gradle.kts
-│   ├── key.properties    # TV 版发布签名配置（需妥善保管）
-│   ├── key-tvlegacy.properties # tvLegacy 版发布签名配置（需妥善保管）
-│   └── ...
-├── lib/                  # Flutter 业务代码
-│   ├── screens/          # 页面
-│   ├── widgets/          # 自定义组件
-│   ├── player/           # 播放器后端封装
-│   ├── services/         # 网络与数据服务
-│   ├── focus/            # TV 焦点管理
-│   └── models/           # 数据模型
-├── scripts/              # 构建脚本（PowerShell）
-├── web/                  # Web 平台配置
-├── windows/              # Windows 平台配置
-└── pubspec.yaml
-```
-
-## 环境要求
-
-- Flutter SDK: `^3.12.0`
-- Dart SDK: 与 Flutter 版本匹配
-- Android SDK: minSdk 24（Android 7.0+）；tvLegacy 版 minSdk 21（Android 5.0+）
-- JDK: 用于 Android 构建
-
-## 运行与调试
-
-```bash
-# 进入项目目录
-cd hain_tv
-
-# 获取依赖
-flutter pub get
-
-# 运行到 Android TV / 模拟器
-flutter run
-
-# 运行到 Web
-flutter run -d chrome
-
-# 运行到 Windows
-flutter run -d windows
-```
-
-## 构建发布包
-
-### 一键全平台构建（推荐）
-
-项目根目录下的 `build_all.bat` 是 HeinPlay 全平台一键构建入口，实际构建逻辑由同目录的 `build_all.ps1` 实现。运行后会依次完成：
-
-1. **Flutter 环境检查**：运行 `flutter doctor`。
-2. **依赖准备**：执行 `flutter pub get`。
-3. **Windows 原生依赖检查**：检测并清理损坏或版本错误的 `mpv-dev` / `ANGLE` 等 `.7z` 依赖包，确保 CMake 使用正确版本重新解压。
-4. **Android 签名完整性检查**：验证 TV 版（`android/key.properties`）、tvLegacy 版（`android/key-tvlegacy.properties`）与手机版（`android/key-mobile.properties`）签名配置及 keystore 文件是否存在。
-5. **分平台构建**：按需构建手机版、TV 版、tvLegacy 版、Windows 版，失败时输出对应日志路径与最近 30 行日志。
-6. **结果汇总**：构建成功后输出产物可点击链接（apk / zip），并在最后汇总成功/失败/跳过状态。
-
-```bash
-# 交互式菜单（最常用）
-e:\code\HeinPlay\build_all.bat
-
-# 非交互式：跳过 doctor，仅构建 Windows 版
-e:\code\HeinPlay\build_all.bat -SkipDoctor -SkipMobile -SkipTv
-
-# 非交互式：跳过 doctor，构建全部版本
-e:\code\HeinPlay\build_all.bat -SkipDoctor
-```
-
-- 产物输出目录：`hain_tv/dist/`
-- 构建日志目录：`hain_tv/logs/`
-
-### 单独构建
-
-项目也提供独立的 PowerShell 构建脚本，位于 `hain_tv/scripts/` 目录：
-
-```powershell
-# 构建 Android TV Release APK
-.\hain_tv\scripts\build_tv.ps1
-
-# 构建 Android tvLegacy Release APK（Android 5.0+）
-.\hain_tv\scripts\build_tvlegacy.ps1
-
-# 构建 Android 手机版 Release APK
-.\hain_tv\scripts\build_mobile.ps1
-
-# 构建 Windows 便携版
-.\hain_tv\scripts\build_windows.ps1
-
-# 构建 Web 版本
-.\hain_tv\scripts\build_web.ps1
-
-# 生成应用图标
-.\hain_tv\scripts\generate_icons.ps1
-```
-
-Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvlegacy.properties`（tvLegacy 版）或 `android/key-mobile.properties`（手机版）中配置的签名密钥。详细构建说明请查看 [BUILD_GUIDE.md](./BUILD_GUIDE.md)。
-
 ## 更新日志
 
 <details open>
@@ -428,86 +327,20 @@ Release 构建会使用 `android/key.properties`（TV 版）、`android/key-tvle
 ## 后续更新计划
 
 - **主题色选择**：在设置中提供多套主题色方案，允许用户自定义应用强调色。
-- **LunaTV 直播源**：对接 LunaTV 直播源接口，在应用内直接浏览和播放电视直播频道。
 - **TVBox 订阅源支持**：尝试解析 TVBox 标准订阅源（如 JSON、TXT 格式），将其作为影视播放源导入与切换。
 - **Windows 版本优化**：持续优化桌面端焦点、快捷键与播放体验。
 - **Linux / iOS 版本**：后续计划支持 Linux 桌面端与 iOS 移动端。
 
-## 重要：需妥善保管的密钥文件
+## 支持我们
 
-以下文件包含应用发布签名密钥信息，**切勿提交到 Git 仓库或泄露给第三方**。丢失密钥将导致无法更新已发布的应用。
+如果这个软件对你有帮助，欢迎请我们喝杯奶茶！你的支持是我们持续开发的动力。
 
-### 1. TV 版签名
-
-#### `android/key.properties`
-
-- **位置**：`hain_tv/android/key.properties`
-- **用途**：配置 TV 版 Release 签名所需的密钥库密码、别名及密钥库文件路径。
-- **内容示例**：
-  
-  ```properties
-  storePassword=******
-  keyPassword=******
-  keyAlias=hain_tv_key
-  storeFile=hain_tv_keystore.jks
-  ```
-
-#### `android/app/hain_tv_keystore.jks`
-
-- **位置**：`hain_tv/android/app/hain_tv_keystore.jks`
-- **用途**：TV 版 Android Release 签名密钥库文件。
-- **别名**：`hain_tv_key`
-- **保管要求**：
-  - TV 版更新必须使用该密钥，丢失后无法为已有 TV 版应用发布更新。
-  - 不要提交到 Git，不要通过邮件、即时通讯工具发送。
-  - 建议多重备份（加密 U 盘、私有云、密码管理器等）。
-
-### 2. tvLegacy 版签名
-
-#### `android/key-tvlegacy.properties`
-
-- **位置**：`hain_tv/android/key-tvlegacy.properties`
-- **用途**：配置 tvLegacy 版 Release 签名所需的密钥库密码、别名及密钥库文件路径。
-- **内容示例**：
-  
-  ```properties
-  storePassword=******
-  keyPassword=******
-  keyAlias=tvlegacy_key
-  storeFile=heinplay-tvlegacy.jks
-  ```
-
-#### `android/app/heinplay-tvlegacy.jks`
-
-- **位置**：`hain_tv/android/app/heinplay-tvlegacy.jks`
-- **用途**：tvLegacy 版 Android Release 签名密钥库文件，与 TV 版完全独立。
-- **别名**：`tvlegacy_key`
-- **保管要求**：
-  - tvLegacy 版更新必须使用该密钥。
-  - 不要提交到 Git，不要通过邮件、即时通讯工具发送。
-  - 建议与 TV 版密钥分开备份。
-
-### 3. 手机版签名
-
-#### `android/key-mobile.properties` / `android/app/heinplay-mobile.jks`
-
-- 手机版签名文件，与 TV / tvLegacy 版完全独立。
-
-### 检查清单
-
-- [ ] `android/key.properties` 已加入 `.gitignore`
-- [ ] `android/key-tvlegacy.properties` 已加入 `.gitignore`
-- [ ] `android/key-mobile.properties` 已加入 `.gitignore`
-- [ ] `android/app/hain_tv_keystore.jks` 已加入 `.gitignore`
-- [ ] `android/app/heinplay-tvlegacy.jks` 已加入 `.gitignore`
-- [ ] `android/app/heinplay-mobile.jks` 已加入 `.gitignore`
-- [ ] 密钥文件已备份到安全位置
-- [ ] 未在代码、日志或文档中硬编码真实密码
+| 支付宝 | 微信 |
+| :---: | :---: |
+| ![支付宝赞赏码](docs/alipay_qr.jpg) | ![微信赞赏码](docs/wechat_qr.png) |
 
 ## 注意事项
 
-- Release 构建前请确认对应版本的签名配置（`android/key.properties`、`android/key-tvlegacy.properties`、`android/key-mobile.properties`）与 keystore 文件路径正确且文件存在。
-- 若在不同机器上构建，需要将对应版本的 keystore 文件复制到对应路径，并自行创建或更新签名配置。
 - Web 端受浏览器 CORS 策略限制，部分网络图片可能无法正常显示；Android / TV 端不受影响。
 - 国内渠道（GitCode）更新可能与 GitHub 存在同步延迟，如需测试最新版本可选择 GitHub 渠道。
 
