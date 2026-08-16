@@ -81,10 +81,8 @@ class _WindowsLiveSourceManagerScreenState
   }
 
   Future<void> _clearSourceCache(LiveSourceConfig config) async {
-    if (config.isBuiltin && config.id == LiveService.lunaTvBuiltinSourceId) {
-      await LiveService.clearLunaTvCache();
-    } else if (config.isBuiltin) {
-      return;
+    if (config.isBuiltin) {
+      await LiveService.clearLunaTvCache(key: config.sourceKey);
     } else {
       final cacheKey = CacheService()
           .generateLiveChannelsCacheKey(sourceKey: config.id);

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../models/live_channel.dart';
 import '../../models/live_source_config.dart';
@@ -9,7 +10,6 @@ import '../../services/live_service.dart';
 import '../../services/live_source_refresh_notifier.dart';
 import '../../services/remote_input_service.dart';
 import '../../theme.dart';
-import '../../utils/back_interceptor.dart';
 import '../../widgets/tv/focusable.dart';
 import '../live_player_screen.dart';
 import 'live_source_manager_screen.dart';
@@ -51,7 +51,6 @@ class TvLiveScreenState extends State<TvLiveScreen> {
   void initState() {
     super.initState();
     _loadSources();
-    BackInterceptor.register(_onBackIntercept);
     LiveSourceRefreshNotifier.instance.addListener(_onSettingsChanged);
   }
 
@@ -184,15 +183,6 @@ class TvLiveScreenState extends State<TvLiveScreen> {
     }
   }
 
-  bool _onBackIntercept() {
-    if (_sourceFocusNodes.any((n) => n.hasFocus) ||
-        _addBtnFocusNode.hasFocus ||
-        _mobileBtnFocusNode.hasFocus) {
-      return true;
-    }
-    return false;
-  }
-
   void _navigateToSourceManager() {
     Navigator.of(context)
         .push(
@@ -248,10 +238,10 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                             borderRadius:
                                 BorderRadius.circular(AppRadius.md),
                           ),
-                          child: const Icon(
-                            Icons.qr_code,
+                          child: QrImageView(
+                            data: url,
+                            version: QrVersions.auto,
                             size: 180,
-                            color: AppColors.textPrimary,
                           ),
                         ),
                       const SizedBox(height: AppSpacing.md),
@@ -297,7 +287,6 @@ class TvLiveScreenState extends State<TvLiveScreen> {
 
   @override
   void dispose() {
-    BackInterceptor.unregister(_onBackIntercept);
     LiveSourceRefreshNotifier.instance.removeListener(_onSettingsChanged);
     for (final node in _sourceFocusNodes) {
       node.dispose();

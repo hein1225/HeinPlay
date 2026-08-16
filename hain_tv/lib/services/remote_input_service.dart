@@ -733,7 +733,7 @@ class RemoteInputService {
           return;
         }
 
-        if (id == LiveService.lunaTvBuiltinSourceId) {
+        if (id.startsWith(LiveService.lunaTvBuiltinSourceId)) {
           _setCorsHeaders(request.response);
           request.response
             ..statusCode = 403
@@ -780,7 +780,7 @@ class RemoteInputService {
             ..close();
           return;
         }
-        if (id == LiveService.lunaTvBuiltinSourceId) {
+        if (id.startsWith(LiveService.lunaTvBuiltinSourceId)) {
           _setCorsHeaders(request.response);
           request.response
             ..statusCode = 403

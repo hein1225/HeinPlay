@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/live_source_config.dart';
+import '../../services/cache_service.dart';
 import '../../services/live_service.dart';
 import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
@@ -67,6 +68,21 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _clearSourceCache(LiveSourceConfig config) async {
+    if (config.isBuiltin) {
+      await LiveService.clearLunaTvCache(key: config.sourceKey);
+    } else {
+      final cacheKey =
+          CacheService().generateLiveChannelsCacheKey(sourceKey: config.id);
+      await CacheService().delete(cacheKey);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('「${config.name}」直播源缓存已清除')),
+      );
+    }
   }
 
   Future<void> _editSource(LiveSourceConfig source) async {
@@ -390,6 +406,17 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
                 ),
               ),
               // 右侧操作按钮
+              IconButton(
+                icon: const Icon(Icons.delete_sweep, size: 20),
+                color: AppColors.textSecondary,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 36,
+                  minHeight: 36,
+                ),
+                tooltip: '清除缓存',
+                onPressed: () => _clearSourceCache(source),
+              ),
               if (!source.isBuiltin) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined, size: 20),

@@ -339,6 +339,9 @@ class UserDataService {
         await clearLastSelectedServerUrl();
       }
     }
+
+    // 直播默认后端迁移（ExoPlayer -> fvp），独立于账号迁移。
+    await migrateLivePlayerBackendDefault();
   }
 
   /// 将用户输入的主/备服务器地址按 IP/域名分类。
@@ -453,6 +456,13 @@ class UserDataService {
     return PlayerBackendType.exo;
   }
 
+  /// 直播默认后端：Windows 与 Android 均使用 fvp（libmdk/ffmpeg 网络栈）。
+  /// 部分设备（如 Shield TV）上 ExoPlayer 的 OkHttp 网络栈连外部 IPTV 域名
+  /// 会读响应超时，而 ffmpeg 网络栈可达，故直播统一默认 fvp 以提升兼容性。
+  static PlayerBackendType get _platformDefaultLiveBackend {
+    return PlayerBackendType.fvp;
+  }
+
   static Future<PlayerBackendType> getPlayerBackend() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString(_playerBackendKey);
@@ -471,11 +481,28 @@ class UserDataService {
   static Future<PlayerBackendType> getLivePlayerBackend() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString(_livePlayerBackendKey);
-    if (key == null || key.isEmpty) return _platformDefaultBackend;
+    if (key == null || key.isEmpty) return _platformDefaultLiveBackend;
     return PlayerBackendType.values.firstWhere(
       (e) => e.name == key,
-      orElse: () => _platformDefaultBackend,
+      orElse: () => _platformDefaultLiveBackend,
     );
+  }
+
+  /// 直播默认后端历史迁移：Android 上旧的默认后端为 ExoPlayer，
+  /// 现统一改为 fvp（libmdk/ffmpeg 网络栈）。仅迁移一次，之后尊重用户手动选择。
+  static const String _livePlayerBackendMigratedKey =
+      'live_player_backend_migrated_to_fvp';
+
+  static Future<void> migrateLivePlayerBackendDefault() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_livePlayerBackendMigratedKey) ?? false) return;
+    if (Platform.isAndroid) {
+      final saved = prefs.getString(_livePlayerBackendKey);
+      if (saved == 'exo') {
+        await prefs.remove(_livePlayerBackendKey);
+      }
+    }
+    await prefs.setBool(_livePlayerBackendMigratedKey, true);
   }
 
   static Future<void> saveAutoSkipOpeningEnding(bool enabled) async {

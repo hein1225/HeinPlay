@@ -6,6 +6,7 @@ class LiveSourceConfig {
   final String name;
   final String url;
   final String? epgUrl;
+  final String? sourceKey;
   final bool isLocal;
   final bool isBuiltin;
   final bool enabled;
@@ -17,6 +18,7 @@ class LiveSourceConfig {
     required this.name,
     required this.url,
     this.epgUrl,
+    this.sourceKey,
     this.isLocal = false,
     this.isBuiltin = false,
     this.enabled = true,
@@ -30,6 +32,7 @@ class LiveSourceConfig {
       name: json['name']?.toString() ?? '',
       url: json['url']?.toString() ?? '',
       epgUrl: json['epgUrl']?.toString(),
+      sourceKey: json['sourceKey']?.toString(),
       isLocal: json['isLocal'] == true,
       isBuiltin: json['isBuiltin'] == true,
       enabled: json['enabled'] != false,
@@ -44,6 +47,7 @@ class LiveSourceConfig {
       'name': name,
       'url': url,
       'epgUrl': epgUrl,
+      'sourceKey': sourceKey,
       'isLocal': isLocal,
       'isBuiltin': isBuiltin,
       'enabled': enabled,
@@ -57,6 +61,7 @@ class LiveSourceConfig {
     String? name,
     String? url,
     String? epgUrl,
+    String? sourceKey,
     bool? isLocal,
     bool? isBuiltin,
     bool? enabled,
@@ -68,6 +73,7 @@ class LiveSourceConfig {
       name: name ?? this.name,
       url: url ?? this.url,
       epgUrl: epgUrl ?? this.epgUrl,
+      sourceKey: sourceKey ?? this.sourceKey,
       isLocal: isLocal ?? this.isLocal,
       isBuiltin: isBuiltin ?? this.isBuiltin,
       enabled: enabled ?? this.enabled,

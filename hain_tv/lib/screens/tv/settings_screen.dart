@@ -27,7 +27,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   PlayerBackendType _playerBackend = PlayerBackendType.exo;
-  PlayerBackendType _livePlayerBackend = PlayerBackendType.exo;
+  PlayerBackendType _livePlayerBackend = PlayerBackendType.fvp;
   DoubanDataSource _doubanSource = DoubanDataSource.direct;
   bool _autoSkipOpeningEnding = true;
   bool _autoPlayNextEpisode = true;
@@ -546,6 +546,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// 直播播放器标题，默认标记按直播默认后端（fvp）判断。
+  String _livePlayerBackendTitle(PlayerBackendType type) {
+    final isDefault = PlayerBackendFactory.platformLiveDefault == type;
+    switch (type) {
+      case PlayerBackendType.exo:
+        return isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
+      case PlayerBackendType.fvp:
+        return isDefault ? 'FVP（默认）' : 'FVP';
+      case PlayerBackendType.vlc:
+        return isDefault ? 'VLC（默认）' : 'VLC';
+    }
+  }
+
   String _playerBackendSubtitle(PlayerBackendType type) {
     switch (type) {
       case PlayerBackendType.exo:
@@ -603,7 +616,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       tiles.add(
         _buildRadioTile<PlayerBackendType>(
-          title: _playerBackendTitle(type),
+          title: _livePlayerBackendTitle(type),
           subtitle: _playerBackendSubtitle(type),
           value: type,
           groupValue: _livePlayerBackend,

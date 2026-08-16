@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:fvp/fvp.dart' as fvp;
 import 'package:video_player_android/video_player_android.dart';
 
 import '../services/user_data_service.dart';
@@ -19,12 +20,29 @@ class PlayerBackendFactory {
     }
   }
 
+  /// 在 Android 上注册 fvp（libmdk/ffmpeg 网络栈），替代 ExoPlayer。
+  ///
+  /// fvp 用 ffmpeg 网络栈，能连部分 ExoPlayer(OkHttp) 无法连通的 IPTV 域名。
+  static void _restoreAndroidFvp() {
+    if (Platform.isAndroid) {
+      fvp.registerWith(options: {
+        'platforms': ['android'],
+        'global': {
+          // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书的 IPTV 源。
+          'avformat': 'tls_verify=0',
+          'ffmpeg.loglevel': 'info',
+        },
+      });
+    }
+  }
+
   static VideoPlayerBackend create(PlayerBackendType type) {
     switch (type) {
       case PlayerBackendType.exo:
         _restoreAndroidVideoPlayer();
         return ExoPlayerBackend();
       case PlayerBackendType.fvp:
+        _restoreAndroidFvp();
         return FvpBackend();
       case PlayerBackendType.vlc:
         return VlcBackend();
@@ -38,6 +56,10 @@ class PlayerBackendFactory {
     if (Platform.isWindows) return PlayerBackendType.fvp;
     return PlayerBackendType.exo;
   }
+
+  /// 直播默认后端：Windows 与 Android 均使用 fvp。
+  /// 见 [UserDataService.getLivePlayerBackend] 的默认值说明。
+  static PlayerBackendType get platformLiveDefault => PlayerBackendType.fvp;
 
   /// 当前平台可供用户切换的播放器后端列表。
   /// - Android / TV：ExoPlayer、fvp
@@ -61,9 +83,9 @@ class PlayerBackendFactory {
 
   static Future<VideoPlayerBackend> createForLive() async {
     var type = await UserDataService.getLivePlayerBackend();
-    // 若直播设置中的后端在当前平台不可用，回退到平台默认。
+    // 若直播设置中的后端在当前平台不可用，回退到直播平台默认。
     if (!availableBackends.contains(type)) {
-      type = platformDefault;
+      type = platformLiveDefault;
       await UserDataService.saveLivePlayerBackend(type);
     }
     return create(type);

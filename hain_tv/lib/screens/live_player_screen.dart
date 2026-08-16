@@ -60,6 +60,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   bool _showChannelInfo = false;
   Timer? _channelInfoTimer;
 
+  /// 进入直播播放页前的设备方向，退出时恢复（手机端强制横屏）。
+  Orientation? _originalOrientation;
+
   // 节目单列表
   bool _showEpgList = false;
   /// 当前完整节目单正在显示的频道（非 TV 版通过右侧条幅选择）。
@@ -123,6 +126,56 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (DeviceUtils.isWindows) {
       initWindowsFullscreen();
       _initWindowsWindowState();
+    }
+    if (DeviceUtils.isMobile) {
+      _enterFullscreenLandscape();
+    }
+  }
+
+  /// 记录进入直播播放页前的设备方向。
+  void _captureOriginalOrientation() {
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return;
+    final view = views.first;
+    final size = view.physicalSize / view.devicePixelRatio;
+    _originalOrientation = size.width < size.height
+        ? Orientation.portrait
+        : Orientation.landscape;
+  }
+
+  /// 手机端进入直播播放时强制横屏全屏。
+  Future<void> _enterFullscreenLandscape() async {
+    _captureOriginalOrientation();
+    try {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } catch (e) {
+      debugPrint('LivePlayerScreen: 进入横屏失败: $e');
+    }
+  }
+
+  /// 退出直播播放页时恢复进入前的屏幕方向。
+  Future<void> _restoreOrientation() async {
+    try {
+      final original = _originalOrientation;
+      if (original == Orientation.landscape) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else if (original == Orientation.portrait) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+      } else {
+        await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      }
+    } catch (e) {
+      debugPrint('LivePlayerScreen: 恢复方向失败: $e');
     }
   }
 
@@ -1079,6 +1132,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
     // 释放可能存在的本地代理，避免 Windows 退出时资源未释放导致闪退。
     AdFilterEngine.dispose();
+    if (DeviceUtils.isMobile) {
+      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+      unawaited(_restoreOrientation());
+    }
     _selectLongPressTimer?.cancel();
     _channelListScrollController.removeListener(_syncEpgBannerScroll);
     _categoryScrollController.dispose();

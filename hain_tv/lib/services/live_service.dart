@@ -51,6 +51,7 @@ class LiveService {
       name: _lunaTvServerSourceName ?? 'LunaTV 直播',
       url: '',
       epgUrl: _lunaTvEpgUrl,
+      sourceKey: defaultLunaTvSourceKey,
       isBuiltin: true,
       enabled: true,
       order: -1,
@@ -58,23 +59,42 @@ class LiveService {
     );
   }
 
-  /// 刷新服务端直播源名称缓存。
-  static Future<void> _refreshLunaTvSourceName() async {
+  /// 拉取服务端直播源列表，将每个源转换为内置直播源配置（置顶展示）。
+  static Future<List<LiveSourceConfig>> _fetchBuiltinSources() async {
     try {
       final response = await LunaTVService.getLiveSources();
-      if (response.success && (response.data ?? []).isNotEmpty) {
-        final first = response.data!.first;
-        final name = first['name']?.toString();
-        if (name != null && name.isNotEmpty) {
-          _lunaTvServerSourceName = name;
-        }
+      final sources = response.data ?? [];
+      if (sources.isEmpty) {
+        return [lunaTvBuiltinSource];
       }
+      final firstName = sources.first['name']?.toString();
+      if (firstName != null && firstName.isNotEmpty) {
+        _lunaTvServerSourceName = firstName;
+      }
+      return sources.map((s) {
+        final key = s['key']?.toString() ?? defaultLunaTvSourceKey;
+        final name = s['name']?.toString() ?? 'LunaTV 直播';
+        final url = s['url']?.toString() ?? '';
+        final epgUrl = s['epgUrl']?.toString() ?? s['epg_url']?.toString();
+        return LiveSourceConfig(
+          id: '${lunaTvBuiltinSourceId}_$key',
+          name: name,
+          url: url,
+          epgUrl: epgUrl,
+          sourceKey: key,
+          isBuiltin: true,
+          enabled: true,
+          order: -1,
+          createTime: DateTime.utc(2024, 1, 1),
+        );
+      }).toList();
     } catch (_) {
-      // 获取失败时保留旧名称或默认名称，避免阻塞列表加载。
+      // 获取失败时回退到默认内置源，避免阻塞列表加载。
+      return [lunaTvBuiltinSource];
     }
   }
 
-  /// 获取所有直播源：内置 LunaTV 源置顶，其后为用户自定义源。
+  /// 获取所有直播源：LunaTV 内置源置顶（每个服务端源一个），其后为用户自定义源。
   /// 若用户在设置中关闭了 LunaTV 服务器直播源，则只返回用户自定义源。
   static Future<List<LiveSourceConfig>> getAllSources() async {
     final userConfigs = await LiveSourceStorage.getConfigs();
@@ -82,43 +102,58 @@ class LiveService {
     if (!lunaTvEnabled) {
       return userConfigs;
     }
-    await _refreshLunaTvSourceName();
-    return [lunaTvBuiltinSource, ...userConfigs];
+    final builtinSources = await _fetchBuiltinSources();
+    return [...builtinSources, ...userConfigs];
   }
 
   /// 从 LunaTV 服务端获取直播频道列表。
   ///
-  /// 先拉取 `/api/live/sources` 获取第一个启用的直播源 key，再用该 key 拉取频道；
-  /// 如果服务端没有配置任何直播源，则返回空列表。
-  /// 如果用户关闭了 LunaTV 直播源获取，则返回空列表。
+  /// [sourceKey] 指定要拉取的服务端直播源 key；为空时自动取第一个启用源。
+  /// [sourceUrl] / [epgUrl] 为该源对应的原始订阅地址与 EPG 地址，用于补全 catchup/EPG。
   ///
   /// 频道数据会缓存到本地，缓存时间由用户在"软件设置→直播源缓存时间"中配置，
   /// 默认 24 小时。缓存 key 基于直播源 key 生成，切换直播源时自动失效。
-  static Future<ApiResponse<List<LiveChannel>>> fetchLunaTvChannels() async {
+  static Future<ApiResponse<List<LiveChannel>>> fetchLunaTvChannels({
+    String? sourceKey,
+    String? sourceUrl,
+    String? epgUrl,
+  }) async {
     final enabled = await UserDataService.getLunaTvLiveEnabled();
     if (!enabled) {
       return ApiResponse.success([]);
     }
-    final sourcesResponse = await LunaTVService.getLiveSources();
-    if (!sourcesResponse.success) {
-      return ApiResponse.error(sourcesResponse.message ?? '获取直播源列表失败');
+
+    String key = sourceKey ?? '';
+    String? url = sourceUrl;
+    String? serverEpgUrl = epgUrl;
+
+    if (key.isEmpty) {
+      // 未指定 sourceKey 时，拉取服务端源列表并取第一个启用源。
+      final sourcesResponse = await LunaTVService.getLiveSources();
+      if (!sourcesResponse.success) {
+        return ApiResponse.error(sourcesResponse.message ?? '获取直播源列表失败');
+      }
+      final sources = sourcesResponse.data ?? [];
+      if (sources.isEmpty) {
+        return ApiResponse.success([]);
+      }
+      final first = sources.first;
+      key = first['key']?.toString() ?? defaultLunaTvSourceKey;
+      url = url ?? first['url']?.toString();
+      serverEpgUrl = serverEpgUrl ??
+          first['epgUrl']?.toString() ??
+          first['epg_url']?.toString();
     }
-    final sources = sourcesResponse.data ?? [];
-    if (sources.isEmpty) {
-      return ApiResponse.success([]);
-    }
-    final firstKey = sources.first['key']?.toString() ?? defaultLunaTvSourceKey;
-    lastLunaTvSourceKey = firstKey;
+
+    lastLunaTvSourceKey = key;
 
     // 若服务端直接返回了源级 EPG 地址，则缓存到内置源配置中。
-    final serverEpgUrl = sources.first['epgUrl']?.toString() ??
-        sources.first['epg_url']?.toString();
     if (serverEpgUrl != null && serverEpgUrl.isNotEmpty) {
       _lunaTvEpgUrl = serverEpgUrl;
     }
 
     // 优先从缓存读取
-    final cacheKey = CacheService().generateLiveChannelsCacheKey(sourceKey: firstKey);
+    final cacheKey = CacheService().generateLiveChannelsCacheKey(sourceKey: key);
     final cacheHours = await UserDataService.getLiveSourceCacheHours();
     final cached = await CacheService().get<List<dynamic>>(
       cacheKey,
@@ -126,7 +161,7 @@ class LiveService {
     );
 
     List<LiveChannel> channels;
-    String? sourceUrl;
+    String? fillUrl;
     if (cached != null) {
       channels = cached
           .map((e) => LiveChannel.fromJson(e as Map<String, dynamic>))
@@ -139,10 +174,10 @@ class LiveService {
             c.programs.isEmpty,
       );
       if (needFill) {
-        sourceUrl = _extractSourceUrlFromChannels(channels);
-        if (sourceUrl != null && sourceUrl.isNotEmpty) {
-          print('LunaTV 源缓存命中但缺少 catchup，尝试从 $sourceUrl 补全');
-          await _fillEpgAndCatchupFromM3uUrl(channels, sourceUrl);
+        fillUrl = _extractSourceUrlFromChannels(channels) ?? url;
+        if (fillUrl != null && fillUrl.isNotEmpty) {
+          print('LunaTV 源缓存命中但缺少 catchup，尝试从 $fillUrl 补全');
+          await _fillEpgAndCatchupFromM3uUrl(channels, fillUrl);
         }
         // 补全后回写缓存，避免下次继续缺失。
         await CacheService().set(
@@ -155,16 +190,15 @@ class LiveService {
     }
 
     // 缓存未命中，从服务器拉取
-    final response = await LunaTVService.getLiveChannels(sourceKey: firstKey);
+    final response = await LunaTVService.getLiveChannels(sourceKey: key);
     if (response.success && response.data != null) {
       channels = response.data!;
       // LunaTV 服务端返回的频道可能丢失了 M3U 头中的 EPG 与 catchup 信息，
       // 尝试从原始订阅地址补全。
-      sourceUrl = _extractSourceUrlFromChannels(channels) ??
-          sources.first['url']?.toString();
-      if (sourceUrl != null && sourceUrl.isNotEmpty) {
-        print('LunaTV 源从服务器拉取，尝试从 $sourceUrl 补全 EPG/catchup');
-        await _fillEpgAndCatchupFromM3uUrl(channels, sourceUrl);
+      fillUrl = _extractSourceUrlFromChannels(channels) ?? url;
+      if (fillUrl != null && fillUrl.isNotEmpty) {
+        print('LunaTV 源从服务器拉取，尝试从 $fillUrl 补全 EPG/catchup');
+        await _fillEpgAndCatchupFromM3uUrl(channels, fillUrl);
       }
       // 缓存频道数据
       await CacheService().set(
@@ -402,9 +436,9 @@ class LiveService {
   }
 
   /// 清除 LunaTV 内置源的频道缓存。
-  static Future<void> clearLunaTvCache() async {
-    final key = lastLunaTvSourceKey ?? defaultLunaTvSourceKey;
-    final cacheKey = CacheService().generateLiveChannelsCacheKey(sourceKey: key);
+  static Future<void> clearLunaTvCache({String? key}) async {
+    final effectiveKey = key ?? lastLunaTvSourceKey ?? defaultLunaTvSourceKey;
+    final cacheKey = CacheService().generateLiveChannelsCacheKey(sourceKey: effectiveKey);
     await CacheService().delete(cacheKey);
   }
 
@@ -412,8 +446,12 @@ class LiveService {
   static Future<ApiResponse<List<LiveChannel>>> loadChannelsForSource(
     LiveSourceConfig source,
   ) async {
-    if (source.isBuiltin && source.id == lunaTvBuiltinSourceId) {
-      return fetchLunaTvChannels();
+    if (source.isBuiltin) {
+      return fetchLunaTvChannels(
+        sourceKey: source.sourceKey,
+        sourceUrl: source.url.isNotEmpty ? source.url : null,
+        epgUrl: source.epgUrl,
+      );
     }
     return loadChannelsFromConfig(source);
   }
@@ -501,9 +539,11 @@ class LiveService {
 
   /// 获取指定直播源的频道缓存 key。
   static String _getChannelsCacheKey(LiveSourceConfig source) {
-    if (source.isBuiltin && source.id == lunaTvBuiltinSourceId) {
-      return CacheService()
-          .generateLiveChannelsCacheKey(sourceKey: lastLunaTvSourceKey ?? defaultLunaTvSourceKey);
+    if (source.isBuiltin) {
+      return CacheService().generateLiveChannelsCacheKey(
+        sourceKey:
+            source.sourceKey ?? lastLunaTvSourceKey ?? defaultLunaTvSourceKey,
+      );
     }
     return CacheService().generateLiveChannelsCacheKey(sourceKey: source.id);
   }
