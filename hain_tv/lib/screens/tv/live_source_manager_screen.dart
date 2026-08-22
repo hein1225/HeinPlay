@@ -522,30 +522,35 @@ class _TvSourceEditDialog extends StatefulWidget {
 class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _urlController;
+  late final TextEditingController _proxyController;
   late bool _enabled;
 
-  // 可聚焦项顺序：名称(0) -> URL(1) -> 启用(2) -> 取消(3) -> [删除(4)] -> 保存(末尾)
+  // 可聚焦项顺序：名称(0) -> URL(1) -> 代理(2) -> 启用(3) -> 取消 -> [删除] -> 保存(末尾)
   final List<FocusNode> _focusNodes = [];
   int _focusIndex = 0;
 
   static const int _nameIndex = 0;
   static const int _urlIndex = 1;
-  static const int _enabledIndex = 2;
+  static const int _proxyIndex = 2;
+  static const int _enabledIndex = 3;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.config?.name ?? '');
     _urlController = TextEditingController(text: widget.config?.url ?? '');
+    _proxyController =
+        TextEditingController(text: widget.config?.proxyUrl ?? '');
     _enabled = widget.config?.enabled ?? true;
-    // 名称、URL、启用、取消、保存，若有删除再追加一个。
-    _focusNodes.addAll(List.generate(widget.onDelete != null ? 6 : 5, (_) => FocusNode()));
+    // 名称、URL、代理、启用、取消、保存，若有删除再追加一个。
+    _focusNodes.addAll(List.generate(widget.onDelete != null ? 7 : 6, (_) => FocusNode()));
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _urlController.dispose();
+    _proxyController.dispose();
     for (final node in _focusNodes) {
       node.dispose();
     }
@@ -572,15 +577,20 @@ class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
     final url = _urlController.text.trim();
     if (name.isEmpty || url.isEmpty) return;
 
+    final proxyText = _proxyController.text.trim();
+    final proxyUrl = proxyText.isEmpty ? null : proxyText;
+
     final config = widget.config?.copyWith(
           name: name,
           url: url,
+          proxyUrl: proxyUrl,
           enabled: _enabled,
         ) ??
         LiveSourceConfig(
           id: LiveSourceConfig.generateId(),
           name: name,
           url: url,
+          proxyUrl: proxyUrl,
           isLocal: true,
           enabled: _enabled,
           createTime: DateTime.now(),
@@ -793,6 +803,13 @@ class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
               hint: '支持网络地址或粘贴文本内容',
               maxLines: 4,
               minLines: 2,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _buildTextField(
+              index: _proxyIndex,
+              controller: _proxyController,
+              label: '播放代理地址（可选）',
+              hint: '如 http://127.0.0.1:7890',
             ),
             const SizedBox(height: AppSpacing.sm),
             _buildEnabledSwitch(),

@@ -18,6 +18,9 @@ class HainWindowsApp extends StatefulWidget {
 
 class _HainWindowsAppState extends State<HainWindowsApp>
     with WindowListener {
+  /// 全局导航 key：供无 Navigator context 的全局 ESC 处理器安全访问当前路由栈。
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
@@ -58,17 +61,23 @@ class _HainWindowsAppState extends State<HainWindowsApp>
     if (event is! KeyDownEvent) return false;
     if (event.logicalKey != LogicalKeyboardKey.escape) return false;
 
-    final navigator = Navigator.of(context, rootNavigator: true);
-    if (navigator.canPop()) {
-      navigator.maybePop();
-      return true;
+    // 使用全局 navigatorKey 获取 Navigator，避免在 MaterialApp 之上
+    // 调用 Navigator.of(context) 触发空断言崩溃（Windows 退出直播时闪退的根因）。
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.canPop()) {
+      debugPrint('全局 ESC: 无路由可返回');
+      return false;
     }
-    return false;
+    debugPrint('全局 ESC: 执行 maybePop');
+    AppLogger.log('AppWindows', '全局 ESC maybePop');
+    navigator.maybePop();
+    return true;
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: '海因影视',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),

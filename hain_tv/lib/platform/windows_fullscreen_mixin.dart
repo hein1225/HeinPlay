@@ -29,6 +29,12 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
   /// 当前是否处于窗口全屏状态，供 UI 图标/PopScope 判断使用。
   bool get isWindowsFullScreen => _isFullScreen;
 
+  /// 是否正在执行全屏切换/退全屏等异步窗口操作。
+  ///
+  /// 供 PopScope 的 canPop 判断使用：切换过程中禁止 pop，避免页面销毁与
+  /// 窗口操作（setFullScreen/setBounds/ensureResizableFrame）并发导致卡死。
+  bool get isTogglingWindowsFullscreen => _togglingFullScreen;
+
   /// 供外部在显式调用 [windowManager.setFullScreen] 后同步本地状态。
   void setWindowsFullScreenState(bool value) {
     if (mounted) {
@@ -235,6 +241,11 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
   }
 
   Future<void> _exitFullScreenOrPopAsync() async {
+    // 与 [toggleWindowsFullscreen] 共用互斥标志，防止 ESC/双击等并发触发
+    // 多个异步窗口操作（setFullScreen/setBounds/ensureResizableFrame）同时执行，
+    // 导致窗口管理器状态竞争、软件卡死/闪退。
+    if (_togglingFullScreen) return;
+    _togglingFullScreen = true;
     try {
       final pluginFullScreen = await windowManager.isFullScreen();
       debugPrint('Windows ESC: plugin=$pluginFullScreen local=$_isFullScreen');
@@ -289,6 +300,8 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
       }
     } catch (e) {
       debugPrint('Windows ESC 处理失败: $e');
+    } finally {
+      _togglingFullScreen = false;
     }
   }
 

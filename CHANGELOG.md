@@ -1,6 +1,47 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.3.1</h2></summary>
+
+### 1.3.1
+
+#### 新增
+
+- **EPG 节目单按频道时区显示**
+  - 解析 M3U 头中的 `tvg-country` / `tvg_country` 属性存入 `LiveChannel.country`，节目单的当前节目判断、进度计算与节目时间展示统一按频道所在国家/地区时区转换，不再受设备时区影响。
+  - EPG/XMLTV 时间统一按 UTC 存储，频道列表缓存 key 升级为 v2，旧版本地时间缓存自动失效重新拉取。
+
+- **直播源代理支持**
+  - 直播源配置新增「代理地址」字段（`proxyUrl`），手机 / TV / Windows 三端源管理界面均可配置。
+  - 播放时通过 `x-heinplay-proxy-url` 请求头传递给播放器后端，fvp / vlc 后端自动剥离内部请求头，避免泄漏到上游。
+
+- **Android 播放器网络栈切换 OkHttp（ExoPlayer）**
+  - Android 7.0+（API 24+）改用 `OkHttpDataSource` 网络栈（15/30 秒超时、跟随重定向），提升 HLS 与普通网络请求的稳定性。
+  - Android 5.x（tvLegacy）保留原 `DefaultHttpDataSource`，避免低版本兼容性问题。
+
+- **Windows 全屏鼠标自动隐藏**
+  - 直播 / 点播全屏播放时，鼠标无操作 5 秒后自动隐藏，移动鼠标立即恢复显示；退出全屏或退出播放时自动恢复光标，避免光标状态泄漏到其他页面。
+
+- **Windows 直播频道列表返回键直接退出播放**
+  - 窗口模式下频道列表显示时按返回键 / ESC 直接退出播放返回直播管理页，不再先隐藏列表；TV / 手机版保持「先关列表再退出」的原行为。
+
+#### 修复
+
+- **Windows 退出播放卡死 / 闪退**
+  - 根因：ESC 键同时被全局与页面两个键盘 handler 处理，并发执行窗口操作导致状态竞争；FVP/libmdk 销毁原生播放器时纹理释放与渲染线程竞态，直播流持续推帧、点播退出全屏后窗口 surface 刚重建时尤其明显。
+  - 修复：ESC 统一由全局 handler 处理，页面不再重复响应；退出播放前先暂停渲染（停止推帧）再延迟销毁播放器；全屏切换期间禁止 pop，避免页面销毁与窗口操作并发；键盘 handler 增加 `mounted` 防护，防止 KeyUp 落在页面销毁窗口时访问失效 context。
+
+- **Android 手机版长按快进 / 快退松手后画面仍继续快进**
+  - 根因：fvp/libmdk 的 `seekTo` 底层异步执行，250ms 间隔的连续 seek 会在底层积压。
+  - 修复：增加节流控制，两次实际 seek 间隔不小于 600ms，并保留串行化 + 3 秒超时兜底，松手补发最终定位。
+
+- **TV 版频道列表 / 节目单误显示为手机精简版**
+  - 根因：`isMobile` 判断未排除 Android TV，导致 TV 版误走手机分支。
+  - 修复：`isMobile` 修正为 `(isAndroid || isIOS) && !isTv`，Android TV 恢复完整版频道列表与节目单布局。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.3.0</h2></summary>
 
 ### 1.3.0

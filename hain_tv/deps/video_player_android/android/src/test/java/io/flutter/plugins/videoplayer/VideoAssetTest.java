@@ -7,7 +7,6 @@ package io.flutter.plugins.videoplayer;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -16,7 +15,7 @@ import static org.mockito.Mockito.when;
 
 import android.net.Uri;
 import androidx.media3.common.MediaItem;
-import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.source.MediaSource;
 import androidx.test.core.app.ApplicationProvider;
 import java.util.HashMap;
@@ -53,16 +52,15 @@ public final class VideoAssetTest {
     assertEquals(mediaItem.localConfiguration.uri, Uri.parse("asset:///asset-key"));
   }
 
-  private static DefaultHttpDataSource.Factory mockHttpFactory() {
-    DefaultHttpDataSource.Factory httpFactory = mock(DefaultHttpDataSource.Factory.class);
+  private static OkHttpDataSource.Factory mockOkHttpFactory() {
+    OkHttpDataSource.Factory httpFactory = mock(OkHttpDataSource.Factory.class);
     when(httpFactory.setUserAgent(any())).thenReturn(httpFactory);
-    when(httpFactory.setAllowCrossProtocolRedirects(anyBoolean())).thenReturn(httpFactory);
     when(httpFactory.setDefaultRequestProperties(anyMap())).thenReturn(httpFactory);
     return httpFactory;
   }
 
   @Test
-  public void remoteVideoSetsUserAgentAndCrossProtocolRedirects() {
+  public void remoteVideoSetsUserAgent() {
     final String userAgent = "A User Agent";
     VideoAsset asset =
         VideoAsset.fromRemoteUrl(
@@ -71,14 +69,13 @@ public final class VideoAssetTest {
             new HashMap<>(),
             userAgent);
 
-    DefaultHttpDataSource.Factory mockFactory = mockHttpFactory();
+    OkHttpDataSource.Factory mockFactory = mockOkHttpFactory();
 
     // Cast to HttpVideoAsset to call a testing-only method to intercept calls.
     ((HttpVideoAsset) asset)
         .getMediaSourceFactory(ApplicationProvider.getApplicationContext(), mockFactory);
 
     verify(mockFactory).setUserAgent(userAgent);
-    verify(mockFactory).setAllowCrossProtocolRedirects(true);
     verify(mockFactory, never()).setDefaultRequestProperties(anyMap());
   }
 
@@ -112,13 +109,12 @@ public final class VideoAssetTest {
         VideoAsset.fromRemoteUrl(
             "https://flutter.dev/video.mp4", VideoAsset.StreamingFormat.UNKNOWN, headers, null);
 
-    DefaultHttpDataSource.Factory mockFactory = mockHttpFactory();
+    OkHttpDataSource.Factory mockFactory = mockOkHttpFactory();
 
     // Cast to HttpVideoAsset to call a testing-only method to intercept calls.
     ((HttpVideoAsset) asset)
         .getMediaSourceFactory(ApplicationProvider.getApplicationContext(), mockFactory);
 
-    verify(mockFactory).setAllowCrossProtocolRedirects(true);
     verify(mockFactory).setDefaultRequestProperties(headers);
   }
 

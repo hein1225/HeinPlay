@@ -143,7 +143,8 @@ class CacheService {
   }
 
   String generateLiveChannelsCacheKey({required String sourceKey}) {
-    return 'lunatv_live_$sourceKey';
+    // v2：EPG 时间改为统一 UTC 存储，旧版本地时间缓存需失效重新拉取。
+    return 'lunatv_live_v2_$sourceKey';
   }
 
   String generateSkipConfigsCacheKey({

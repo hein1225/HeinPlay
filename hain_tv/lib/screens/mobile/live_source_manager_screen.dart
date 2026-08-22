@@ -292,6 +292,7 @@ class _SourceEditSheet extends StatefulWidget {
 class _SourceEditSheetState extends State<_SourceEditSheet> {
   late final TextEditingController _nameController;
   late final TextEditingController _urlController;
+  late final TextEditingController _proxyController;
   late bool _enabled;
 
   @override
@@ -299,6 +300,8 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
     super.initState();
     _nameController = TextEditingController(text: widget.config?.name ?? '');
     _urlController = TextEditingController(text: widget.config?.url ?? '');
+    _proxyController =
+        TextEditingController(text: widget.config?.proxyUrl ?? '');
     _enabled = widget.config?.enabled ?? true;
   }
 
@@ -306,6 +309,7 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
   void dispose() {
     _nameController.dispose();
     _urlController.dispose();
+    _proxyController.dispose();
     super.dispose();
   }
 
@@ -336,12 +340,18 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
     final config = widget.config?.copyWith(
           name: name,
           url: url,
+          proxyUrl: _proxyController.text.trim().isEmpty
+              ? null
+              : _proxyController.text.trim(),
           enabled: _enabled,
         ) ??
         LiveSourceConfig(
           id: LiveSourceConfig.generateId(),
           name: name,
           url: url,
+          proxyUrl: _proxyController.text.trim().isEmpty
+              ? null
+              : _proxyController.text.trim(),
           isLocal: true,
           enabled: _enabled,
           createTime: DateTime.now(),
@@ -386,6 +396,14 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
             decoration: const InputDecoration(
               labelText: 'M3U/M3U8/JSON 地址或内容',
               hintText: '支持网络地址或粘贴文本内容',
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _proxyController,
+            decoration: const InputDecoration(
+              labelText: '播放代理地址（可选）',
+              hintText: '如 http://127.0.0.1:7890，为空则不使用代理',
             ),
           ),
           const SizedBox(height: AppSpacing.sm),

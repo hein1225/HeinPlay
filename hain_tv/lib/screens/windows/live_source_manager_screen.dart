@@ -362,6 +362,7 @@ class _SourceEditDialog extends StatefulWidget {
 class _SourceEditDialogState extends State<_SourceEditDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _urlController;
+  late final TextEditingController _proxyController;
   late bool _enabled;
 
   @override
@@ -369,6 +370,8 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.config?.name ?? '');
     _urlController = TextEditingController(text: widget.config?.url ?? '');
+    _proxyController =
+        TextEditingController(text: widget.config?.proxyUrl ?? '');
     _enabled = widget.config?.enabled ?? true;
   }
 
@@ -376,6 +379,7 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
   void dispose() {
     _nameController.dispose();
     _urlController.dispose();
+    _proxyController.dispose();
     super.dispose();
   }
 
@@ -384,15 +388,20 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
     final url = _urlController.text.trim();
     if (name.isEmpty || url.isEmpty) return;
 
+    final proxyText = _proxyController.text.trim();
+    final proxyUrl = proxyText.isEmpty ? null : proxyText;
+
     final config = widget.config?.copyWith(
           name: name,
           url: url,
+          proxyUrl: proxyUrl,
           enabled: _enabled,
         ) ??
         LiveSourceConfig(
           id: LiveSourceConfig.generateId(),
           name: name,
           url: url,
+          proxyUrl: proxyUrl,
           isLocal: true,
           enabled: _enabled,
           createTime: DateTime.now(),
@@ -429,6 +438,14 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
               decoration: const InputDecoration(
                 labelText: 'M3U/M3U8/JSON 地址或内容',
                 hintText: '支持网络地址或粘贴文本内容',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _proxyController,
+              decoration: const InputDecoration(
+                labelText: '播放代理地址（可选）',
+                hintText: '如 http://127.0.0.1:7890',
               ),
             ),
             const SizedBox(height: AppSpacing.sm),

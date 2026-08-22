@@ -101,6 +101,26 @@ class WindowsWindowUtils {
     }
   }
 
+  /// 控制鼠标光标可见性（仅 Windows）。
+  ///
+  /// [visible] 为 true 显示光标，false 隐藏光标。底层基于 win32 的 ShowCursor
+  /// 计数器 API：隐藏时持续递减计数直到光标真正隐藏，显示时持续递增直到真正显示，
+  /// 避免多次调用造成计数不平衡导致光标无法恢复。
+  static void setCursorVisible(bool visible) {
+    if (!DeviceUtils.isWindows) return;
+    try {
+      if (visible) {
+        // 递增计数直到光标可见（ShowCursor 返回计数 >= 0 表示可见）。
+        while (ShowCursor(true) < 0) {}
+      } else {
+        // 递减计数直到光标隐藏（ShowCursor 返回计数 < 0 表示隐藏）。
+        while (ShowCursor(false) >= 0) {}
+      }
+    } catch (e) {
+      debugPrint('WindowsWindowUtils: 设置光标可见性失败: $e');
+    }
+  }
+
   /// 刷新窗口框架，使之前的样式变更（如 setResizable）立即生效。
   static Future<void> refreshWindowFrame() async {
     if (!DeviceUtils.isWindows) return;

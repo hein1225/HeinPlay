@@ -12,7 +12,11 @@ class DeviceUtils {
 
   static bool get isIOS => !kIsWeb && Platform.isIOS;
 
-  static bool get isMobile => isAndroid || isIOS;
+  /// 是否手机（触摸屏精简版界面）。
+  ///
+  /// Android TV 虽然底层是 Android，但 [isTv] 为 true，不应视为手机，
+  /// 否则直播播放页等会错误地走手机精简版布局。因此这里显式排除 TV。
+  static bool get isMobile => (isAndroid || isIOS) && !isTv;
 
   static bool get isWindows => !kIsWeb && Platform.isWindows;
 

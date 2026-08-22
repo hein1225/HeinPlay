@@ -1121,6 +1121,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  // 遥控器左右键快进/快退时显示手势标识，长按期间持续显示直至松手。
+  void _showKeySeekIndicator(bool forward) {
+    setState(() {
+      _isLongPressSeeking = true;
+      _gestureIndicatorVisible = true;
+      _gestureIndicatorText = forward ? '快进中' : '快退中';
+      _gestureIndicatorIcon = forward ? Icons.fast_forward : Icons.fast_rewind;
+    });
+  }
+
   // 长按连续快进/快退，支持加速
   void _startLongPressSeek(String direction) {
     _longPressSeekTimer?.cancel();
@@ -1169,8 +1179,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
           event.logicalKey == LogicalKeyboardKey.arrowRight) {
         _stopLongPressSeek();
+        _isLongPressSeeking = false;
         // 左右键释放后重新计时，确保操作结束后控制栏不会立刻消失
         if (_controlsVisible) _startControlsTimer();
+        // 释放后隐藏快进/快退手势标识。
+        if (_gestureIndicatorVisible) {
+          setState(() => _gestureIndicatorVisible = false);
+        }
       }
       return KeyEventResult.ignored;
     }
@@ -1223,6 +1238,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           if (!isFocusInControls) {
             _seekBy(Duration(seconds: -_seekStep));
             _startLongPressSeek('left');
+            _showKeySeekIndicator(false);
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -1231,6 +1247,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           if (!isFocusInControls) {
             _seekBy(Duration(seconds: _seekStep));
             _startLongPressSeek('right');
+            _showKeySeekIndicator(true);
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -1261,10 +1278,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       case LogicalKeyboardKey.arrowLeft:
         _seekBy(Duration(seconds: -_seekStep));
         _startLongPressSeek('left');
+        _showKeySeekIndicator(false);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowRight:
         _seekBy(Duration(seconds: _seekStep));
         _startLongPressSeek('right');
+        _showKeySeekIndicator(true);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
         _showControlsWithoutFocusShift();
@@ -2236,7 +2255,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _buildGestureOverlay(),
               // 控制栏覆盖层：完全不可见时从渲染树/焦点树中彻底移除。
               Visibility(
-                visible: _controlsVisible,
+                visible: _controlsVisible || _isLongPressSeeking,
                 maintainState: false,
                 maintainAnimation: false,
                 maintainSize: false,

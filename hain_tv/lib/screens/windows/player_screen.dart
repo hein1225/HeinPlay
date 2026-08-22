@@ -66,6 +66,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   BoxFit _videoFit = BoxFit.contain;
   double _playbackSpeed = 1.0;
 
+  // 快进/快退手势标识
+  bool _gestureIndicatorVisible = false;
+  String _gestureIndicatorText = '';
+  IconData _gestureIndicatorIcon = Icons.fast_forward;
+  Timer? _gestureIndicatorTimer;
+
   // Windows 小窗播放状态
   bool _isMiniPlayer = false;
   bool _togglingMiniPlayer = false;
@@ -73,6 +79,14 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   TitleBarStyle _previousTitleBarStyle = TitleBarStyle.normal;
   bool _isAlwaysOnTop = false;
   bool _wasFullScreenBeforeMini = false;
+
+  // Windows 全屏鼠标自动隐藏（仅全屏时启用）
+  /// 鼠标无操作自动隐藏定时器。
+  Timer? _mouseInactivityTimer;
+  /// 当前光标是否已隐藏。
+  bool _isCursorHidden = false;
+  /// 鼠标无操作多少秒后自动隐藏光标。
+  static const Duration _kMouseHideDelay = Duration(seconds: 5);
 
   /// window_manager 的 SetMaximumSize 不支持 Size.infinite（会传一个异常值给
   /// Windows MINMAXINFO，导致窗口最大尺寸被限制为 0 或极小值），因此用一个大尺寸
@@ -164,6 +178,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _initWakelock();
     _startClock();
     initWindowsFullscreen();
+    _resetMouseTimer();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
@@ -900,6 +915,50 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     }
   }
 
+  // 快进/快退时显示手势标识，1 秒后自动隐藏。
+  void _showGestureIndicator(String text, IconData icon) {
+    setState(() {
+      _gestureIndicatorVisible = true;
+      _gestureIndicatorText = text;
+      _gestureIndicatorIcon = icon;
+    });
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() => _gestureIndicatorVisible = false);
+      }
+    });
+  }
+
+  /// 快进/快退手势标识浮层（居中显示，样式与手机/TV 版一致）。
+  Widget _buildGestureIndicator() {
+    if (!_gestureIndicatorVisible) return const SizedBox.shrink();
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: AppColors.bgOverlay,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_gestureIndicatorIcon, color: AppColors.textPrimary, size: 32),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              _gestureIndicatorText,
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showSkipConfigDialog() {
     _showControls();
     _controlsTimer?.cancel();
@@ -1209,6 +1268,9 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 不再使用 Focus 控件（TV 遥控焦点环不适合桌面鼠标操作），直接通过
   /// HardwareKeyboard 全局监听，确保无论焦点在哪里都能响应播放控制。
   bool _handleHardwareKeyEvent(KeyEvent event) {
+    // 页面销毁后 handler 可能仍在收到按键（如 ESC 的 KeyUp 落在 pop 销毁窗口），
+    // 访问 defunct context 会抛异常导致闪退，先做 mounted 防护。
+    if (!mounted) return false;
     // 仅在当前页面位于栈顶时处理，避免影响其他页面/对话框。
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
@@ -1243,9 +1305,15 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         return true;
       case LogicalKeyboardKey.arrowLeft:
         _seekBy(Duration(seconds: -_seekStep));
+        // 快退时显示控制栏（含进度条）与手势标识。
+        _showControls();
+        _showGestureIndicator('快退', Icons.fast_rewind);
         return true;
       case LogicalKeyboardKey.arrowRight:
         _seekBy(Duration(seconds: _seekStep));
+        // 快进时显示控制栏（含进度条）与手势标识。
+        _showControls();
+        _showGestureIndicator('快进', Icons.fast_forward);
         return true;
       case LogicalKeyboardKey.arrowUp:
       case LogicalKeyboardKey.arrowDown:
@@ -1263,9 +1331,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         _toggleControls();
         return true;
       case LogicalKeyboardKey.escape:
-        // Windows：ESC 真实全屏时退出全屏，否则返回上一页。
-        handleWindowsEsc();
-        return true;
+        // Windows：ESC 统一交给全局 handler（app_windows._handleEscKey）执行
+        // maybePop，由本页 PopScope 决定：全屏先退出全屏、控制栏先隐藏、否则返回。
+        // HardwareKeyboard 会调用所有注册的 handler，若这里也处理 ESC 会与全局
+        // handler 同时触发异步窗口操作导致并发卡死/闪退，因此返回 false 不消费。
+        return false;
       default:
         return false;
     }
@@ -1583,9 +1653,14 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   @override
   void dispose() {
     disposeWindowsFullscreen();
+    _mouseInactivityTimer?.cancel();
+    _mouseInactivityTimer = null;
+    // 页面销毁时确保光标恢复可见，避免鼠标隐藏状态泄漏到其它页面。
+    WindowsWindowUtils.setCursorVisible(true);
     _restoreNormalWindowIfMini();
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _controlsTimer?.cancel();
+    _gestureIndicatorTimer?.cancel();
     _clockTimer?.cancel();
     _autoSwitchTimer?.cancel();
     for (final sub in _subscriptions) {
@@ -1595,7 +1670,31 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     // 立即保存播放记录到 LunaTV
     _savePlayRecordToLunaTV();
 
-    _backend?.dispose();
+    // 销毁播放器后端。
+    //
+    // 直播页的播放器挂在 LivePlayer widget 上，随 widget 树卸载时销毁，
+    // 此时 VideoPlayer 纹理已从渲染树移除，释放无竞态；点播页后端挂在
+    // State 上，若在 State.dispose 中立即销毁，VideoPlayer 纹理仍挂载于
+    // 正在卸载的子树，Windows FVP 释放纹理时易与渲染线程竞态导致闪退。
+    // 因此先立即暂停（停止渲染与声音），再延迟到 widget 树卸载完成后销毁。
+    final backend = _backend;
+    _backend = null;
+    if (backend != null) {
+      unawaited(
+        backend.pause().catchError((Object e) {
+          debugPrint('PlayerScreen 退出暂停播放器失败: $e');
+        }),
+      );
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 500), () async {
+          try {
+            await backend.dispose();
+          } catch (e) {
+            debugPrint('PlayerScreen 延迟销毁播放器失败: $e');
+          }
+        }),
+      );
+    }
 
     // 退出播放页后允许系统自动休眠/降亮度
     WakelockPlus.disable().catchError((e) {
@@ -1716,16 +1815,75 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     );
   }
 
+  /// 重置鼠标无操作定时器（仅 Windows 全屏时生效）。
+  ///
+  /// 每次鼠标移动都会触发本方法：取消旧的隐藏定时器，若光标已隐藏则先恢复
+  /// 显示，再重新启动 [._kMouseHideDelay] 后的自动隐藏。非全屏时仅确保光标
+  /// 可见并取消定时器，不启用自动隐藏。
+  void _resetMouseTimer() {
+    if (!DeviceUtils.isWindows) return;
+    _mouseInactivityTimer?.cancel();
+    _mouseInactivityTimer = null;
+    if (!isWindowsFullScreen) {
+      // 非全屏不启用自动隐藏，并确保光标恢复可见。
+      if (_isCursorHidden) {
+        WindowsWindowUtils.setCursorVisible(true);
+        _isCursorHidden = false;
+      }
+      return;
+    }
+    if (_isCursorHidden) {
+      _showCursor();
+    }
+    _mouseInactivityTimer = Timer(_kMouseHideDelay, _hideCursor);
+  }
+
+  /// 隐藏鼠标光标（仅 Windows 全屏时生效）。
+  void _hideCursor() {
+    if (!DeviceUtils.isWindows || !isWindowsFullScreen) return;
+    if (!mounted || _isCursorHidden) return;
+    WindowsWindowUtils.setCursorVisible(false);
+    _isCursorHidden = true;
+    debugPrint('PlayerScreen: 全屏鼠标无操作，已自动隐藏光标');
+  }
+
+  /// 显示鼠标光标。
+  void _showCursor() {
+    if (!DeviceUtils.isWindows || !mounted) return;
+    if (!_isCursorHidden) return;
+    WindowsWindowUtils.setCursorVisible(true);
+    _isCursorHidden = false;
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    super.onWindowEnterFullScreen();
+    // 进入全屏后启动鼠标无操作自动隐藏。
+    _resetMouseTimer();
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    super.onWindowLeaveFullScreen();
+    // 退出全屏后恢复光标显示并停用自动隐藏。
+    _resetMouseTimer();
+  }
+
   Widget _buildGestureOverlay() {
     if (DeviceUtils.isWindows && _isMiniPlayer) {
       return _buildMiniCentralGestureOverlay();
     }
     return Positioned.fill(
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: _onScreenPointerDown,
-        onPointerUp: _onScreenPointerUp,
+      child: MouseRegion(
+        // 鼠标移动时重置无操作定时器（Windows 全屏自动隐藏光标）。
+        onHover: (_) => _resetMouseTimer(),
+        onExit: (_) => _resetMouseTimer(),
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _onScreenPointerDown,
+          onPointerUp: _onScreenPointerUp,
         child: Container(color: Colors.transparent),
+      ),
       ),
     );
   }
@@ -2440,7 +2598,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       // - 全屏时先退出全屏；
       // - 控制栏显示时先隐藏控制栏；
       // - 两者都满足时优先退出全屏。
-      canPop: !isWindowsFullScreen && !_controlsVisible,
+      // 全屏切换过程中禁止 pop，避免销毁与窗口操作并发导致卡死。
+      canPop: !isWindowsFullScreen && !_controlsVisible && !isTogglingWindowsFullscreen,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (isWindowsFullScreen) {
@@ -2468,6 +2627,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
             _buildGestureOverlay(),
             // 顶层双击覆盖层：全屏/小窗/普通模式下双击均切换全屏状态。
             _buildDoubleTapOverlay(),
+            // 快进/快退手势标识浮层（居中显示）。
+            _buildGestureIndicator(),
             // 控制栏覆盖层：提到双击/手势层之上，确保控制栏按钮优先响应鼠标点击。
             // 点击控制栏背景区域仍会通过下层的 gesture overlay 隐藏控制栏。
             Visibility(

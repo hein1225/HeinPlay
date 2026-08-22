@@ -2,7 +2,7 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
 
-v1.3.0 正式引入「电视直播与节目回放」功能。我们希望在点播体验之外，把直播也做到好用、易用，而不是像 LunaTV 上那样只是“能用”——因此迟迟未上线直播。1.3.0 从源管理、EPG 节目单、频道切换、时移回放到 TV/手机/Windows 三端交互都进行了完整设计：支持 M3U/TXT 自定义直播源与 LunaTV 内置源、自动拉取并缓存 XMLTV 节目单、左右键/手势时移回放、返回键从回放切回直播等。v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内仅有 IPv6 公网、IPv4 受限的环境提供 IPv6 优先解析与自动回退 IPv4 能力，并统一复用 LunaTV API 的 HTTP 客户端，减少重复连接开销。
+v1.3.0 正式引入「电视直播与节目回放」功能。我们希望在点播体验之外，把直播也做到好用、易用，而不是像 LunaTV 上那样只是“能用”——因此迟迟未上线直播。1.3.0 从源管理、EPG 节目单、频道切换、时移回放到 TV/手机/Windows 三端交互都进行了完整设计：支持 M3U/TXT 自定义直播源与 LunaTV 内置源、自动拉取并缓存 XMLTV 节目单、左右键/手势时移回放、返回键从回放切回直播等。v1.3.1 在直播体验与稳定性上继续打磨：EPG 节目单按频道所在时区显示、直播源支持代理地址、Android 播放器网络栈切换 OkHttp，并重点修复了 Windows 退出播放卡死/闪退、手机长按快进积压、TV 版频道列表误显示手机布局等问题。v1.2.5 新增「互联网服务器地址优先解析 IPv6」开关，为国内仅有 IPv6 公网、IPv4 受限的环境提供 IPv6 优先解析与自动回退 IPv4 能力，并统一复用 LunaTV API 的 HTTP 客户端，减少重复连接开销。
 
 | TV / Windows 版界面预览 | 手机版界面预览 |
 | :--- | :--- |
@@ -125,14 +125,31 @@ v1.3.0 正式引入「电视直播与节目回放」功能。我们希望在点�
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
 | ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.3.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
-| `heinplay-1.3.0-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
-| `heinplay-1.3.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.3.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| `heinplay-1.3.1-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
+| `heinplay-1.3.1-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
+| `heinplay-1.3.1-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
+| `heinplay-1.3.1-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
 
 ## 更新日志
 
 <details open>
+<summary><strong>1.3.1</strong></summary>
+
+### 1.3.1
+
+- **Windows 退出播放卡死/闪退修复**：统一 ESC 返回处理，避免全局与页面双 handler 并发窗口操作；退出播放前先暂停渲染再延迟销毁播放器，规避 FVP 纹理释放与渲染线程竞态；全屏切换期间禁止退出，键盘 handler 增加 `mounted` 防护。
+- **EPG 节目单按频道时区显示**：解析 `tvg-country` 属性，节目时间与当前节目判断按频道所在国家/地区时区转换；EPG 时间统一 UTC 存储，旧缓存自动失效重新拉取。
+- **直播源代理支持**：手机 / TV / Windows 三端直播源管理新增代理地址配置，播放时通过 `x-heinplay-proxy-url` 请求头生效。
+- **Android 播放器网络栈切换 OkHttp**：Android 7.0+ 改用 OkHttpDataSource（超时与重定向优化），Android 5.x 保留原网络栈。
+- **Windows 全屏鼠标自动隐藏**：直播 / 点播全屏播放 5 秒无操作自动隐藏光标，移动鼠标立即恢复。
+- **Windows 直播频道列表返回键直接退出播放**：窗口模式下列表显示时按返回键 / ESC 直接退出播放。
+- **Android 手机长按快进/快退修复**：增加 seek 节流控制，松手后画面不再继续快进。
+- **TV 版界面显示修复**：Android TV 不再被误判为手机，恢复完整版频道列表与节目单布局。
+- **版本号统一**：全项目更新至 `1.3.1`（build `+19`），Release 产物命名同步为 `heinplay-1.3.1-tv.apk`、`heinplay-1.3.1-tvLegacy.apk`、`heinplay-1.3.1-mobile.apk`、`heinplay-1.3.1-windows-portable.zip`。
+
+</details>
+
+<details>
 <summary><strong>1.3.0</strong></summary>
 
 ### 1.3.0

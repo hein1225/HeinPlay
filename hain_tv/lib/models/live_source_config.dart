@@ -7,6 +7,7 @@ class LiveSourceConfig {
   final String url;
   final String? epgUrl;
   final String? sourceKey;
+  final String? proxyUrl;
   final bool isLocal;
   final bool isBuiltin;
   final bool enabled;
@@ -19,6 +20,7 @@ class LiveSourceConfig {
     required this.url,
     this.epgUrl,
     this.sourceKey,
+    this.proxyUrl,
     this.isLocal = false,
     this.isBuiltin = false,
     this.enabled = true,
@@ -33,6 +35,7 @@ class LiveSourceConfig {
       url: json['url']?.toString() ?? '',
       epgUrl: json['epgUrl']?.toString(),
       sourceKey: json['sourceKey']?.toString(),
+      proxyUrl: json['proxyUrl']?.toString(),
       isLocal: json['isLocal'] == true,
       isBuiltin: json['isBuiltin'] == true,
       enabled: json['enabled'] != false,
@@ -48,6 +51,7 @@ class LiveSourceConfig {
       'url': url,
       'epgUrl': epgUrl,
       'sourceKey': sourceKey,
+      'proxyUrl': proxyUrl,
       'isLocal': isLocal,
       'isBuiltin': isBuiltin,
       'enabled': enabled,
@@ -62,6 +66,7 @@ class LiveSourceConfig {
     String? url,
     String? epgUrl,
     String? sourceKey,
+    String? proxyUrl,
     bool? isLocal,
     bool? isBuiltin,
     bool? enabled,
@@ -74,6 +79,7 @@ class LiveSourceConfig {
       url: url ?? this.url,
       epgUrl: epgUrl ?? this.epgUrl,
       sourceKey: sourceKey ?? this.sourceKey,
+      proxyUrl: proxyUrl ?? this.proxyUrl,
       isLocal: isLocal ?? this.isLocal,
       isBuiltin: isBuiltin ?? this.isBuiltin,
       enabled: enabled ?? this.enabled,

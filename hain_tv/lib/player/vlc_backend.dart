@@ -9,6 +9,7 @@ import '../services/user_data_service.dart';
 import '../utils/windows_logger.dart';
 import 'buffer_profile_config.dart';
 import 'video_player_backend.dart';
+import 'video_player_backend_impl.dart' show stripInternalRequestHeaders;
 
 const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -118,7 +119,7 @@ class VlcBackend implements VideoPlayerBackend {
       'Accept': '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       ..._refererFor(finalUrl),
-      ...?headers,
+      ...?stripInternalRequestHeaders(headers),
     };
 
     // 直播流使用较低缓存以减少延迟，点播使用默认缓存。

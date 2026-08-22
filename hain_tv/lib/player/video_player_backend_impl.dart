@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../services/ad_filter_service.dart';
 import '../services/user_data_service.dart';
+import '../utils/windows_logger.dart';
 import 'buffer_profile_config.dart';
 import 'video_player_backend.dart';
 
@@ -33,6 +34,26 @@ bool _isLocalProxyUrl(String url) {
   } catch (_) {
     return false;
   }
+}
+
+/// 过滤播放请求头中的内部传输键（x-heinplay- 前缀）。
+///
+/// 仅 ExoPlayer 后端（Android 的 video_player_android）会由原生插件剥离
+/// x-heinplay-proxy-url 并解析为 OkHttp 代理，因此该平台需保留；
+/// 其余平台或后端（fvp/libmdk、vlc）不解析该键，丢弃避免泄漏到上游请求。
+Map<String, String>? stripInternalRequestHeaders(
+  Map<String, String>? headers, {
+  bool force = false,
+}) {
+  if (headers == null) return null;
+  if (!force && Platform.isAndroid) return headers;
+  final filtered = <String, String>{};
+  for (final entry in headers.entries) {
+    if (!entry.key.toLowerCase().startsWith('x-heinplay-')) {
+      filtered[entry.key] = entry.value;
+    }
+  }
+  return filtered;
 }
 
 class VideoPlayerBackendImpl implements VideoPlayerBackend {
@@ -153,7 +174,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
           : '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       if (!isLive) ..._refererFor(url),
-      ...?headers,
+      ...?stripInternalRequestHeaders(headers),
     };
 
     // 直播流补充 Referer / Origin，与 LunaTV 代理使用的请求头保持一致，
@@ -327,17 +348,39 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
 
   @override
   Future<void> dispose() async {
+    WindowsLogger.log('VideoPlayerBackendImpl', 'dispose 开始');
     _timer?.cancel();
     _timer = null;
     _completedReported = false;
-    _controller?.removeListener(_onControllerValueChanged);
+    final controller = _controller;
+    _controller = null;
+    if (controller == null) return;
+    controller.removeListener(_onControllerValueChanged);
     try {
-      await _controller?.dispose();
+      // Windows FVP/libmdk 在纹理仍处于高频渲染状态时销毁原生播放器，
+      // 释放纹理/停止渲染线程会等待渲染协同一方，直播流（持续推帧）或
+      // 点播刚退出全屏（窗口 surface 刚重建）时极易死锁导致退出卡死。
+      // 先暂停停止渲染，让渲染线程空闲后再销毁，规避该竞态。
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: pause 前');
+      await controller.pause().timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: pause 后');
+    } catch (e) {
+      // 初始化失败/已销毁时 pause 可能抛异常，忽略即可。
+      debugPrint('VideoPlayerBackendImpl dispose 暂停忽略异常: $e');
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: pause 异常 $e');
+    }
+    try {
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: dispose 前');
+      await controller.dispose();
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: 完成');
     } catch (e) {
       // 初始化失败时底层 playerId 可能不存在，dispose 会抛 IllegalStateException，
       // 忽略该异常避免影响下一次播放。
       debugPrint('VideoPlayerBackendImpl dispose 忽略异常: $e');
+      WindowsLogger.log('VideoPlayerBackendImpl', 'dispose: 异常 $e');
     }
-    _controller = null;
   }
 }

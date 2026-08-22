@@ -97,6 +97,8 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   Timer? _gestureIndicatorTimer;
   bool _isLongPressSeeking = false;
   String _longPressDirection = 'right';
+  /// 长按持续快退/快进时的目标位置（本地累加，保证画面实时平滑）。
+  Duration _continuousSeekTarget = Duration.zero;
   double _currentBrightness = 0.5;
   double _currentVolume = 0.5;
   double _gestureStartBrightness = 0.5;
@@ -1134,8 +1136,12 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     final isRight = details.globalPosition.dx >= width / 2;
     _isLongPressSeeking = true;
     _longPressDirection = isRight ? 'right' : 'left';
+    // 长按快进快退期间显示控制栏（含进度条），并保持可见。
+    _showControls();
+    // 以长按开始时的播放位置为基准，持续累加定位，保证画面实时平滑。
+    _continuousSeekTarget = _position;
     _showGestureIndicator(
-      isRight ? '0.5X 快进中' : '0.5X 快退中',
+      isRight ? '0.25X 快进中' : '0.25X 快退中',
       isRight ? Icons.fast_forward : Icons.fast_rewind,
     );
     _startHalfSpeedSeek();
@@ -1155,10 +1161,10 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     ) {
       if (!_isLongPressSeeking || _backend == null) return;
       final step = _longPressDirection == 'right'
-          ? _seekStep ~/ 2
-          : -(_seekStep ~/ 2);
-      final target = _position + Duration(seconds: step);
-      _backend?.seek(_clampDuration(target));
+          ? _seekStep ~/ 4
+          : -(_seekStep ~/ 4);
+      _continuousSeekTarget += Duration(seconds: step);
+      _backend?.seek(_clampDuration(_continuousSeekTarget));
     });
   }
 
@@ -2033,7 +2039,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
             _buildGestureOverlay(),
             // 控制栏覆盖层：完全不可见时从渲染树/焦点树中彻底移除。
             Visibility(
-              visible: _controlsVisible,
+              visible: _controlsVisible || _isLongPressSeeking,
               maintainState: false,
               maintainAnimation: false,
               maintainSize: false,

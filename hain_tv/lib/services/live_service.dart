@@ -598,6 +598,7 @@ class LiveService {
     String? pendingLogo;
     String? pendingTvgId;
     String? pendingGroup;
+    String? pendingCountry;
     String? pendingProgram;
     String? pendingCatchup;
     String? pendingCatchupSource;
@@ -617,6 +618,7 @@ class LiveService {
             logo: pendingLogo,
             tvgId: pendingTvgId,
             group: pendingGroup,
+            country: pendingCountry,
             program: pendingProgram,
             catchup: pendingCatchup ?? defaultCatchup,
             catchupSource: pendingCatchupSource ?? defaultCatchupSource,
@@ -628,6 +630,7 @@ class LiveService {
       pendingLogo = null;
       pendingTvgId = null;
       pendingGroup = null;
+      pendingCountry = null;
       pendingProgram = null;
       pendingCatchup = null;
       pendingCatchupSource = null;
@@ -662,6 +665,7 @@ class LiveService {
         final group = attrs['group-title'] ?? attrs['group_title'];
         final tvgId = attrs['tvg-id'] ?? attrs['tvg_id'];
         final logo = attrs['tvg-logo'] ?? attrs['tvg_logo'];
+        final country = attrs['tvg-country'] ?? attrs['tvg_country'];
         final program = attrs['program'] ?? attrs['epg'];
         final catchup = attrs['catchup'];
         final catchupSource = attrs['catchup-source'] ?? attrs['catchup_source'];
@@ -679,6 +683,7 @@ class LiveService {
         pendingTvgId = tvgId;
         pendingLogo = logo;
         pendingGroup = group;
+        pendingCountry = country;
         pendingProgram = program;
         pendingCatchup = catchup;
         pendingCatchupSource = catchupSource;
@@ -836,7 +841,10 @@ class LiveService {
   /// 支持多个 EPG 地址（逗号/空格分隔），逐个尝试直到成功。
   /// 匹配规则：先按 [LiveChannel.tvgId] 与 XMLTV channel id 匹配，
   /// 未命中时再用 [LiveChannel.name] 与 channel display-name 模糊匹配。
-  static Future<void> fetchEpg(
+  ///
+  /// 返回是否成功完成解析；失败时不修改频道（保留已有节目单），
+  /// 由调用方决定是否重新拉取。
+  static Future<bool> fetchEpg(
     List<LiveChannel> channels, {
     String? epgUrl,
   }) async {
@@ -848,7 +856,7 @@ class LiveService {
       urls.addAll(_splitEpgUrls(fallback));
     }
     urls = urls.where((u) => u.isNotEmpty).toList();
-    if (urls.isEmpty || channels.isEmpty) return;
+    if (urls.isEmpty || channels.isEmpty) return false;
 
     for (final url in urls) {
       try {
@@ -870,12 +878,38 @@ class LiveService {
           continue;
         }
         final content = utf8.decode(response.bodyBytes, allowMalformed: true);
-        _applyEpgToChannels(channels, content);
-        return;
+        return _applyEpgToChannels(channels, content);
       } catch (e) {
         print('EPG 拉取失败: $e');
       }
     }
+    return false;
+  }
+
+  /// 节目单刷新周期：固定不可调，节目单每天内容都会变化，需定期重新拉取。
+  static const Duration _epgRefreshTtl = Duration(hours: 12);
+
+  /// 节目单缓存时间戳缓存 key。
+  static String _epgTimestampKey(LiveSourceConfig source) {
+    return '${_getChannelsCacheKey(source)}_epg_ts';
+  }
+
+  /// 记录一次 EPG 成功拉取的时间（固定 [Duration.hours: 12] 后自动过期）。
+  static Future<void> markEpgCached(LiveSourceConfig source) async {
+    await CacheService().set(
+      _epgTimestampKey(source),
+      DateTime.now().millisecondsSinceEpoch,
+      _epgRefreshTtl,
+    );
+  }
+
+  /// 节目单缓存是否仍在刷新周期内（未过期则复用缓存，不重复拉取 EPG）。
+  static Future<bool> isEpgCacheFresh(LiveSourceConfig source) async {
+    final ts = await CacheService().get<int>(
+      _epgTimestampKey(source),
+      (data) => data as int,
+    );
+    return ts != null;
   }
 
   static List<String> _splitEpgUrls(String value) {
@@ -891,17 +925,10 @@ class LiveService {
   /// 适用于缓存命中场景：频道列表和节目单从缓存恢复后，按当前时间重新匹配
   /// [LiveChannel.currentProgram] 与 [LiveChannel.program]。
   static void refreshCurrentPrograms(List<LiveChannel> channels) {
-    final now = DateTime.now();
     var refreshedCount = 0;
     for (final channel in channels) {
       if (channel.programs.isEmpty) continue;
-      EpgProgram? current;
-      for (final program in channel.programs) {
-        if (program.start.isBefore(now) && program.stop.isAfter(now)) {
-          current = program;
-          break;
-        }
-      }
+      final current = channel.findCurrentProgram();
       if (current != null) {
         channel.currentProgram = current;
         channel.program = current.title;
@@ -912,13 +939,16 @@ class LiveService {
   }
 
   /// 解析 XMLTV 内容并回填当前节目信息。
-  static void _applyEpgToChannels(List<LiveChannel> channels, String xml) {
+  ///
+  /// 返回是否成功完成解析。解析失败（如 XML 格式错误）时不修改任何频道，
+  /// 保留已有节目单，避免影响正常显示；单个频道匹配异常也不影响其他频道。
+  static bool _applyEpgToChannels(List<LiveChannel> channels, String xml) {
     try {
       final document = XmlDocument.parse(xml);
       final root = document.rootElement;
       if (root.name.local != 'tv') {
         print('EPG 根节点不是 <tv>');
-        return;
+        return false;
       }
 
       // channel id -> display-name 映射
@@ -940,7 +970,6 @@ class LiveService {
       }
       print('EPG 频道数: ${channelNames.length}');
 
-      final now = DateTime.now();
       final programsByChannel = <String, List<EpgProgram>>{};
 
       for (final progNode in root.findElements('programme')) {
@@ -972,33 +1001,33 @@ class LiveService {
 
       var matchedCount = 0;
       for (final channel in channels) {
-        final matchedId = _matchEpgChannelId(
-          channel,
-          programsByChannel,
-          channelNames,
-          displayNameToId,
-        );
-        if (matchedId == null) continue;
-        final programs = programsByChannel[matchedId]!;
-        EpgProgram? current;
-        for (final program in programs) {
-          if (program.start.isBefore(now) && program.stop.isAfter(now)) {
-            current = program;
-            break;
-          }
-        }
-        if (programs.isNotEmpty) {
+        // 单个频道匹配失败不影响其他频道，避免一次异常中断整个解析。
+        try {
+          final matchedId = _matchEpgChannelId(
+            channel,
+            programsByChannel,
+            channelNames,
+            displayNameToId,
+          );
+          if (matchedId == null) continue;
+          final programs = programsByChannel[matchedId];
+          if (programs == null || programs.isEmpty) continue;
           channel.programs = programs;
+          final current = channel.findCurrentProgram();
+          if (current != null) {
+            channel.currentProgram = current;
+            channel.program = current.title;
+            matchedCount++;
+          }
+        } catch (_) {
+          // 忽略单个频道异常，继续处理下一个频道。
         }
-        if (current != null) {
-          channel.currentProgram = current;
-          channel.program = current.title;
-          matchedCount++;
-        }
-    }
-    print('EPG 匹配成功频道数: $matchedCount / ${channels.length}');
+      }
+      print('EPG 匹配成功频道数: $matchedCount / ${channels.length}');
+      return true;
     } catch (e) {
       print('EPG 解析失败: $e');
+      return false;
     }
   }
 
@@ -1032,7 +1061,10 @@ class LiveService {
     final normalizedName = _normalizeName(name);
     if (normalizedName.isNotEmpty) {
       if (displayNameToId.containsKey(normalizedName)) {
-        return displayNameToId[normalizedName];
+        final id = displayNameToId[normalizedName];
+        // display-name 对应的频道可能没有任何 programme，需确认后再返回，
+        // 避免上层对不存在的频道取节目单时抛空指针导致整个 EPG 解析中断。
+        if (id != null && programsByChannel.containsKey(id)) return id;
       }
       for (final entry in channelNames.entries) {
         if (_normalizeName(entry.key) == normalizedName ||
@@ -1098,7 +1130,8 @@ class LiveService {
           } else {
             dt = dt.subtract(Duration(minutes: offsetMinutes));
           }
-          return dt.toLocal();
+          // 统一保存为 UTC 时刻，后续按频道国家时区转换显示。
+          return dt;
         } catch (_) {
           return null;
         }
@@ -1107,7 +1140,7 @@ class LiveService {
 
     // 尝试 ISO 8601 风格
     final iso = DateTime.tryParse(value);
-    if (iso != null) return iso.toLocal();
+    if (iso != null) return iso.toUtc();
 
     return null;
   }

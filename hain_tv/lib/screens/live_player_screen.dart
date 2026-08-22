@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import '../platform/windows_window_utils.dart';
 import '../services/ad_filter_engine.dart';
 import '../services/live_service.dart';
 import '../theme.dart';
+import '../utils/windows_logger.dart';
 import '../widgets/live/live_player.dart';
 
 /// 全屏直播播放页。
@@ -78,6 +80,22 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   Duration _replayOffset = Duration.zero;
   bool _isReplayPaused = false;
   bool _isReplaySeeking = false;
+  /// 当前已加载回放流对应的起始偏移（用于计算流内实时定位）。
+  Duration _replayBaseOffset = Duration.zero;
+  /// 回放按住快进/快退定时器。
+  Timer? _replayHoldTimer;
+  /// 回放按住是否为快进。
+  bool _replayHoldForward = false;
+  /// 回放快进/快退手势标识是否显示。
+  bool _replayGestureVisible = false;
+  /// 回放手势标识是否为快进。
+  bool _replayGestureForward = false;
+  /// 回放手势标识类型：'seek' 快进/快退，'pause' 暂停/播放。
+  String _replayGestureKind = 'seek';
+  /// 回放手势标识自动隐藏定时器。
+  Timer? _replayGestureTimer;
+  /// 直播播放器控制器（用于回放流内实时定位画面）。
+  final LivePlayerController _livePlayerController = LivePlayerController();
 
   // TV 版确认键长按检测
   DateTime? _selectKeyDownAt;
@@ -106,6 +124,17 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   bool _wasFullScreenBeforeMini = false;
   bool _togglingMiniPlayer = false;
 
+  /// 是否正在执行 Windows 退出播放流程（暂停渲染后延迟 pop），防止重复触发。
+  bool _exitingWindowsPlayback = false;
+
+  // Windows 全屏鼠标自动隐藏（仅全屏时启用）
+  /// 鼠标无操作自动隐藏定时器。
+  Timer? _mouseInactivityTimer;
+  /// 当前光标是否已隐藏。
+  bool _isCursorHidden = false;
+  /// 鼠标无操作多少秒后自动隐藏光标。
+  static const Duration _kMouseHideDelay = Duration(seconds: 5);
+
   static const Size _kUnboundedSize = Size(100000, 100000);
   static const Size _kNormalMinSize = Size(900, 600);
   static const Size _kMiniMinSize = Size(320, 180);
@@ -114,6 +143,32 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   static const double _kChannelItemHeight = 102;
   static const double _kEpgBannerWidth = 56.0;
   static const double _kEpgListWidth = 340.0;
+
+  // 手机版紧凑布局参数
+  static const double _kMobileChannelListMargin = 8.0;
+  static const double _kMobileCategoryColumnWidth = 72.0;
+  static const double _kMobileChannelItemHeight = 64.0;
+  static const double _kMobileEpgBannerWidth = 36.0;
+
+  double get _channelItemHeight =>
+      DeviceUtils.isMobile ? _kMobileChannelItemHeight : _kChannelItemHeight;
+
+  double get _categoryColumnWidth => DeviceUtils.isMobile
+      ? _kMobileCategoryColumnWidth
+      : _kCategoryColumnWidth;
+
+  double get _epgBannerWidth =>
+      DeviceUtils.isMobile ? _kMobileEpgBannerWidth : _kEpgBannerWidth;
+
+  double _channelListWidth(BuildContext context) {
+    if (DeviceUtils.isMobile) {
+      return MediaQuery.sizeOf(context).width - _kMobileChannelListMargin * 2;
+    }
+    final showEpgBanner = !DeviceUtils.isTv || DeviceUtils.isWindows;
+    return _kChannelListWidth +
+        (showEpgBanner ? _kEpgBannerWidth : 0.0) +
+        (showEpgBanner && _showEpgList ? _kEpgListWidth : 0.0);
+  }
 
   @override
   void initState() {
@@ -126,6 +181,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (DeviceUtils.isWindows) {
       initWindowsFullscreen();
       _initWindowsWindowState();
+      _resetMouseTimer();
     }
     if (DeviceUtils.isMobile) {
       _enterFullscreenLandscape();
@@ -238,19 +294,26 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Future<void> _loadEpgForChannels(List<LiveChannel> channels) async {
-    // 若缓存已包含节目单，则按当前时间刷新当前节目信息即可，
+    // 节目单刷新周期固定（12 小时），节目单每天内容都会变化需定期更新。
+    // 缓存内节目单仍在刷新周期内时复用，并按当前时间刷新当前节目信息，
     // 避免重复拉取 EPG，减少网络请求与积分消耗。
     final hasCachedPrograms = channels.any((c) => c.programs.isNotEmpty);
-    if (hasCachedPrograms) {
+    if (hasCachedPrograms && await LiveService.isEpgCacheFresh(widget.source)) {
       LiveService.refreshCurrentPrograms(channels);
       if (mounted) setState(() {});
       return;
     }
 
-    await LiveService.fetchEpg(channels, epgUrl: widget.source.epgUrl);
-    // EPG 拉取成功后，把包含节目单的完整频道数据写回缓存，
+    // 拉取最新 EPG；解析失败时不修改频道（保留已有节目单），不影响正常显示。
+    final ok = await LiveService.fetchEpg(channels, epgUrl: widget.source.epgUrl);
+    // EPG 拉取后，把包含节目单的完整频道数据写回缓存，
     // 下次进入直播页即可直接恢复节目单，无需再次请求。
     await LiveService.cacheChannels(widget.source, channels);
+    // 仅当本次成功解析后才刷新节目单时间戳；失败时不进入"新鲜"状态，
+    // 下次进入仍会重新尝试拉取。
+    if (ok) {
+      await LiveService.markEpgCached(widget.source);
+    }
     if (mounted) setState(() {});
   }
 
@@ -294,8 +357,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     // EPG 数据中的 start/stop 为本地时间，直接用于回放模板，避免时区转换导致时间偏差。
     final start = program.start;
     final stop = program.stop;
-    // 用户快进/快退后，实际回放起始点应随偏移量变化。
-    final playAt = start.add(_replayOffset);
+    // 回放流起点固定为当前已加载流的起始偏移，避免快进快退时每次重建播放器；
+    // 用户当前播放位置由 _replayOffset 表示，流内定位走 seek 而非重建。
+    final playAt = start.add(_replayBaseOffset);
 
     // 中国 IPTV 源普遍使用北京时间（UTC+8）作为回放参数，
     // 强制使用该时区格式化，避免 OpenClash 代理或设备时区不一致导致时间偏差。
@@ -433,7 +497,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (indices.isEmpty) return;
     var pos = 0;
     if (_channelListScrollController.hasClients) {
-      pos = (_channelListScrollController.offset / _kChannelItemHeight).floor();
+      pos = (_channelListScrollController.offset / _channelItemHeight).floor();
     }
     pos = pos.clamp(0, indices.length - 1);
     setState(() => _selectedChannelIndexInGroup = pos);
@@ -458,11 +522,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   void _scrollToChannelInGroup() {
     if (!_channelListScrollController.hasClients) return;
-    final targetOffset = _selectedChannelIndexInGroup * _kChannelItemHeight;
+    final targetOffset = _selectedChannelIndexInGroup * _channelItemHeight;
     final viewport = _channelListScrollController.position.viewportDimension;
     final currentOffset = _channelListScrollController.offset;
     if (targetOffset < currentOffset ||
-        targetOffset + _kChannelItemHeight > currentOffset + viewport) {
+        targetOffset + _channelItemHeight > currentOffset + viewport) {
       _channelListScrollController.animateTo(
         targetOffset.clamp(0.0, _channelListScrollController.position.maxScrollExtent),
         duration: const Duration(milliseconds: 200),
@@ -694,7 +758,29 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
   }
 
+  /// Windows 退出播放：先暂停直播渲染（停止 mdk 推帧），再延迟执行 pop。
+  ///
+  /// 直播流渲染期间直接 pop，route 动画/页面销毁会与 mdk 渲染线程竞争
+  /// 纹理与窗口资源，偶发死锁导致软件卡死闪退（日志表现为 pop 前页面未销毁）。
+  /// 先暂停停止推帧，等渲染线程空闲后再 pop 可规避该竞态。
+  void _exitWindowsPlayback() {
+    if (!DeviceUtils.isWindows || _exitingWindowsPlayback) return;
+    _exitingWindowsPlayback = true;
+    WindowsLogger.log('LivePlayerScreen', 'Windows 退出播放：暂停渲染后 pop');
+    unawaited(_livePlayerController.pause());
+    Future<void>.delayed(const Duration(milliseconds: 150), () {
+      if (mounted) {
+        // 直接 pop 绕过 canPop（Windows 下 canPop 恒 false），
+        // 避免再次进入 onPopInvoked 导致死循环。
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
   bool _handleHardwareKeyEvent(KeyEvent event) {
+    // 页面销毁后 handler 可能仍在收到按键（如 ESC 的 KeyUp 落在 pop 销毁窗口），
+    // 访问 defunct context 会抛异常导致闪退，先做 mounted 防护。
+    if (!mounted) return false;
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
 
@@ -782,7 +868,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         }
         if (_showChannelList) {
           if (DeviceUtils.isWindows) {
-            _hideChannelListAndControls();
+            // Windows：频道列表显示时返回键直接退出播放（返回直播管理页），
+            // 返回 false 交给全局 handler（app_windows._handleEscKey）执行 pop。
+            return false;
           } else {
             _toggleChannelList();
           }
@@ -793,8 +881,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           return true;
         }
         if (DeviceUtils.isWindows) {
-          handleWindowsEsc();
-          return true;
+          // Windows：ESC 统一交给全局 handler（app_windows._handleEscKey）执行
+          // maybePop，由本页 PopScope 决定：全屏先退出全屏、否则返回直播管理页。
+          // HardwareKeyboard 会调用所有注册的 handler，若这里也处理 ESC 会与全局
+          // handler 同时触发异步窗口操作导致并发卡死/闪退，因此返回 false 不消费。
+          return false;
         }
         // 非 Windows 平台返回 false，让 PopScope/系统返回键处理退出播放。
         return false;
@@ -876,6 +967,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
     final nextPaused = !_isReplayPaused;
     setState(() => _isReplayPaused = nextPaused);
+    // 与点播模式一致：双击暂停/播放时显示手势标识反馈。
+    _showReplayPauseIndicator(!nextPaused);
     _showChannelInfoBriefly();
   }
 
@@ -930,7 +1023,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     debugPrint(
       '回放检查: 频道=${channel.name}, catchup=${channel.catchup}, '
       'catchupSource=${channel.catchupSource}, catchupDays=${channel.catchupDays}, '
-      'program.stop=${program.stop}, now=${DateTime.now()}',
+      'program.stop=${program.stop}, channelNow=${channel.channelNow}',
     );
     final canReplay = _canReplay(channel, program);
     if (!canReplay) {
@@ -952,6 +1045,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _isReplayMode = true;
       _currentReplayProgram = program;
       _replayOffset = Duration.zero;
+      _replayBaseOffset = Duration.zero;
       _isReplayPaused = false;
       _isReplaySeeking = false;
       _showEpgList = false;
@@ -963,10 +1057,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 退出回放模式，返回当前频道直播。
   void _exitReplayMode() {
+    _replayHoldTimer?.cancel();
+    _replayHoldTimer = null;
     setState(() {
       _isReplayMode = false;
       _currentReplayProgram = null;
       _replayOffset = Duration.zero;
+      _replayBaseOffset = Duration.zero;
       _isReplayPaused = false;
       _isReplaySeeking = false;
     });
@@ -977,17 +1074,133 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   ///
   /// 直接更新回放起始位置并继续播放，无需再按确认键。
   void _seekReplay(Duration delta) {
-    if (!_isReplayMode || _currentReplayProgram == null) return;
-    final maxOffset = DateTime.now().difference(_currentReplayProgram!.start);
+    if (!_isReplayMode || _currentReplayProgram == null || _currentChannel == null) return;
+    final maxOffset = _currentChannel!.channelNow
+        .difference(_currentChannel!.toChannelTimezone(_currentReplayProgram!.start));
     var newOffset = _replayOffset + delta;
     if (newOffset < Duration.zero) newOffset = Duration.zero;
     if (newOffset > maxOffset) newOffset = maxOffset;
     setState(() {
       _replayOffset = newOffset;
+      // 重建回放流后，流起点即新偏移。
+      _replayBaseOffset = newOffset;
       _isReplaySeeking = false;
       _isReplayPaused = false;
     });
+    _showReplayGestureIndicator(delta >= Duration.zero);
     _showChannelInfoBriefly();
+  }
+
+  /// 显示回放快进/快退手势标识。
+  ///
+  /// [persistent] 为 true 时（手机版长按）持续显示直至手动隐藏；
+  /// 为 false 时（TV/Windows 按键）1 秒后自动隐藏。
+  void _showReplayGestureIndicator(bool forward, {bool persistent = false}) {
+    _replayGestureTimer?.cancel();
+    setState(() {
+      _replayGestureVisible = true;
+      _replayGestureKind = 'seek';
+      _replayGestureForward = forward;
+    });
+    if (!persistent) {
+      _replayGestureTimer = Timer(const Duration(seconds: 1), () {
+        if (mounted) {
+          setState(() => _replayGestureVisible = false);
+        }
+      });
+    }
+  }
+
+  /// 显示回放暂停/播放手势标识（样式与点播模式一致），1 秒后自动隐藏。
+  ///
+  /// [playing] 为 true 表示切换后处于播放状态，显示"播放"；否则显示"暂停"。
+  void _showReplayPauseIndicator(bool playing) {
+    _replayGestureTimer?.cancel();
+    setState(() {
+      _replayGestureVisible = true;
+      _replayGestureKind = 'pause';
+      _replayGestureForward = playing;
+    });
+    _replayGestureTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() => _replayGestureVisible = false);
+      }
+    });
+  }
+
+  /// 隐藏回放快进/快退手势标识（手机版长按结束时调用）。
+  void _hideReplayGestureIndicator() {
+    _replayGestureTimer?.cancel();
+    _replayGestureTimer = null;
+    if (_replayGestureVisible && mounted) {
+      setState(() => _replayGestureVisible = false);
+    }
+  }
+
+  /// 手机端回放模式：按住屏幕左侧半屏持续快退，右侧半屏持续快进。
+  void _startReplayHoldSeek(bool forward) {
+    if (!_isReplayMode || _currentReplayProgram == null || _currentChannel == null) return;
+    _replayHoldForward = forward;
+    _replayHoldTimer?.cancel();
+    _replayHoldTimer = null;
+    // 快进快退期间保持信息卡（含进度条）一直显示，取消自动隐藏。
+    _channelInfoTimer?.cancel();
+    _channelInfoTimer = null;
+    setState(() {
+      _showChannelInfo = true;
+      _isReplaySeeking = true;
+      // 与点播模式一致：长按期间保持播放状态，通过持续 seek 定位画面实现快进快退，
+      // 不暂停播放，避免"暂停 + 连续 seek"导致底层播放器状态异常卡死、松手无法恢复。
+    });
+    // 先标记正在快进快退，再执行首次定位，避免被 _replayHoldTick 的防御检查拦截。
+    _replayHoldTick();
+    _replayHoldTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _replayHoldTick(),
+    );
+    // 长按期间持续显示快进/快退手势标识。
+    _showReplayGestureIndicator(forward, persistent: true);
+  }
+
+  void _replayHoldTick() {
+    // 防御检查：松手/退出回放后即使定时器有残余触发也直接忽略，避免继续快进快退。
+    if (!_isReplaySeeking || !_isReplayMode) return;
+    if (_currentReplayProgram == null || _currentChannel == null) return;
+    final maxOffset = _currentChannel!.channelNow
+        .difference(_currentChannel!.toChannelTimezone(_currentReplayProgram!.start));
+    var newOffset =
+        _replayOffset + Duration(seconds: _replayHoldForward ? 5 : -5);
+    if (newOffset < Duration.zero) newOffset = Duration.zero;
+    if (newOffset > maxOffset) newOffset = maxOffset;
+    setState(() {
+      _replayOffset = newOffset;
+      // 与 TV/Windows 版按键逻辑一致：重建回放流，流起点即新偏移。
+      // 部分播放器后端（如 fvp/libmdk）对 catchup 流的相对 seek 无效，
+      // 会导致画面持续快进无法定位，因此手机版长按同样采用重建流方式。
+      _replayBaseOffset = newOffset;
+    });
+    // 长按期间持续显示快进/快退手势标识（每次 tick 重置，保持常显）。
+    _showReplayGestureIndicator(_replayHoldForward, persistent: true);
+  }
+
+  void _stopReplayHoldSeek() {
+    // 无论回放模式状态如何都先取消定时器，确保松手后快进快退停止。
+    final wasSeeking = _isReplaySeeking || _replayHoldTimer != null;
+    _replayHoldTimer?.cancel();
+    _replayHoldTimer = null;
+    if (!_isReplayMode || !wasSeeking) return;
+    setState(() {
+      _isReplaySeeking = false;
+      // 长按期间保持播放状态，松手后无需恢复播放，直接继续自动播放。
+    });
+    // 松手结束长按，隐藏手势标识，并重新启动信息卡自动隐藏。
+    _hideReplayGestureIndicator();
+    _channelInfoTimer?.cancel();
+    _channelInfoTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && !_isReplaySeeking) {
+        setState(() => _showChannelInfo = false);
+      }
+    });
   }
 
   /// 判断指定节目是否可回放。
@@ -996,7 +1209,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         (channel.catchupSource != null && channel.catchupSource!.isNotEmpty) ||
             (channel.catchup != null && channel.catchup!.isNotEmpty);
     if (!hasCatchup) return false;
-    return program.stop.isBefore(DateTime.now());
+    return channel.isProgramPast(program);
   }
 
   /// 获取频道按时间排序的节目单（当前节目优先，往期倒序）。
@@ -1013,11 +1226,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _openEpgListForChannel(LiveChannel? channel) {
     if (channel == null || channel.programs.isEmpty) return;
     final programs = _epgProgramsFor(channel);
-    // 默认选中当前正在播放的节目。
-    final now = DateTime.now();
+    // 默认选中频道所在时区当前正在播放的节目。
+    final now = channel.channelNow;
     var initialIndex = 0;
     for (var i = 0; i < programs.length; i++) {
-      if (programs[i].start.isBefore(now) && programs[i].stop.isAfter(now)) {
+      final start = channel.toChannelTimezone(programs[i].start);
+      final stop = channel.toChannelTimezone(programs[i].stop);
+      if (start.isBefore(now) && stop.isAfter(now)) {
         initialIndex = i;
         break;
       }
@@ -1122,13 +1337,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   @override
   void dispose() {
+    WindowsLogger.log('LivePlayerScreen', 'dispose 开始');
     _channelInfoTimer?.cancel();
     _controlsTimer?.cancel();
+    _replayGestureTimer?.cancel();
+    _replayHoldTimer?.cancel();
     if (DeviceUtils.isTv || DeviceUtils.isWindows) {
       HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     }
     if (DeviceUtils.isWindows) {
       disposeWindowsFullscreen();
+      _mouseInactivityTimer?.cancel();
+      _mouseInactivityTimer = null;
+      // 页面销毁时确保光标恢复可见，避免鼠标隐藏状态泄漏到其它页面。
+      WindowsWindowUtils.setCursorVisible(true);
     }
     // 释放可能存在的本地代理，避免 Windows 退出时资源未释放导致闪退。
     AdFilterEngine.dispose();
@@ -1147,27 +1369,41 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _epgListFocusNode.dispose();
     _rootFocusNode.dispose();
     super.dispose();
+    WindowsLogger.log('LivePlayerScreen', 'dispose 结束');
   }
 
   @override
   Widget build(BuildContext context) {
     // 仅在直播模式且列表/节目单均隐藏时返回键退出播放页；
-    // 回放模式先退出回放，列表/节目单显示时先关闭它们。
-    final canPop = !_isReplayMode && !_showEpgList && !_showChannelList;
+    // 回放模式先退出回放，节目单显示时先关闭节目单，全屏时先退出全屏。
+    // Windows：canPop 恒为 false，所有退出统一由 onPopInvoked 处理——
+    // 先暂停直播渲染（停止 mdk 推帧）再 pop，避免 pop 动画与直播渲染线程
+    // 偶发死锁导致退出卡死；TV/手机保持"列表显示时先关列表"的原行为。
+    // 全屏切换过程中禁止 pop，避免销毁与窗口操作并发导致卡死。
+    final canPop = !isWindowsFullScreen &&
+        !isTogglingWindowsFullscreen &&
+        !_isReplayMode &&
+        !_showEpgList &&
+        (DeviceUtils.isWindows ? false : !_showChannelList);
     return PopScope(
       canPop: canPop,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (_isReplayMode) {
+        if (isWindowsFullScreen) {
+          handleWindowsEsc();
+        } else if (_isReplayMode) {
           _exitReplayMode();
         } else if (_showEpgList) {
           _closeEpgList();
         } else if (_showChannelList) {
           if (DeviceUtils.isWindows) {
-            _hideChannelListAndControls();
+            // Windows：频道列表显示时返回键直接退出播放。
+            _exitWindowsPlayback();
           } else {
             _toggleChannelList();
           }
+        } else if (DeviceUtils.isWindows) {
+          _exitWindowsPlayback();
         }
       },
       child: Focus(
@@ -1180,6 +1416,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             children: [
               _buildPlayer(),
               _buildGestureLayer(),
+              // 回放快进/快退手势标识（居中显示）。
+              _buildReplayGestureIndicator(),
               if (_showChannelInfo) _buildChannelInfoOverlay(),
               if (_showChannelList && !_isMiniPlayer) _buildChannelListOverlay(),
             // TV 版使用独立浮层面板；Windows 版使用频道列表内嵌面板。
@@ -1267,11 +1505,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       playUrl = _currentChannel!.currentUrl;
     }
 
+    // 若当前直播源配置了播放代理，通过特殊请求头传递给播放器底层。
+    // 内部键以 x-heinplay- 前缀标识，原生层构造数据源时会剥离，不会发送到上游。
+    final sourceProxy = widget.source.proxyUrl;
+    final extraHeaders = (sourceProxy != null && sourceProxy.isNotEmpty)
+        ? <String, String>{'x-heinplay-proxy-url': sourceProxy}
+        : null;
+
     return LivePlayer(
       key: ValueKey('${_currentChannel!.name}_$playUrl'),
       url: playUrl,
       formatHint: formatHint,
       paused: _isReplayMode && _isReplayPaused,
+      controller: _livePlayerController,
+      headers: extraHeaders,
     );
   }
 
@@ -1308,14 +1555,78 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     return VideoFormat.hls;
   }
 
+  /// 重置鼠标无操作定时器（仅 Windows 全屏时生效）。
+  ///
+  /// 每次鼠标移动都会触发本方法：取消旧的隐藏定时器，若光标已隐藏则先恢复
+  /// 显示，再重新启动 [._kMouseHideDelay] 后的自动隐藏。非全屏时仅确保光标
+  /// 可见并取消定时器，不启用自动隐藏。
+  void _resetMouseTimer() {
+    if (!DeviceUtils.isWindows) return;
+    _mouseInactivityTimer?.cancel();
+    _mouseInactivityTimer = null;
+    if (!isWindowsFullScreen) {
+      // 非全屏不启用自动隐藏，并确保光标恢复可见。
+      if (_isCursorHidden) {
+        WindowsWindowUtils.setCursorVisible(true);
+        _isCursorHidden = false;
+      }
+      return;
+    }
+    if (_isCursorHidden) {
+      _showCursor();
+    }
+    _mouseInactivityTimer = Timer(_kMouseHideDelay, _hideCursor);
+  }
+
+  /// 隐藏鼠标光标（仅 Windows 全屏时生效）。
+  void _hideCursor() {
+    if (!DeviceUtils.isWindows || !isWindowsFullScreen) return;
+    if (!mounted || _isCursorHidden) return;
+    WindowsWindowUtils.setCursorVisible(false);
+    _isCursorHidden = true;
+    debugPrint('LivePlayerScreen: 全屏鼠标无操作，已自动隐藏光标');
+  }
+
+  /// 显示鼠标光标。
+  void _showCursor() {
+    if (!DeviceUtils.isWindows || !mounted) return;
+    if (!_isCursorHidden) return;
+    WindowsWindowUtils.setCursorVisible(true);
+    _isCursorHidden = false;
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    super.onWindowEnterFullScreen();
+    // 进入全屏后启动鼠标无操作自动隐藏。
+    _resetMouseTimer();
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    super.onWindowLeaveFullScreen();
+    // 退出全屏后恢复光标显示并停用自动隐藏。
+    _resetMouseTimer();
+  }
+
   Widget _buildGestureLayer() {
     if (DeviceUtils.isWindows && _isMiniPlayer) {
       return _buildMiniGestureOverlay();
     }
     return Positioned.fill(
-      child: GestureDetector(
+      child: MouseRegion(
+        // 鼠标移动时重置无操作定时器（Windows 全屏自动隐藏光标）。
+        onHover: (_) => _resetMouseTimer(),
+        onExit: (_) => _resetMouseTimer(),
+        child: Listener(
         behavior: HitTestBehavior.translucent,
-        onTap: () {
+        // 兜底：手势竞技场中 onLongPressEnd/onLongPressCancel 可能不被触发，
+        // 监听指针抬起确保手机端松手后一定停止快进快退（_stopReplayHoldSeek 幂等）。
+        onPointerUp:
+            DeviceUtils.isMobile ? (_) => _stopReplayHoldSeek() : null,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () {
           if (DeviceUtils.isWindows) {
             _toggleControlsAndChannelList();
           } else if (DeviceUtils.isMobile) {
@@ -1327,42 +1638,43 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             }
           }
         },
-        onLongPress: DeviceUtils.isMobile
-            ? () {
-                // 手机长按仅显示频道列表，不做隐藏。
-                if (!_showChannelList) {
+        onLongPressStart: DeviceUtils.isMobile
+            ? (details) {
+                if (_isReplayMode) {
+                  // 回放模式：按住屏幕左边持续快退，右边持续快进。
+                  final width = MediaQuery.sizeOf(context).width;
+                  _startReplayHoldSeek(details.localPosition.dx >= width / 2);
+                } else if (!_showChannelList) {
+                  // 直播模式长按仅显示频道列表，不做隐藏。
                   _showChannelListAndControls();
                 }
               }
             : null,
+        onLongPressEnd: DeviceUtils.isMobile ? (_) => _stopReplayHoldSeek() : null,
+        onLongPressCancel: DeviceUtils.isMobile ? _stopReplayHoldSeek : null,
         onDoubleTap: DeviceUtils.isWindows
             ? () => onWindowsDoubleTap()
-            : null,
+            : (DeviceUtils.isMobile && _isReplayMode)
+                ? () => _toggleReplayPause()
+                : null,
         onVerticalDragEnd: (details) {
           if (!DeviceUtils.isMobile) return;
           // 回放模式下禁用上下滑动换台，避免与回放逻辑冲突。
           if (_isReplayMode) return;
           if (details.primaryVelocity == null) return;
           if (details.primaryVelocity! < -500) {
-            // 向上滑动 → 下一频道
-            _playNextChannel();
-          } else if (details.primaryVelocity! > 500) {
-            // 向下滑动 → 上一频道
+            // 向上滑动 → 上一频道
             _playPrevChannel();
+          } else if (details.primaryVelocity! > 500) {
+            // 向下滑动 → 下一频道
+            _playNextChannel();
           }
         },
         onHorizontalDragEnd: (details) {
           if (!DeviceUtils.isMobile) return;
+          // 回放模式使用长按左/右半屏快退快进，不再响应左右滑动。
+          if (_isReplayMode) return;
           if (details.primaryVelocity == null) return;
-          if (_isReplayMode) {
-            // 回放模式下左右滑动快进/快退，定位后直接播放。
-            if (details.primaryVelocity! < -500) {
-              _seekReplay(const Duration(seconds: 30));
-            } else if (details.primaryVelocity! > 500) {
-              _seekReplay(const Duration(seconds: -30));
-            }
-            return;
-          }
           if (details.primaryVelocity! < -500) {
             // 向左滑动 → 下一个备选直播源
             _switchToNextBackupUrl();
@@ -1372,6 +1684,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           }
         },
         child: Container(color: Colors.transparent),
+      ),
+      ),
       ),
     );
   }
@@ -1456,6 +1770,51 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
   }
 
+  /// 回放快进/快退与暂停/播放手势标识浮层（居中显示，样式与点播模式一致）。
+  Widget _buildReplayGestureIndicator() {
+    if (!_replayGestureVisible) return const SizedBox.shrink();
+    final bool isPauseKind = _replayGestureKind == 'pause';
+    final IconData icon;
+    final String text;
+    if (isPauseKind) {
+      // 暂停/播放标识（双击触发，与点播模式一致）。
+      icon = _replayGestureForward ? Icons.play_arrow : Icons.pause;
+      text = _replayGestureForward ? '播放' : '暂停';
+    } else {
+      // 快进/快退标识（长按或按键触发）。
+      icon = _replayGestureForward ? Icons.fast_forward : Icons.fast_rewind;
+      text = _replayGestureForward ? '快进中' : '快退中';
+    }
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: AppColors.bgOverlay,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: AppColors.textPrimary,
+              size: 32,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              text,
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildChannelInfoOverlay() {
     final channel = _currentChannel;
     if (channel == null) return const SizedBox.shrink();
@@ -1463,48 +1822,80 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final programTitle = program?.title ?? channel.program?.trim();
     final nextProgram = _findNextProgram(channel);
     final hasCatchup = channel.catchupSource != null && channel.catchupSource!.isNotEmpty;
+    final isMobile = DeviceUtils.isMobile;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    // 手机版换台信息卡更短更窄，避免遮挡画面。
+    final cardWidth = isMobile
+        ? min(240.0, screenWidth - AppSpacing.md * 2)
+        : 520.0;
+    final showProgress = program != null || _isReplayMode;
 
     return Positioned(
-      top: AppSpacing.lg,
-      left: AppSpacing.lg,
+      top: isMobile ? AppSpacing.sm : AppSpacing.lg,
+      left: isMobile ? AppSpacing.sm : AppSpacing.lg,
       child: Container(
-        width: 520,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
+        width: cardWidth,
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.78),
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(isMobile ? AppRadius.md : AppRadius.lg),
           border: Border.all(
             color: Colors.white.withValues(alpha: 0.08),
             width: 1,
           ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
+            // 节目进度条作为背景显示在底部，不单独占一行。
+            if (showProgress)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  value: _isReplayMode
+                      ? _replayProgressRatio
+                      : (program != null ? channel.programProgressRatio(program) : 0),
+                  backgroundColor: Colors.white.withValues(alpha: 0.1),
+                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  minHeight: 3,
+                ),
+              ),
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? AppSpacing.sm : AppSpacing.md,
+                vertical: isMobile ? AppSpacing.xs : AppSpacing.sm,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  width: 52,
-                  height: 52,
-                  margin: const EdgeInsets.only(right: AppSpacing.sm),
+                  width: isMobile ? 36 : 52,
+                  height: isMobile ? 36 : 52,
+                  margin: EdgeInsets.only(
+                    right: isMobile ? AppSpacing.xs : AppSpacing.sm,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    borderRadius: BorderRadius.circular(
+                      isMobile ? AppRadius.sm : AppRadius.md,
+                    ),
                   ),
                   child: channel.logo != null && channel.logo!.isNotEmpty
                       ? ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          borderRadius: BorderRadius.circular(
+                            isMobile ? AppRadius.sm : AppRadius.md,
+                          ),
                           child: Image.network(
                             channel.logo!,
                             fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, __, ___) => Icon(
                               Icons.tv,
-                              size: 28,
+                              size: isMobile ? 20 : 28,
                               color: Colors.white70,
                             ),
                           ),
@@ -1512,11 +1903,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       : Container(
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            borderRadius: BorderRadius.circular(
+                              isMobile ? AppRadius.sm : AppRadius.md,
+                            ),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.tv,
-                            size: 28,
+                            size: isMobile ? 20 : 28,
                             color: Colors.white70,
                           ),
                         ),
@@ -1530,10 +1923,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         channel.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           color: Colors.white,
-                          fontSize: 18,
+                          fontSize: isMobile ? 14 : 18,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1548,10 +1941,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                     : '回放: ${_currentReplayProgram!.title}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               color: AppColors.primary,
-                              fontSize: 12,
+                              fontSize: isMobile ? 11 : 12,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -1563,10 +1956,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                             programTitle,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               color: Colors.white70,
-                              fontSize: 13,
+                              fontSize: isMobile ? 11 : 13,
                             ),
                           ),
                         )
@@ -1575,10 +1968,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             channel.group!,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               color: AppColors.textSecondary,
-                              fontSize: 12,
+                              fontSize: isMobile ? 10 : 12,
                             ),
                           ),
                         ),
@@ -1587,67 +1980,42 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                 ),
               ],
             ),
-            if (program != null || channel.hasMultipleUrls || _isReplayMode)
+            // 回放/节目时间信息（进度条已在背景中显示）。
+            if (_isReplayMode && _currentReplayProgram != null)
               Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                padding: EdgeInsets.only(top: isMobile ? 2 : AppSpacing.sm),
+                child: Text(
+                  '${_formatDuration(_replayOffset)} / ${_formatDuration(_currentReplayProgram!.stop.difference(_currentReplayProgram!.start))}',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    color: Colors.white70,
+                    fontSize: isMobile ? 10 : 11,
+                  ),
+                ),
+              )
+            else if (program != null)
+              Padding(
+                padding: EdgeInsets.only(top: isMobile ? 2 : AppSpacing.sm),
                 child: Row(
                   children: [
-                    if (_isReplayMode && _currentReplayProgram != null)
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: _replayProgressRatio,
-                            backgroundColor: Colors.white.withValues(alpha: 0.12),
-                            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-                            minHeight: 3,
-                          ),
-                        ),
-                      )
-                    else if (program != null)
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: program.progressRatio,
-                            backgroundColor: Colors.white.withValues(alpha: 0.12),
-                            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-                            minHeight: 3,
-                          ),
+                    Flexible(
+                      child: Text(
+                        '${_formatTime(channel.toChannelTimezone(program.start))}-${_formatTime(channel.toChannelTimezone(program.stop))}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          color: Colors.white70,
+                          fontSize: isMobile ? 10 : 11,
                         ),
                       ),
-                    if (program != null && !_isReplayMode)
-                      Padding(
-                        padding: const EdgeInsets.only(left: AppSpacing.sm),
-                        child: Text(
-                          '${_formatTime(program.start)}-${_formatTime(program.stop)}',
-                          style: const TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            color: Colors.white70,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    if (_isReplayMode && _currentReplayProgram != null)
-                      Padding(
-                        padding: const EdgeInsets.only(left: AppSpacing.sm),
-                        child: Text(
-                          '${_formatDuration(_replayOffset)} / ${_formatDuration(_currentReplayProgram!.stop.difference(_currentReplayProgram!.start))}',
-                          style: const TextStyle(
-                            fontFamily: 'NotoSansSC',
-                            color: Colors.white70,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    if (channel.hasMultipleUrls && !_isReplayMode)
+                    ),
+                    if (channel.hasMultipleUrls)
                       Container(
-                        margin: EdgeInsets.only(
-                          left: program != null ? AppSpacing.sm : 0,
-                        ),
+                        margin: const EdgeInsets.only(left: AppSpacing.xs),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 6,
-                          vertical: 2,
+                          vertical: 1,
                         ),
                         decoration: BoxDecoration(
                           color: AppColors.primary.withValues(alpha: 0.8),
@@ -1667,26 +2035,26 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                 ),
               ),
             if (nextProgram != null) ...[
-              const SizedBox(height: AppSpacing.sm),
+              SizedBox(height: isMobile ? 2 : AppSpacing.sm),
               Row(
                 children: [
-                  const Text(
+                  Text(
                     '下一个: ',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       color: Colors.white70,
-                      fontSize: 12,
+                      fontSize: isMobile ? 10 : 12,
                     ),
                   ),
                   Expanded(
                     child: Text(
-                      '${_formatTime(nextProgram.start)} ${nextProgram.title}',
+                      '${_formatTime(channel.toChannelTimezone(nextProgram.start))} ${nextProgram.title}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: isMobile ? 10 : 12,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -1695,7 +2063,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ),
             ],
             if (hasCatchup && !_isReplayMode) ...[
-              const SizedBox(height: AppSpacing.sm),
+              SizedBox(height: isMobile ? 2 : AppSpacing.sm),
               GestureDetector(
                 onTap: _openEpgListForCurrentChannel,
                 child: Container(
@@ -1728,15 +2096,18 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             ],
           ],
         ),
+          ),
+        ],
+      ),
       ),
     );
   }
 
   EpgProgram? _findNextProgram(LiveChannel channel) {
-    final now = DateTime.now();
+    final now = channel.channelNow;
     final sorted = _epgProgramsFor(channel);
     for (final p in sorted) {
-      if (p.start.isAfter(now)) return p;
+      if (channel.toChannelTimezone(p.start).isAfter(now)) return p;
     }
     return null;
   }
@@ -1765,20 +2136,32 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   Widget _buildChannelListOverlay() {
     if (_groups.isEmpty) return const SizedBox.shrink();
     final channelIndices = _groupedChannelIndices[_groups[_selectedGroupIndex]] ?? [];
+    final isMobile = DeviceUtils.isMobile;
     // Windows 版也显示右侧节目单条幅（支持鼠标点击），TV 版使用右键展开。
-    final showEpgBanner = !DeviceUtils.isTv || DeviceUtils.isWindows;
-    final panelWidth = _kChannelListWidth +
-        (showEpgBanner ? _kEpgBannerWidth : 0.0) +
-        (showEpgBanner && _showEpgList ? _kEpgListWidth : 0.0);
+    // 手机版显示完整节目单时隐藏“节目单”条幅，由完整节目单替换其位置。
+    final showEpgBanner = (!DeviceUtils.isTv || DeviceUtils.isWindows) &&
+        !(isMobile && _showEpgList);
+    final showEpgPanel = _showEpgList && (!DeviceUtils.isTv || DeviceUtils.isWindows);
+    final panelWidth = _channelListWidth(context);
+    final left = isMobile ? _kMobileChannelListMargin : 0.0;
+    // 手机端字体自适应：以 360 逻辑宽度为基准，叠加系统字体缩放，随屏幕大小与字体设置自动调整。
+    final fontScale = DeviceUtils.isMobile
+        ? (MediaQuery.sizeOf(context).width / 360).clamp(0.9, 1.15) *
+            MediaQuery.textScalerOf(context).scale(1.0)
+        : 1.0;
 
     return Positioned(
-      left: 0,
+      left: left,
       top: 0,
       bottom: 0,
       width: panelWidth,
-      child: Container(
-        color: Colors.black.withValues(alpha: 0.82),
-        child: Column(
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(fontScale),
+        ),
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.82),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Windows 版顶部返回与频道信息栏，与频道列表同层级。
@@ -1819,7 +2202,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               child: Row(
                 children: [
                   SizedBox(
-                    width: _kCategoryColumnWidth,
+                    width: _categoryColumnWidth,
                     child: Focus(
                       focusNode: _categoryFocusNode,
                       child: ListView.builder(
@@ -1840,7 +2223,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         controller: _channelListScrollController,
                         padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                         itemCount: channelIndices.length,
-                        itemExtent: _kChannelItemHeight,
+                        itemExtent: _channelItemHeight,
                         itemBuilder: (context, position) {
                           return _buildChannelListItem(channelIndices[position], position);
                         },
@@ -1850,13 +2233,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   if (showEpgBanner) ...[
                     Container(width: 1, color: Colors.white24),
                     SizedBox(
-                      width: _kEpgBannerWidth,
+                      width: _epgBannerWidth,
                       child: _buildEpgBannerColumn(channelIndices),
                     ),
                   ],
-                  if (showEpgBanner && _showEpgList) ...[
+                  if (showEpgPanel) ...[
                     Container(width: 1, color: Colors.white24),
-                    Expanded(
+                    SizedBox(
+                      width: isMobile
+                          ? MediaQuery.sizeOf(context).width / 3
+                          : _kEpgListWidth,
                       child: _buildEpgListPanel(),
                     ),
                   ],
@@ -1864,13 +2250,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ),
             ),
             Container(
-              height: 40,
+              height: isMobile ? 32 : 40,
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
               alignment: Alignment.centerLeft,
               child: Text(
                 DeviceUtils.isTv && !DeviceUtils.isWindows
                     ? '按右键显示完整节目单，确认键换台'
-                    : '点击右侧“节目单”条幅查看完整节目单',
+                    : isMobile
+                        ? '点击“节目单”查看完整节目单'
+                        : '点击右侧“节目单”条幅查看完整节目单',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   color: Colors.white.withValues(alpha: 0.5),
@@ -1881,6 +2269,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             // Windows 版底部控制栏，与频道列表同层级同时显示/隐藏。
             if (DeviceUtils.isWindows) _buildWindowsChannelListControls(),
           ],
+        ),
         ),
       ),
     );
@@ -1988,11 +2377,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 非 TV 版频道列表右侧的节目单条幅列。
   Widget _buildEpgBannerColumn(List<int> channelIndices) {
+    final isMobile = DeviceUtils.isMobile;
     return ListView.builder(
       controller: _epgBannerScrollController,
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       itemCount: channelIndices.length,
-      itemExtent: _kChannelItemHeight,
+      itemExtent: _channelItemHeight,
       itemBuilder: (context, position) {
         final index = channelIndices[position];
         final channel = _channels[index];
@@ -2003,9 +2393,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ? () => _openEpgListForChannel(channel)
               : null,
           child: Container(
-            height: _kChannelItemHeight,
-            margin: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.xs,
+            height: _channelItemHeight,
+            margin: EdgeInsets.symmetric(
+              horizontal: isMobile ? 2 : AppSpacing.xs,
               vertical: AppSpacing.xs,
             ),
             decoration: BoxDecoration(
@@ -2014,7 +2404,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   : hasPrograms
                       ? Colors.white.withValues(alpha: 0.08)
                       : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(isMobile ? 2 : AppRadius.sm),
             ),
             alignment: Alignment.center,
             child: hasPrograms
@@ -2025,7 +2415,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         color: isOpen ? Colors.white : AppColors.textSecondary,
-                        fontSize: 11,
+                        fontSize: isMobile ? 10 : 11,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -2043,15 +2433,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (channel == null || channel.programs.isEmpty) return const SizedBox.shrink();
     final programs = _epgProgramsFor(channel);
     final hasCatchup = channel.catchupSource != null && channel.catchupSource!.isNotEmpty;
+    final isMobile = DeviceUtils.isMobile;
 
     return Container(
-      color: Colors.black.withValues(alpha: 0.88),
+      color: isMobile ? AppColors.bgApp : Colors.black.withValues(alpha: 0.88),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 56,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            height: isMobile ? 44 : 56,
+            padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.sm : AppSpacing.md),
             alignment: Alignment.centerLeft,
             child: Row(
               children: [
@@ -2060,18 +2451,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     '${channel.name} 节目单',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       color: Colors.white,
-                      fontSize: 16,
+                      fontSize: isMobile ? 14 : 16,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
                 IconButton(
                   onPressed: _closeEpgList,
-                  icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                  icon: Icon(Icons.close, color: Colors.white, size: isMobile ? 18 : 20),
                   tooltip: '关闭',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ],
             ),
@@ -2084,16 +2477,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                 controller: _epgListScrollController,
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 itemCount: programs.length,
-                itemExtent: 56,
+                itemExtent: isMobile ? 44 : 56,
                 itemBuilder: (context, index) {
-                  return _buildEpgListItem(programs, index, hasCatchup);
+                  return _buildEpgListItem(channel, programs, index, hasCatchup);
                 },
               ),
             ),
           ),
           Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            height: isMobile ? 32 : 40,
+            padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.sm : AppSpacing.md),
             alignment: Alignment.centerLeft,
             child: Text(
               '确认键回放，关闭按钮隐藏节目单',
@@ -2166,7 +2559,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     itemCount: programs.length,
                     itemExtent: 56,
                     itemBuilder: (context, index) {
-                      return _buildEpgListItem(programs, index, hasCatchup);
+                      return _buildEpgListItem(channel, programs, index, hasCatchup);
                     },
                   ),
                 ),
@@ -2191,15 +2584,17 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Widget _buildEpgListItem(
+    LiveChannel channel,
     List<EpgProgram> programs,
     int index,
     bool hasCatchup,
   ) {
     final program = programs[index];
     final isSelected = index == _selectedEpgIndex;
-    final isCurrent = program.isCurrent;
-    final isPast = program.isPast;
+    final isCurrent = channel.isProgramCurrent(program);
+    final isPast = channel.isProgramPast(program);
     final canReplay = hasCatchup && isPast;
+    final isMobile = DeviceUtils.isMobile;
 
     return GestureDetector(
       onTap: () {
@@ -2209,12 +2604,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         }
       },
       child: Container(
-        height: 56,
-        margin: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
+        height: isMobile ? 44 : 56,
+        margin: EdgeInsets.symmetric(
+          horizontal: isMobile ? AppSpacing.xs : AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.sm : AppSpacing.md),
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primary.withValues(alpha: 0.9)
@@ -2223,19 +2618,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   : Colors.transparent,
           border: Border.all(
             color: isSelected ? Colors.white.withValues(alpha: 0.8) : Colors.transparent,
-            width: 2,
+            width: isMobile ? 1 : 2,
           ),
         ),
         child: Row(
           children: [
             SizedBox(
-              width: 90,
+              width: isMobile ? 72 : 90,
               child: Text(
-                '${_formatTime(program.start)}-${_formatTime(program.stop)}',
+                '${_formatTime(channel.toChannelTimezone(program.start))}-${_formatTime(channel.toChannelTimezone(program.stop))}',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   color: isSelected ? Colors.white : Colors.white70,
-                  fontSize: 11,
+                  fontSize: isMobile ? 10 : 11,
                 ),
               ),
             ),
@@ -2251,7 +2646,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
-                      fontSize: 13,
+                      fontSize: isMobile ? 12 : 13,
                       fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
@@ -2265,7 +2660,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                             color: isSelected
                                 ? Colors.white.withValues(alpha: 0.9)
                                 : AppColors.primary,
-                            fontSize: 11,
+                            fontSize: isMobile ? 10 : 11,
                           ),
                         )
                       else if (canReplay)
@@ -2276,7 +2671,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                             color: isSelected
                                 ? Colors.white.withValues(alpha: 0.9)
                                 : AppColors.textSecondary,
-                            fontSize: 11,
+                            fontSize: isMobile ? 10 : 11,
                           ),
                         ),
                     ],
@@ -2294,6 +2689,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final group = _groups[index];
     final selected = index == _selectedGroupIndex;
     final focused = selected && _focusOnCategories;
+    final isMobile = DeviceUtils.isMobile;
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -2304,7 +2700,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _scrollToChannelInGroup();
       },
       child: Container(
-        height: 44,
+        height: isMobile ? 36 : 44,
         margin: const EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
@@ -2316,7 +2712,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               : Colors.transparent,
           border: Border.all(
             color: focused ? Colors.white : Colors.transparent,
-            width: 2,
+            width: isMobile ? 1 : 2,
           ),
         ),
         child: Text(
@@ -2326,7 +2722,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: selected ? Colors.white : Colors.white70,
-            fontSize: 13,
+            fontSize: isMobile ? 12 : 13,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
@@ -2340,9 +2736,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final focused = position == _selectedChannelIndexInGroup && !_focusOnCategories;
     final program = channel.currentProgram;
     final programText = program?.title ?? channel.program?.trim();
+    final nextProgram = _findNextProgram(channel);
     final hasCatchup = channel.catchupSource != null && channel.catchupSource!.isNotEmpty;
     final hasReplayPrograms = hasCatchup &&
-        channel.programs.any((p) => p.stop.isBefore(DateTime.now()));
+        channel.programs.any((p) => channel.isProgramPast(p));
+    final isMobile = DeviceUtils.isMobile;
 
     return GestureDetector(
       onTap: () {
@@ -2354,12 +2752,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         }
       },
       child: Container(
-        height: _kChannelItemHeight,
+        height: _channelItemHeight,
         margin: const EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primary.withValues(alpha: 0.9)
@@ -2370,169 +2767,323 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                 : isSelected
                     ? AppColors.primary.withValues(alpha: 0.6)
                     : Colors.transparent,
-            width: 2,
+            width: isMobile ? 1 : 2,
           ),
         ),
-        child: Row(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            if (isSelected)
-              Container(
-                width: 4,
-                height: 40,
-                margin: const EdgeInsets.only(right: AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(2),
+            // 节目进度条作为背景的一部分，显示在项底部。
+            // 只要频道有节目标题即显示背景条；currentProgram 缺失时进度为 0。
+            if (programText != null && programText.isNotEmpty)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  value: program != null ? channel.programProgressRatio(program) : 0,
+                  backgroundColor: isSelected
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.white.withValues(alpha: 0.08),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isSelected ? Colors.white.withValues(alpha: 0.85) : AppColors.primary,
+                  ),
+                  minHeight: 3,
                 ),
               ),
-            SizedBox(
-              width: 56,
-              height: 56,
-              child: channel.logo != null && channel.logo!.isNotEmpty
-                  ? Image.network(
-                      channel.logo!,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.tv,
-                        size: 30,
-                        color: Colors.white70,
-                      ),
-                    )
-                  : const Icon(
-                      Icons.tv,
-                      size: 30,
-                      color: Colors.white70,
-                    ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.sm : AppSpacing.md),
+              child: Row(
                 children: [
-                  Text(
-                    channel.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
-                      fontSize: 15,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                  if (isSelected)
+                    Container(
+                      width: isMobile ? 3 : 4,
+                      height: isMobile ? 28 : 40,
+                      margin: const EdgeInsets.only(right: AppSpacing.sm),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
-                  if (programText != null && programText.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(2),
-                              child: LinearProgressIndicator(
-                                value: program?.progressRatio ?? 0,
-                                backgroundColor: Colors.white.withValues(alpha: 0.12),
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  isSelected ? Colors.white : AppColors.primary,
-                                ),
-                                minHeight: 3,
+                  if (!isMobile)
+                    SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: channel.logo != null && channel.logo!.isNotEmpty
+                          ? Image.network(
+                              channel.logo!,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.tv,
+                                size: 30,
+                                color: Colors.white70,
                               ),
+                            )
+                          : const Icon(
+                              Icons.tv,
+                              size: 30,
+                              color: Colors.white70,
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '${program?.elapsedMinutes ?? 0}/${program?.durationMinutes ?? 0}分',
-                            style: TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              color: isSelected
-                                  ? Colors.white.withValues(alpha: 0.9)
-                                  : AppColors.textSecondary,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                  if (programText != null && programText.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                  if (!isMobile) const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: isMobile
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // 第一列：频道名
+                              SizedBox(
+                                width: 76,
+                                child: Text(
+                                  channel.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: 'NotoSansSC',
+                                    color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
+                                    fontSize: 14,
+                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              // 第二列：节目信息（当前节目 + 下一个节目）
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    if (programText != null && programText.isNotEmpty)
+                                      Text(
+                                        programText,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontFamily: 'NotoSansSC',
+                                          color: isSelected
+                                              ? Colors.white.withValues(alpha: 0.95)
+                                              : AppColors.textSecondary,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    if (nextProgram != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          '下一个: ${nextProgram.title}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontFamily: 'NotoSansSC',
+                                            color: isSelected
+                                                ? Colors.white.withValues(alpha: 0.75)
+                                                : AppColors.textMuted,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      )
+                                    else if (channel.group != null && channel.group!.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          channel.group!,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontFamily: 'NotoSansSC',
+                                            color: AppColors.textMuted,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              // 第三列：支持回放、时间、源数量
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (hasReplayPrograms)
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.history,
+                                          size: 10,
+                                          color: isSelected
+                                              ? Colors.white.withValues(alpha: 0.9)
+                                              : AppColors.textSecondary,
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '支持回放',
+                                          style: TextStyle(
+                                            fontFamily: 'NotoSansSC',
+                                            color: isSelected
+                                                ? Colors.white.withValues(alpha: 0.9)
+                                                : AppColors.textSecondary,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (program != null)
+                                    Text(
+                                      '${channel.programElapsedMinutes(program)}/${channel.programDurationMinutes(program)}分',
+                                      style: TextStyle(
+                                        fontFamily: 'NotoSansSC',
+                                        color: isSelected
+                                            ? Colors.white.withValues(alpha: 0.9)
+                                            : AppColors.textSecondary,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  if (channel.hasMultipleUrls)
+                                    Container(
+                                      margin: const EdgeInsets.only(top: 2),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? Colors.white.withValues(alpha: 0.2)
+                                            : Colors.white.withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                                      ),
+                                      child: Text(
+                                        '${channel.allUrls.length}',
+                                        style: TextStyle(
+                                          fontFamily: 'NotoSansSC',
+                                          color: isSelected ? Colors.white : Colors.white70,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                channel.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'NotoSansSC',
+                                  color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
+                                  fontSize: 15,
+                                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                              ),
+                              if (programText != null && programText.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          programText,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontFamily: 'NotoSansSC',
+                                            color: isSelected
+                                                ? Colors.white.withValues(alpha: 0.95)
+                                                : AppColors.textSecondary,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      if (program != null) ...[
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          '${channel.programElapsedMinutes(program)}/${channel.programDurationMinutes(program)}分',
+                                          style: TextStyle(
+                                            fontFamily: 'NotoSansSC',
+                                            color: isSelected
+                                                ? Colors.white.withValues(alpha: 0.9)
+                                                : AppColors.textSecondary,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                )
+                              else if (channel.group != null && channel.group!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 3),
+                                  child: Text(
+                                    channel.group!,
+                                    style: TextStyle(
+                                      fontFamily: 'NotoSansSC',
+                                      color: AppColors.textSecondary,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              if (hasReplayPrograms)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.history,
+                                        size: 12,
+                                        color: isSelected
+                                            ? Colors.white.withValues(alpha: 0.9)
+                                            : AppColors.textSecondary,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '支持回放',
+                                        style: TextStyle(
+                                          fontFamily: 'NotoSansSC',
+                                          color: isSelected
+                                              ? Colors.white.withValues(alpha: 0.9)
+                                              : AppColors.textSecondary,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                  ),
+                  if (!isMobile && channel.hasMultipleUrls)
+                    Container(
+                      margin: const EdgeInsets.only(left: AppSpacing.sm),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? Colors.white.withValues(alpha: 0.2)
+                            : Colors.white.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                      ),
                       child: Text(
-                        programText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        '${channel.allUrls.length}',
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
-                          color: isSelected
-                              ? Colors.white.withValues(alpha: 0.95)
-                              : AppColors.textSecondary,
-                          fontSize: 12,
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                         ),
-                      ),
-                    )
-                  else if (channel.group != null && channel.group!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3),
-                      child: Text(
-                        channel.group!,
-                        style: TextStyle(
-                          fontFamily: 'NotoSansSC',
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  if (hasReplayPrograms)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.history,
-                            size: 12,
-                            color: isSelected
-                                ? Colors.white.withValues(alpha: 0.9)
-                                : AppColors.textSecondary,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '支持回放',
-                            style: TextStyle(
-                              fontFamily: 'NotoSansSC',
-                              color: isSelected
-                                  ? Colors.white.withValues(alpha: 0.9)
-                                  : AppColors.textSecondary,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                 ],
               ),
             ),
-            if (channel.hasMultipleUrls)
-              Container(
-                margin: const EdgeInsets.only(left: AppSpacing.sm),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 2,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? Colors.white.withValues(alpha: 0.2)
-                      : Colors.white.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Text(
-                  '${channel.allUrls.length}',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    color: isSelected ? Colors.white : Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
           ],
         ),
       ),

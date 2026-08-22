@@ -40,7 +40,8 @@ class FvpBackend implements VideoPlayerBackend {
       await _impl.open(
         url,
         startAt: startAt,
-        headers: headers,
+        // fvp/libmdk 不解析 x-heinplay- 内部键，强制过滤避免泄漏到上游。
+        headers: stripInternalRequestHeaders(headers, force: true),
         proxyMode: proxyMode,
         bufferConfig: bufferConfig,
         isLive: isLive,
