@@ -117,6 +117,7 @@ class LiveService {
     String? sourceKey,
     String? sourceUrl,
     String? epgUrl,
+    bool fillCatchup = true,
   }) async {
     final enabled = await UserDataService.getLunaTvLiveEnabled();
     if (!enabled) {
@@ -167,12 +168,14 @@ class LiveService {
           .map((e) => LiveChannel.fromJson(e as Map<String, dynamic>))
           .toList();
       // 旧缓存可能缺失 EPG/catchup 信息，若检测到缺失则尝试从原始订阅地址补全。
-      final needFill = channels.any(
-        (c) =>
-            ((c.catchup == null || c.catchup!.isEmpty) &&
-                (c.catchupSource == null || c.catchupSource!.isEmpty)) ||
-            c.programs.isEmpty,
-      );
+      // 直播首屏优先场景下 [fillCatchup] 为 false，跳过补全以尽快返回频道列表。
+      final needFill = fillCatchup &&
+          channels.any(
+            (c) =>
+                ((c.catchup == null || c.catchup!.isEmpty) &&
+                    (c.catchupSource == null || c.catchupSource!.isEmpty)) ||
+                c.programs.isEmpty,
+          );
       if (needFill) {
         fillUrl = _extractSourceUrlFromChannels(channels) ?? url;
         if (fillUrl != null && fillUrl.isNotEmpty) {
@@ -194,9 +197,10 @@ class LiveService {
     if (response.success && response.data != null) {
       channels = response.data!;
       // LunaTV 服务端返回的频道可能丢失了 M3U 头中的 EPG 与 catchup 信息，
-      // 尝试从原始订阅地址补全。
+      // 尝试从原始订阅地址补全。直播首屏优先场景下 [fillCatchup] 为 false，
+      // 跳过补全，改由播放开始后的后台任务补齐（见 LivePlayerScreen）。
       fillUrl = _extractSourceUrlFromChannels(channels) ?? url;
-      if (fillUrl != null && fillUrl.isNotEmpty) {
+      if (fillCatchup && fillUrl != null && fillUrl.isNotEmpty) {
         print('LunaTV 源从服务器拉取，尝试从 $fillUrl 补全 EPG/catchup');
         await _fillEpgAndCatchupFromM3uUrl(channels, fillUrl);
       }
@@ -225,6 +229,23 @@ class LiveService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 从频道列表提取可能的原始订阅地址（供直播播放页后台补全 catchup 使用）。
+  static String? extractSourceUrlFromChannels(List<LiveChannel> channels) {
+    return _extractSourceUrlFromChannels(channels);
+  }
+
+  /// 后台为频道列表补全 catchup / EPG 地址信息。
+  ///
+  /// 用于直播首屏优先加载场景：进入播放页时先只拉频道列表开始播放，
+  /// 随后在后台调用本方法补齐 catchup（回放所需）与 EPG 地址，
+  /// 避免阻塞进入播放页后的首帧。
+  static Future<void> fillEpgAndCatchupFromM3uUrl(
+    List<LiveChannel> channels,
+    String url,
+  ) async {
+    await _fillEpgAndCatchupFromM3uUrl(channels, url);
   }
 
   /// 从指定 URL 下载 M3U，提取 EPG 地址与每个频道的 catchup 信息，并回填到 [channels]。
@@ -444,13 +465,15 @@ class LiveService {
 
   /// 根据直播源加载频道列表。
   static Future<ApiResponse<List<LiveChannel>>> loadChannelsForSource(
-    LiveSourceConfig source,
-  ) async {
+    LiveSourceConfig source, {
+    bool fillCatchup = true,
+  }) async {
     if (source.isBuiltin) {
       return fetchLunaTvChannels(
         sourceKey: source.sourceKey,
         sourceUrl: source.url.isNotEmpty ? source.url : null,
         epgUrl: source.epgUrl,
+        fillCatchup: fillCatchup,
       );
     }
     return loadChannelsFromConfig(source);

@@ -61,6 +61,7 @@ class UserDataService {
   // 直播设置
   static const String _lunaTvLiveEnabledKey = 'lunatv_live_enabled';
   static const String _liveSourceCacheHoursKey = 'live_source_cache_hours';
+  static const String _epgLoadEnabledKey = 'epg_load_enabled';
 
   // Bangumi 代理设置
   static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
@@ -650,6 +651,21 @@ class UserDataService {
   static Future<void> saveLiveSourceCacheHours(int hours) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_liveSourceCacheHoursKey, hours);
+  }
+
+  /// 是否加载 EPG 节目单（含时移 catchup 信息），默认开启。
+  ///
+  /// 关闭后进入直播页只拉取频道列表并立即播放，不在后台拉取节目单/时移元数据，
+  /// 以降低直播连接耗时；开启时（默认）频道列表就绪后立即开播，
+  /// 节目单与时移信息在后台异步加载并刷新。
+  static Future<bool> getEpgLoadEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_epgLoadEnabledKey) ?? true;
+  }
+
+  static Future<void> saveEpgLoadEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_epgLoadEnabledKey, enabled);
   }
 
   static String _perVideoBackendKey(String source, String id) {

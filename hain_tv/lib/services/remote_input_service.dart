@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/live_source_config.dart';
 import 'live_service.dart';
+import 'live_source_refresh_notifier.dart';
 import 'live_source_storage.dart';
 
 class RemoteInputService {
@@ -759,6 +760,7 @@ class RemoteInputService {
                 createTime: DateTime.now(),
               );
         await LiveSourceStorage.saveConfig(config);
+        LiveSourceRefreshNotifier.instance.notify();
         _liveSourcesChangedController.add(null);
         _setCorsHeaders(request.response);
         request.response
@@ -790,6 +792,7 @@ class RemoteInputService {
           return;
         }
         await LiveSourceStorage.deleteConfig(id);
+        LiveSourceRefreshNotifier.instance.notify();
         _liveSourcesChangedController.add(null);
         _setCorsHeaders(request.response);
         request.response

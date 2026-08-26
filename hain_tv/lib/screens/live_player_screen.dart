@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/live_channel.dart';
 import '../models/live_source_config.dart';
@@ -13,6 +14,7 @@ import '../platform/windows_fullscreen_mixin.dart';
 import '../platform/windows_window_utils.dart';
 import '../services/ad_filter_engine.dart';
 import '../services/live_service.dart';
+import '../services/user_data_service.dart';
 import '../theme.dart';
 import '../utils/windows_logger.dart';
 import '../widgets/live/live_player.dart';
@@ -186,6 +188,17 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (DeviceUtils.isMobile) {
       _enterFullscreenLandscape();
     }
+    _initWakelock();
+  }
+
+  /// 直播 / 回拨模式播放期间保持屏幕常亮，避免手机自动休眠。
+  Future<void> _initWakelock() async {
+    try {
+      await WakelockPlus.enable();
+      debugPrint('LivePlayerScreen: 已启用屏幕常亮');
+    } catch (e) {
+      debugPrint('LivePlayerScreen: 启用屏幕常亮失败: $e');
+    }
   }
 
   /// 记录进入直播播放页前的设备方向。
@@ -260,7 +273,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _error = null;
     });
 
-    final response = await LiveService.loadChannelsForSource(widget.source);
+    // 直播优先：进入播放页先只拉频道列表并立即开播，catchup / EPG 补全与
+    // 节目单拉取放到播放开始后的后台任务（_loadEpgForChannels）中，避免阻塞首帧。
+    final response = await LiveService.loadChannelsForSource(
+      widget.source,
+      fillCatchup: false,
+    );
     if (!mounted) return;
 
     if (!response.success || response.data == null) {
@@ -294,6 +312,28 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Future<void> _loadEpgForChannels(List<LiveChannel> channels) async {
+    // 直播优先：进入播放页后频道列表已就绪并立即开播，
+    // 节目单/时移元数据在后台加载，绝不在首屏路径上阻塞。
+    // 若用户在"软件设置→直播设置"中关闭了 EPG 加载，则完全跳过，进一步提速。
+    final epgEnabled = await UserDataService.getEpgLoadEnabled();
+    if (!epgEnabled) return;
+
+    // 首屏为追求速度跳过了 catchup 补全（fillCatchup=false），
+    // 这里在后台补齐，确保稍后打开回放时可用。
+    final needCatchupFill = channels.any(
+      (c) =>
+          (c.catchup == null || c.catchup!.isEmpty) &&
+          (c.catchupSource == null || c.catchupSource!.isEmpty),
+    );
+    if (needCatchupFill) {
+      final fillUrl =
+          LiveService.extractSourceUrlFromChannels(channels) ?? widget.source.url;
+      if (fillUrl.isNotEmpty) {
+        await LiveService.fillEpgAndCatchupFromM3uUrl(channels, fillUrl);
+        await LiveService.cacheChannels(widget.source, channels);
+      }
+    }
+
     // 节目单刷新周期固定（12 小时），节目单每天内容都会变化需定期更新。
     // 缓存内节目单仍在刷新周期内时复用，并按当前时间刷新当前节目信息，
     // 避免重复拉取 EPG，减少网络请求与积分消耗。
@@ -1359,6 +1399,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       unawaited(_restoreOrientation());
     }
     _selectLongPressTimer?.cancel();
+    WakelockPlus.disable().catchError((Object e) {
+      debugPrint('LivePlayerScreen: 关闭屏幕常亮失败: $e');
+    });
     _channelListScrollController.removeListener(_syncEpgBannerScroll);
     _categoryScrollController.dispose();
     _channelListScrollController.dispose();

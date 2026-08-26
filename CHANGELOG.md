@@ -1,6 +1,29 @@
 # 更新日志
 
 <details open>
+<summary><h2 style="display: inline;">1.3.2</h2></summary>
+
+### 1.3.2
+
+#### 新增
+
+- **直播连接速度优化（首屏即播）**
+  - 进入直播频道后，EPG 节目单与时移回放（catchup）信息的补全改为后台加载，频道列表加载完成即开始播放，不再被 EPG/catchup 网络补全阻塞首帧；播放过程中节目单与当前节目信息几秒后自动刷新出现。
+  - `LiveService.loadChannelsForSource` 新增 `fillCatchup` 参数，播放页以 `fillCatchup: false` 调用，仅拉取频道列表即开播。
+
+- **直播设置新增「加载 EPG 节目单」开关**
+  - 位于「我的 → 软件设置 → 直播设置」，默认开启。
+  - 开启时保留原有 EPG 自动加载与时移回放能力；关闭后跳过 EPG 拉取以进一步加快直播连接，代价是回放（时移）不可用。
+
+#### 修复
+
+- **手机扫码管理直播源后 TV 端列表不自动刷新**
+  - 根因：手机扫码添加/删除直播源保存成功后，只通知了直播源管理页使用的内部 Stream，未触发直播频道列表页监听的 `LiveSourceRefreshNotifier`，导致列表不刷新、需重启软件。
+  - 修复：保存/删除直播源成功后主动调用 `LiveSourceRefreshNotifier.instance.notify()`，TV / 手机 / Windows 三端直播频道列表页收到通知后立即重新加载，无需重启。
+
+</details>
+
+<details>
 <summary><h2 style="display: inline;">1.3.1</h2></summary>
 
 ### 1.3.1

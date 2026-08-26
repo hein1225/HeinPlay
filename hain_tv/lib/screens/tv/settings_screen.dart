@@ -40,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   BufferProfile _bufferProfile = BufferProfile.standard;
   bool _lunaTvLiveEnabled = true;
   int _liveSourceCacheHours = 24;
+  bool _epgLoadEnabled = true;
   BangumiApiProxyType _bangumiApiProxyType = BangumiApiProxyType.cmliussss;
   String _bangumiApiProxyUrl = '';
   BangumiImageProxyType _bangumiImageProxyType =
@@ -95,6 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final bufferProfile = await UserDataService.getBufferProfile();
     final lunaTvLiveEnabled = await UserDataService.getLunaTvLiveEnabled();
     final liveSourceCacheHours = await UserDataService.getLiveSourceCacheHours();
+    final epgLoadEnabled = await UserDataService.getEpgLoadEnabled();
     final bangumiApiProxyType = await UserDataService.getBangumiApiProxyType();
     final bangumiApiProxyUrl = await UserDataService.getBangumiApiProxyUrl();
     final bangumiImageProxyType =
@@ -127,6 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _bufferProfile = bufferProfile;
       _lunaTvLiveEnabled = lunaTvLiveEnabled;
       _liveSourceCacheHours = liveSourceCacheHours;
+      _epgLoadEnabled = epgLoadEnabled;
       _bangumiApiProxyType = bangumiApiProxyType;
       _bangumiApiProxyUrl = bangumiApiProxyUrl;
       _bangumiImageProxyType = bangumiImageProxyType;
@@ -212,6 +215,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _lunaTvLiveEnabled = value);
     // 通知直播相关页面立即刷新，开启后第一时间获取服务器直播源。
     LiveSourceRefreshNotifier.instance.notify();
+  }
+
+  Future<void> _setEpgLoadEnabled(bool value) async {
+    await UserDataService.saveEpgLoadEnabled(value);
+    setState(() => _epgLoadEnabled = value);
   }
 
   Future<void> _setLiveSourceCacheHours(int hours) async {
@@ -473,6 +481,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: '关闭后将不再获取 LunaTV 服务端提供的直播频道',
             value: _lunaTvLiveEnabled,
             onChanged: _setLunaTvLiveEnabled,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _buildSwitchTile(
+            title: '加载 EPG 节目单',
+            subtitle: '关闭后不拉取节目单与时移信息，直播连接更快；开启时（默认）频道就绪后立即开播，节目单后台异步加载',
+            value: _epgLoadEnabled,
+            onChanged: _setEpgLoadEnabled,
           ),
           const SizedBox(height: AppSpacing.md),
           _buildLiveSourceCacheTile(),
