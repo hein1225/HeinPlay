@@ -8,40 +8,38 @@
 #### 新增
 
 - **全平台海蓝主题色与运行时明暗切换**
-  - 全平台主色调由红色统一调整为海蓝色（与启动封面一致），通过 `AppColors` 运行时 getter 实现，切换后全局即时刷新，无需重启应用。
-  - 新增运行时主题系统（基于 `ThemeModeService`）：支持「跟随系统」「明亮」「暗黑」三种模式，三端 App 根监听主题变更原地刷新，保留正在播放的页面不被销毁。
-  - 播放界面颜色脱离主题切换系统，固定为暗色以保证播放场景不受明暗影响。
+  - 全平台主色调由红色统一调整为海蓝色（与启动封面一致），切换后全局即时刷新，无需重启应用。
+  - 新增运行时主题切换：支持「跟随系统」「明亮」「暗黑」三种模式，切换后保留正在播放的页面不被销毁。
+  - 播放界面固定为暗色，不受明暗切换影响，保证播放场景视觉一致。
 
 - **启动页多端适配**
   - TV / Windows / 平板横屏展示带进度条的横版启动设计；手机竖屏展示竖版设计。
   - 启动进度条覆盖「应用加载」与「服务端连接」两个阶段，统一反馈加载流程。
 
-- **直播保存各源最后观看频道（全平台）**
-  - 直播模式退出时保存各直播源最后观看的频道（`LiveSourceStorage.saveLastChannel`），重新进入直播源自动续播上次频道。
-  - 切换频道即持久化、播放页 `dispose` 时也保存，覆盖崩溃与退出场景；TV / 手机 / Windows 共用同一直播播放页，全平台生效。
+- **直播记忆最后观看频道（全平台）**
+  - 直播退出时保存各直播源最后观看的频道，重新进入直播源自动续播上次频道。
+  - 切换频道即持久化，覆盖崩溃与退出场景；TV / 手机 / Windows 共用同一直播播放页，全平台生效。
 
 #### 修复
 
 - **Android 启动封面无法满屏**
-  - 废弃 core-splashscreen 兼容库（`windowSplashScreenContent` 为平台属性，Android 12+ 无法满屏），改为 `MainActivity` 手动 `ImageView`（CENTER_CROP）满屏覆盖层，首帧就绪后移除。
-  - 修复透明 FlutterView 导致的 ExoPlayer 视频纹理合成失败（黑屏 / 进度冻结），确保不透明 FlutterView 渲染。
-  - 通过 `recreate()` 实现主题切换后的原生层重启。
+  - 修复 Android 启动封面无法满屏显示的问题。
+  - 修复部分 Android 设备播放黑屏与进度冻结的问题。
 
 - **Windows 启动封面与窗口交互**
-  - 修复窗口 / 小窗模式调节窗口大小时误显示静态载入封面（`win32_window.cpp` 的 `splash_shown_` 标志守卫，resize 不再重绘封面）。
+  - 修复 Windows 窗口 / 小窗模式调节窗口大小时误显示静态载入封面的问题。
   - 恢复 Windows 冷启动的启动进度条（封面 + 进度条），不再只有静态封面。
 
 #### 优化
 
 - **依赖升级（注意 tvLegacy 兼容）**
-  - 升级 `cached_network_image` 3.4.1→4.0.0、`video_player` 2.11.1→2.14.0、`dio` 5.4.0→5.11.0、`xml` 6.5.0→7.0.1、`wakelock_plus` 1.2.10→1.7.0、`volume_controller` 3.3.2→3.6.1、`win32` 6.3.0→6.4.0、`fvp` 0.37.3→0.38.1，提升稳定性与播放兼容。
-  - `permission_handler` 保持 `^12.0.3`（不升 13.x），因其 13.x 拉取 `permission_handler_android ^14.0.0`（minSdk 24），会破坏 tvLegacy（Android 5.0+ / API 21）安装兼容。
+  - 升级 `cached_network_image`、`video_player`、`dio`、`xml`、`wakelock_plus`、`volume_controller`、`win32`、`fvp` 等依赖，提升稳定性与播放兼容。
+  - `permission_handler` 保持 `^12.0.3`，以维持 tvLegacy（Android 5.0+）安装兼容。
 
 #### 构建
 
 - **Windows 构建脚本修复**
-  - `scripts/build_windows.ps1` 显式锁定 `PUB_CACHE` 指向项目本地缓存，避免 fvp 的 mdk-sdk 预缓存失效导致构建落到全局缓存并请求已失效的 GitHub `latest/download` 下载链接（404）。
-  - 新增 mdk-sdk 兜底预置：缓存缺失时自动从正确的 GitHub 发布资产下载并解压，确保 Windows 构建稳定可复现。
+  - 修复 Windows 构建脚本在部分网络环境下因 fvp 依赖下载失败导致构建中断的问题，锁定本地依赖缓存并新增依赖兜底预置，确保 Windows 构建稳定可复现。
 
 #### 变更
 
