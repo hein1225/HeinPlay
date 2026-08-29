@@ -58,8 +58,9 @@ class _ThemeSettingsPageState extends State<ThemeSettingsPage> {
     _restartApp();
   }
 
-  /// 主题切换后重启应用（仅 Android 走原生 Activity 重建；其它平台依赖各 App 根的
-  /// setState 原地刷新，由 ThemeModeService 的监听驱动）。
+  /// 主题切换后重启应用（仅 Android 走原生 Activity 重建；Windows / TV / 手机端不重启，
+  /// 由各 Shell（WindowsShell/TvShell/MobileShell）监听 ThemeModeService 原地刷新自身，
+  /// 返回首页即显示新主题，且不打断播放中的视频页）。
   void _restartApp() {
     if (Platform.isAndroid) {
       try {

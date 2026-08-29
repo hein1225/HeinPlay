@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/screens/windows/login_screen.dart';
+import 'package:hain_tv/services/app_bootstrap.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/app_logger.dart';
@@ -20,7 +21,12 @@ class HainWindowsApp extends StatefulWidget {
 class _HainWindowsAppState extends State<HainWindowsApp>
     with WindowListener {
   /// 全局导航 key：供无 Navigator context 的全局 ESC 处理器安全访问当前路由栈。
-  final _navigatorKey = GlobalKey<NavigatorState>();
+  ///
+  /// 切主题时更换为新的 [GlobalKey]，强制整棵 [Navigator] 路由树重建（= 全界面
+  /// 重建刷新）：所有页面与覆盖层立即按新主题重读 [AppColors]，实现全量刷新；
+  /// 已启动后初始路由由 [AppBootstrap.completed] 决定为 /home 或 /login，不会
+  /// 重新走载入页、也不会重复初始化。正在播放的视频页随之被重置（非卡死）。
+  GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -36,9 +42,10 @@ class _HainWindowsAppState extends State<HainWindowsApp>
   }
 
   void _onThemeChanged() {
-    // 切换主题时重建 MaterialApp（setState 触发 build），所有页面与覆盖层随之
-    // 按新主题重新读取 AppColors，实现全量刷新；不换 key，避免正在播放的视频页被
-    // 整体销毁而卡死。
+    // 全界面重建刷新：更换 Navigator key 使整棵路由树重建并立即套用新主题。
+    // 不依赖 MaterialApp 原地 setState（那样已推送路由被 ModalRoute 缓存、不重跑
+    // build，主题不生效）。已启动后初始路由为 /home，不会重走载入页与重复初始化。
+    _navigatorKey = GlobalKey<NavigatorState>();
     if (mounted) setState(() {});
   }
 
@@ -96,7 +103,12 @@ class _HainWindowsAppState extends State<HainWindowsApp>
       themeMode: ThemeModeService.instance.themeMode,
       // 注意：'/home' 不要写成 const WindowsShell()，否则主题切换时 identical 的 const
       // 页面不重跑 build，AppColors 不重读、界面不刷新。每次返回新实例以触发整页重绘。
+      // 初始路由依据 AppBootstrap 选择：首次冷启动走 '/splash' 载入页；运行期切主题
+      // 重建 Navigator 时已为 true，直接落到载入页实际跳转的目标（/home 或 /login），
+      // 不重走载入页、不重复初始化、也不会把登录页用户错误踢回首页。
+      initialRoute: AppBootstrap.completed ? AppBootstrap.initialRoute : '/splash',
       routes: {
+        '/splash': (context) => const SplashScreen(target: SplashTarget.windows),
         '/home': (context) => WindowsShell(),
         '/login': (context) => const LoginScreen(),
       },
@@ -106,7 +118,6 @@ class _HainWindowsAppState extends State<HainWindowsApp>
       // 原生 win32 启动封面（splash.bmp）在 Flutter 首帧后由 DestroySplashOverlay 移除；
       // 移除后 splash_shown_=false，窗口缩放/DPI 变化均不再重绘原生封面，故播放中调整窗口
       // 大小不会再次露出静态封面。
-      home: const SplashScreen(target: SplashTarget.windows),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../services/app_bootstrap.dart';
 import '../../services/app_info_service.dart';
 import '../../utils/app_logger.dart';
 import '../../services/bangumi_service.dart';
@@ -181,6 +182,11 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) return;
 
       final route = loggedIn ? '/home' : '/login';
+
+      // 标记引导完成并记录跳转目标：运行期切主题重建 Navigator 时，初始路由据此
+      // 直接落到 /home 或 /login，而不会重新显示载入页、也不会重复初始化。
+      AppBootstrap.markCompleted(route);
+
       Navigator.of(context).pushReplacementNamed(route);
     } catch (e, s) {
       debugPrint('载入页初始化失败: $e\n$s');
