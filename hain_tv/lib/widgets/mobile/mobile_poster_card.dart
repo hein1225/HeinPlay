@@ -43,7 +43,7 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
       child: Center(
         child: Text(
           widget.title.isNotEmpty ? widget.title.substring(0, 1) : '',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 32,
             color: AppColors.textMuted,
@@ -215,7 +215,7 @@ class _MobilePosterCardState extends State<MobilePosterCard> {
             right: AppSpacing.sm,
             child: Container(
               padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),

@@ -7,6 +7,7 @@ import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
 import '../../theme.dart';
 import '../live_player_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// Mobile 直播首页：直播源管理界面。
 ///
@@ -108,7 +109,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.bgSurface,
-        title: const Text(
+        title: Text(
           '删除确认',
           style: TextStyle(
             fontFamily: 'NotoSansSC',
@@ -117,7 +118,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         ),
         content: Text(
           '确定要删除直播源"${source.name}"吗？',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: AppColors.textSecondary,
           ),
@@ -125,14 +126,14 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text(
+            child: Text(
               '取消',
               style: TextStyle(color: AppColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text(
+            child: Text(
               '删除',
               style: TextStyle(color: AppColors.error),
             ),
@@ -180,7 +181,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         backgroundColor: AppColors.bgSurface,
         title: Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: AppColors.textPrimary,
           ),
@@ -190,22 +191,22 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
           children: [
             TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: '直播源名称',
                 labelStyle: TextStyle(color: AppColors.textSecondary),
                 border: OutlineInputBorder(),
               ),
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: TextStyle(color: AppColors.textPrimary),
             ),
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: urlCtrl,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: '直播源地址（M3U/M3U8/JSON 链接或内容）',
                 labelStyle: TextStyle(color: AppColors.textSecondary),
                 border: OutlineInputBorder(),
               ),
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: TextStyle(color: AppColors.textPrimary),
               maxLines: 3,
             ),
           ],
@@ -213,7 +214,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
+            child: Text(
               '取消',
               style: TextStyle(color: AppColors.textSecondary),
             ),
@@ -225,7 +226,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
               if (name.isEmpty || url.isEmpty) return;
               Navigator.of(ctx).pop((name: name, url: url));
             },
-            child: const Text(
+            child: Text(
               '保存',
               style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
             ),
@@ -271,7 +272,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -282,7 +283,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
           children: [
             Text(
               _error!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 color: AppColors.textSecondary,
               ),
@@ -316,13 +317,13 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.live_tv,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无可用直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -385,7 +386,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
                   children: [
                     Text(
                       source.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         color: AppColors.textPrimary,
                         fontWeight: FontWeight.w600,
@@ -396,7 +397,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
                       source.isBuiltin ? 'LunaTV 服务端直播源' : source.url,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         color: AppColors.textMuted,
                         fontSize: 12,
@@ -439,7 +440,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
                   onPressed: () => _deleteSource(source),
                 ),
               ],
-              const Icon(
+              Icon(
                 Icons.chevron_right,
                 color: AppColors.textSecondary,
                 size: 20,

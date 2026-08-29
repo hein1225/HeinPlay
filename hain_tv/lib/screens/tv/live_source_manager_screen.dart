@@ -11,6 +11,7 @@ import '../../services/live_source_storage.dart';
 import '../../services/remote_input_service.dart';
 import '../../theme.dart';
 import '../../widgets/tv/focusable.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class TvLiveSourceManagerScreen extends StatefulWidget {
   const TvLiveSourceManagerScreen({super.key});
@@ -123,7 +124,7 @@ class _TvLiveSourceManagerScreenState
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          title: Text(
             '手机扫码管理直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -137,7 +138,7 @@ class _TvLiveSourceManagerScreenState
                 ? Center(
                     child: Text(
                       error,
-                      style: const TextStyle(color: AppColors.error),
+                      style: TextStyle(color: AppColors.error),
                     ),
                   )
                 : Column(
@@ -156,7 +157,7 @@ class _TvLiveSourceManagerScreenState
                         ),
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      const Text(
+                      Text(
                         '使用手机扫描二维码，在网页上添加、编辑或删除直播源',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -181,7 +182,7 @@ class _TvLiveSourceManagerScreenState
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: const Text(
+                child: Text(
                   '取消',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -228,7 +229,7 @@ class _TvLiveSourceManagerScreenState
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       child: Row(
         children: [
-          const Expanded(
+          Expanded(
             child: Text(
               '直播源管理',
               style: TextStyle(
@@ -251,7 +252,7 @@ class _TvLiveSourceManagerScreenState
                 border: Border.all(color: AppColors.border),
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
@@ -309,7 +310,7 @@ class _TvLiveSourceManagerScreenState
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -333,13 +334,13 @@ class _TvLiveSourceManagerScreenState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.settings_input_antenna,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无本地直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -409,7 +410,7 @@ class _TvLiveSourceManagerScreenState
                         color: AppColors.primary.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(AppRadius.sm),
                       ),
-                      child: const Text(
+                      child: Text(
                         '服务器',
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
@@ -425,7 +426,7 @@ class _TvLiveSourceManagerScreenState
                       children: [
                         Text(
                           config.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             color: AppColors.textPrimary,
                             fontWeight: FontWeight.w600,
@@ -441,7 +442,7 @@ class _TvLiveSourceManagerScreenState
                                   : config.url),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             color: AppColors.textMuted,
                             fontSize: 12,
@@ -477,7 +478,7 @@ class _TvLiveSourceManagerScreenState
                 horizontal: AppSpacing.sm,
                 vertical: AppSpacing.xs,
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
@@ -675,7 +676,7 @@ class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
             hintText: hint,
             border: InputBorder.none,
           ),
-          style: const TextStyle(color: AppColors.textPrimary),
+          style: TextStyle(color: AppColors.textPrimary),
           maxLines: maxLines,
           minLines: minLines,
         ),
@@ -754,7 +755,7 @@ class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               '启用',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
@@ -780,7 +781,7 @@ class _TvSourceEditDialogState extends State<_TvSourceEditDialog> {
         backgroundColor: AppColors.bgSurface,
         title: Text(
           widget.config == null ? '添加直播源' : '编辑直播源',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: AppColors.textPrimary,
           ),

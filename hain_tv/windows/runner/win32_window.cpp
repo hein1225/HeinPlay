@@ -1,5 +1,6 @@
 #include "win32_window.h"
 
+#include <algorithm>
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
@@ -53,6 +54,84 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   FreeLibrary(user32_module);
 }
 
+// 将 |bmp| 以 cover 方式（保持比例、居中裁切）拉伸绘制到 |wnd| 的客户区 DC。
+static void PaintSplashBitmap(HDC hdc, HWND wnd, HBITMAP bmp) {
+  BITMAP bm{};
+  if (!GetObject(bmp, sizeof(bm), &bm) || bm.bmWidth <= 0 ||
+      bm.bmHeight <= 0) {
+    return;
+  }
+  RECT rc{};
+  GetClientRect(wnd, &rc);
+  const int cw = rc.right - rc.left;
+  const int ch = rc.bottom - rc.top;
+  if (cw <= 0 || ch <= 0) {
+    return;
+  }
+  const double scale = std::max(static_cast<double>(cw) / bm.bmWidth,
+                                static_cast<double>(ch) / bm.bmHeight);
+  const int dw = static_cast<int>(bm.bmWidth * scale);
+  const int dh = static_cast<int>(bm.bmHeight * scale);
+  const int dx = (cw - dw) / 2;
+  const int dy = (ch - dh) / 2;
+
+  HDC mem_dc = CreateCompatibleDC(hdc);
+  if (mem_dc == nullptr) {
+    return;
+  }
+  const HBITMAP old = reinterpret_cast<HBITMAP>(SelectObject(mem_dc, bmp));
+  SetStretchBltMode(hdc, HALFTONE);
+  SetBrushOrgEx(hdc, 0, 0, nullptr);
+  StretchBlt(hdc, dx, dy, dw, dh, mem_dc, 0, 0, bm.bmWidth, bm.bmHeight,
+             SRCCOPY);
+  SelectObject(mem_dc, old);
+  DeleteDC(mem_dc);
+}
+
+// 原生启动封面覆盖层：一个覆盖在 Flutter 视图之上的子窗口，引擎初始化阶段显示
+// 零解码封面；首帧就绪后销毁。其绘制逻辑与父窗口共用 PaintSplashBitmap。
+constexpr const wchar_t kSplashOverlayClass[] =
+    L"FLUTTER_RUNNER_SPLASH_OVERLAY";
+
+static LRESULT CALLBACK SplashOverlayWndProc(HWND hwnd, UINT const message,
+                                             WPARAM const wparam,
+                                             LPARAM const lparam) noexcept {
+  if (message == WM_PAINT) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+    const HBITMAP bmp =
+        reinterpret_cast<HBITMAP>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+    if (bmp != nullptr) {
+      PaintSplashBitmap(hdc, hwnd, bmp);
+    }
+    EndPaint(hwnd, &ps);
+    return 0;
+  }
+  if (message == WM_ERASEBKGND) {
+    return 1;
+  }
+  return DefWindowProc(hwnd, message, wparam, lparam);
+}
+
+static bool EnsureSplashOverlayClass() {
+  static bool registered = false;
+  if (registered) {
+    return true;
+  }
+  WNDCLASS window_class{};
+  window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  window_class.lpszClassName = kSplashOverlayClass;
+  window_class.style = CS_HREDRAW | CS_VREDRAW;
+  window_class.hInstance = GetModuleHandle(nullptr);
+  window_class.hbrBackground =
+      reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+  window_class.lpfnWndProc = SplashOverlayWndProc;
+  if (RegisterClass(&window_class)) {
+    registered = true;
+  }
+  return registered;
+}
+
 }  // namespace
 
 // Manages the Win32Window's window class registration.
@@ -97,7 +176,8 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    window_class.hbrBackground = 0;
+    // 深色背景刷：在原生封面绘制前作为兜底，避免窗口显示瞬间露出桌面。
+    window_class.hbrBackground = CreateSolidBrush(RGB(10, 10, 15));
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
     RegisterClass(&window_class);
@@ -204,6 +284,14 @@ Win32Window::MessageHandler(HWND hwnd,
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
+      // 仅在启动封面仍生效时同步覆盖层/重绘父窗口封面；首帧后封面已移除，resize
+      // 不再绘制封面，避免播放中调整窗口大小（窗口/小窗模式）露出静态封面。
+      if (splash_shown_ && splash_overlay_ != nullptr) {
+        MoveWindow(splash_overlay_, rect.left, rect.top, rect.right - rect.left,
+                   rect.bottom - rect.top, TRUE);
+      } else if (splash_shown_ && splash_bitmap_ != nullptr) {
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
       return 0;
     }
 
@@ -216,9 +304,62 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_ERASEBKGND:
+      // 由 WM_PAINT 统一绘制封面，避免默认擦除露出桌面。
+      return 1;
+
+    case WM_PAINT: {
+      PAINTSTRUCT ps;
+      HDC hdc = BeginPaint(hwnd, &ps);
+      // 仅启动封面生效期间绘制封面；首帧后封面移除，resize/重绘不再绘制，避免露出静态封面。
+      if (splash_shown_ && splash_bitmap_ != nullptr) {
+        DrawSplashBitmap(hdc, hwnd);
+      }
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
+}
+
+void Win32Window::DrawSplashBitmap(HDC hdc, HWND window) const {
+  if (splash_bitmap_ != nullptr) {
+    PaintSplashBitmap(hdc, window, splash_bitmap_);
+  }
+}
+
+void Win32Window::CreateSplashOverlay() {
+  if (splash_bitmap_ == nullptr || window_handle_ == nullptr) {
+    return;
+  }
+  if (!EnsureSplashOverlayClass()) {
+    return;
+  }
+  RECT rc = GetClientArea();
+  splash_overlay_ = CreateWindowEx(
+      0, kSplashOverlayClass, nullptr,
+      WS_CHILD | WS_VISIBLE | WS_DISABLED, rc.left, rc.top,
+      rc.right - rc.left, rc.bottom - rc.top, window_handle_, nullptr,
+      GetModuleHandle(nullptr), nullptr);
+  if (splash_overlay_ != nullptr) {
+    SetWindowLongPtr(splash_overlay_, GWLP_USERDATA,
+                     reinterpret_cast<LONG_PTR>(splash_bitmap_));
+    // 确保覆盖层位于 Flutter 子视图之上。
+    SetWindowPos(splash_overlay_, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+  }
+}
+
+void Win32Window::DestroySplashOverlay() {
+  if (splash_overlay_ != nullptr) {
+    DestroyWindow(splash_overlay_);
+    splash_overlay_ = nullptr;
+  }
+  // 首帧后封面彻底失效：后续 resize/重绘均不再绘制封面，避免播放中调整窗口大小
+  // （窗口/小窗模式）露出静态封面。封面位图资源仍保留至应用退出时统一释放。
+  splash_shown_ = false;
 }
 
 void Win32Window::Destroy() {
@@ -264,12 +405,23 @@ void Win32Window::SetQuitOnClose(bool quit_on_close) {
 }
 
 bool Win32Window::OnCreate() {
-  // No-op; provided for subclasses.
+  // 加载原生启动封面（若资源缺失则留空，由子类决定是否显示 Flutter 封面）。
+  if (splash_bitmap_ == nullptr) {
+    splash_bitmap_ = reinterpret_cast<HBITMAP>(LoadImage(
+        GetModuleHandle(nullptr), MAKEINTRESOURCE(IDB_SPLASH), IMAGE_BITMAP, 0,
+        0, LR_CREATEDIBSECTION));
+  }
+  // No-op otherwise; provided for subclasses.
   return true;
 }
 
 void Win32Window::OnDestroy() {
-  // No-op; provided for subclasses.
+  DestroySplashOverlay();
+  if (splash_bitmap_ != nullptr) {
+    DeleteObject(splash_bitmap_);
+    splash_bitmap_ = nullptr;
+  }
+  // No-op otherwise; provided for subclasses.
 }
 
 void Win32Window::UpdateTheme(HWND const window) {

@@ -3,6 +3,9 @@
 // Used by Runner.rc
 //
 #define IDI_APP_ICON                    101
+// 原生启动封面（TV 风格），由 win32 窗口在 Flutter 引擎初始化阶段绘制，
+// 实现“零解码”封面：软件启动瞬间即显示，不依赖 Flutter 侧解码资源。
+#define IDB_SPLASH                      200
 
 // Next default values for new objects
 //

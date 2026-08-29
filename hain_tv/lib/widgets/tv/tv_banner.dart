@@ -132,7 +132,7 @@ class TvBanner extends StatelessWidget {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 40,
                     fontWeight: FontWeight.w700,
@@ -147,7 +147,7 @@ class TvBanner extends StatelessWidget {
                       overview!,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 15,
                         height: 1.5,

@@ -346,7 +346,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                       color: AppColors.textPrimary,
@@ -355,7 +355,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       color: AppColors.textSecondary,
                     ),
@@ -363,7 +363,7 @@ class ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            Icon(Icons.chevron_right, color: AppColors.textSecondary),
           ],
         ),
       ),
@@ -381,7 +381,7 @@ class ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '软件介绍',
             style: TextStyle(
               fontSize: 16,
@@ -390,7 +390,7 @@ class ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          const Text(
+          Text(
             '海因影视是一款基于 Flutter 开发的跨平台影视应用，TV 版支持多源播放、豆瓣数据展示等功能。手机版与 Windows 版本可前往下方开源仓库下载。',
             style: TextStyle(
               fontSize: 13,
@@ -428,11 +428,11 @@ class ProfileScreenState extends State<ProfileScreen> {
       children: [
         Row(
           children: [
-            const Icon(Icons.code, color: AppColors.primary, size: 16),
+            Icon(Icons.code, color: AppColors.primary, size: 16),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$label：',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 color: AppColors.textSecondary,
               ),
@@ -440,7 +440,7 @@ class ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: Text(
                 url,
-                style: const TextStyle(fontSize: 13, color: AppColors.primary),
+                style: TextStyle(fontSize: 13, color: AppColors.primary),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
               ),
@@ -467,7 +467,7 @@ class ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: Text(
                 '手机扫码访问$label',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
                 ),
@@ -694,7 +694,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
             backgroundColor: AppColors.bgElevated,
             title: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
@@ -702,13 +702,13 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
             ),
             content: Text(
               message,
-              style: const TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: AppColors.textSecondary),
             ),
             actions: [
             FocusableWidget(
               autofocus: true,
               onTap: () => Navigator.of(context).pop(false),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 child: Text(
                   '取消',
@@ -722,7 +722,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
             ),
             FocusableWidget(
               onTap: () => Navigator.of(context).pop(true),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 child: Text(
                   '确定',
@@ -973,7 +973,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
               children: [
                 Text(
                   widget.title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
@@ -989,7 +989,7 @@ class _RecordSheetState<T> extends State<_RecordSheet<T>> {
                   ? Center(
                       child: Text(
                         widget.emptyMessage,
-                        style: const TextStyle(color: AppColors.textSecondary),
+                        style: TextStyle(color: AppColors.textSecondary),
                       ),
                     )
                   : Focus(

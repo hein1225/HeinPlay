@@ -15,6 +15,7 @@ import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 import 'package:hain_tv/widgets/windows/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/platform/windows_fullscreen_mixin.dart';
@@ -29,7 +30,7 @@ class WindowsPlayerScreen extends StatefulWidget {
   final PlayerBackendType playerBackend;
   final int initialPositionMs;
 
-  const WindowsPlayerScreen({
+  WindowsPlayerScreen({
     super.key,
     required this.videoDetail,
     this.episodeIndex = 0,
@@ -86,18 +87,18 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 当前光标是否已隐藏。
   bool _isCursorHidden = false;
   /// 鼠标无操作多少秒后自动隐藏光标。
-  static const Duration _kMouseHideDelay = Duration(seconds: 5);
+  static Duration _kMouseHideDelay = Duration(seconds: 5);
 
   /// window_manager 的 SetMaximumSize 不支持 Size.infinite（会传一个异常值给
   /// Windows MINMAXINFO，导致窗口最大尺寸被限制为 0 或极小值），因此用一个大尺寸
   /// 常量代替“无限制”。
-  static const Size _kUnboundedSize = Size(100000, 100000);
+  static Size _kUnboundedSize = Size(100000, 100000);
 
   /// 普通窗口最小尺寸，进入/恢复普通模式时使用。
-  static const Size _kNormalMinSize = Size(900, 600);
+  static Size _kNormalMinSize = Size(900, 600);
 
   /// 小窗模式最小尺寸。
-  static const Size _kMiniMinSize = Size(320, 180);
+  static Size _kMiniMinSize = Size(320, 180);
 
   /// 判断保存的窗口边界是否为正常窗口尺寸。
   bool _isValidNormalBounds(Rect? bounds) {
@@ -140,6 +141,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   static const int _controlsAutoHideSeconds = 10;
   late int _pendingInitialPositionMs;
   bool _isRecordSaveThrottled = false;
+  bool _recordSaveInFlight = false;
 
   // 标记是否有弹窗打开，打开时禁止控制栏自动隐藏。
   bool _dialogOpen = false;
@@ -210,7 +212,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
   void _startClock() {
     _currentTime = DateTime.now();
-    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+    _clockTimer = Timer.periodic(Duration(minutes: 1), (_) {
       if (mounted) {
         setState(() => _currentTime = DateTime.now());
       }
@@ -352,7 +354,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     // 刚切换集数/源的前 2 秒内不处理跳过/自动下一集，避免初始化阶段位置抖动导致误触发。
     final switchAt = _episodeSwitchAt;
     if (switchAt != null &&
-        DateTime.now().difference(switchAt) < const Duration(seconds: 2)) {
+        DateTime.now().difference(switchAt) < Duration(seconds: 2)) {
       return;
     }
 
@@ -365,7 +367,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     final skipSeekCooldown =
         _lastSkipSeekAt != null &&
         DateTime.now().difference(_lastSkipSeekAt!) <
-            const Duration(seconds: 3);
+            Duration(seconds: 3);
 
     if (_skipConfig != null && _skipConfig!.segments.isNotEmpty) {
       for (final segment in _skipConfig!.segments) {
@@ -463,7 +465,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     final start = DateTime.now();
     while (DateTime.now().difference(start) < timeout) {
       if (_duration.inMilliseconds > 0) return true;
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(Duration(milliseconds: 200));
     }
     return _duration.inMilliseconds > 0;
   }
@@ -600,7 +602,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
             ? _duration.inMilliseconds - 500
             : _duration.inMilliseconds;
         final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
-        await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(Duration(milliseconds: 200));
         if (mounted) {
           _backend?.seek(Duration(milliseconds: clampedMs));
         }
@@ -876,7 +878,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     if (_dialogOpen) return;
     _controlsTimer?.cancel();
     _controlsTimer = Timer(
-      const Duration(seconds: _controlsAutoHideSeconds),
+      Duration(seconds: _controlsAutoHideSeconds),
       () {
         debugPrint('控制栏自动隐藏定时器触发');
         _hideControls();
@@ -923,7 +925,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       _gestureIndicatorIcon = icon;
     });
     _gestureIndicatorTimer?.cancel();
-    _gestureIndicatorTimer = Timer(const Duration(seconds: 1), () {
+    _gestureIndicatorTimer = Timer(Duration(seconds: 1), () {
       if (mounted) {
         setState(() => _gestureIndicatorVisible = false);
       }
@@ -932,25 +934,25 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
   /// 快进/快退手势标识浮层（居中显示，样式与手机/TV 版一致）。
   Widget _buildGestureIndicator() {
-    if (!_gestureIndicatorVisible) return const SizedBox.shrink();
+    if (!_gestureIndicatorVisible) return SizedBox.shrink();
     return Center(
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
-          color: AppColors.bgOverlay,
+          color: Color(0xD90A0A0F),
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_gestureIndicatorIcon, color: AppColors.textPrimary, size: 32),
-            const SizedBox(height: AppSpacing.sm),
+            Icon(_gestureIndicatorIcon, color: Color(0xFFF0F0F5), size: 32),
+            SizedBox(height: AppSpacing.sm),
             Text(
               _gestureIndicatorText,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
-                color: AppColors.textPrimary,
+                color: Color(0xFFF0F0F5),
               ),
             ),
           ],
@@ -987,12 +989,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          backgroundColor: Color(0xFF14141F),
+          title: Text(
             '切换播放源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
-              color: AppColors.textPrimary,
+              color: Color(0xFFF0F0F5),
             ),
           ),
           content: SizedBox(
@@ -1011,11 +1013,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.md),
                     side: BorderSide(
-                      color: selected ? AppColors.primary : AppColors.border,
+                      color: selected ? AppColors.primary : Color(0x14FFFFFF),
                     ),
                   ),
                   leading: selected
-                      ? const Icon(Icons.check, color: AppColors.primary)
+                      ? Icon(Icons.check, color: AppColors.primary)
                       : Text(
                           'No.${index + 1}',
                           style: TextStyle(
@@ -1024,7 +1026,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                             fontWeight: FontWeight.w700,
                             color: selected
                                 ? AppColors.primary
-                                : AppColors.textSecondary,
+                                : Color(0xFF9CA3AF),
                           ),
                         ),
                   title: Text(
@@ -1035,7 +1037,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       fontWeight: FontWeight.w600,
                       color: selected
                           ? AppColors.primary
-                          : AppColors.textPrimary,
+                          : Color(0xFFF0F0F5),
                     ),
                   ),
                   subtitle: Text(
@@ -1045,7 +1047,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       fontSize: 13,
                       color: selected
                           ? AppColors.primary.withValues(alpha: 0.8)
-                          : AppColors.textSecondary,
+                          : Color(0xFF9CA3AF),
                     ),
                   ),
                   onTap: () {
@@ -1074,12 +1076,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          backgroundColor: Color(0xFF14141F),
+          title: Text(
             '切换播放器',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
-              color: AppColors.textPrimary,
+              color: Color(0xFFF0F0F5),
             ),
           ),
           content: SizedBox(
@@ -1108,7 +1110,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.md),
                     side: BorderSide(
-                      color: selected ? AppColors.primary : AppColors.border,
+                      color: selected ? AppColors.primary : Color(0x14FFFFFF),
                     ),
                   ),
                   title: Text(
@@ -1119,11 +1121,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       fontWeight: FontWeight.w600,
                       color: selected
                           ? AppColors.primary
-                          : AppColors.textPrimary,
+                          : Color(0xFFF0F0F5),
                     ),
                   ),
                   leading: selected
-                      ? const Icon(Icons.check, color: AppColors.primary)
+                      ? Icon(Icons.check, color: AppColors.primary)
                       : null,
                   onTap: () {
                     Navigator.of(context).pop();
@@ -1197,12 +1199,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          backgroundColor: Color(0xFF14141F),
+          title: Text(
             '选集',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
-              color: AppColors.textPrimary,
+              color: Color(0xFFF0F0F5),
             ),
           ),
           content: SizedBox(
@@ -1218,7 +1220,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.md),
                     side: BorderSide(
-                      color: selected ? AppColors.primary : AppColors.border,
+                      color: selected ? AppColors.primary : Color(0x14FFFFFF),
                     ),
                   ),
                   title: Text(
@@ -1229,11 +1231,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       fontWeight: FontWeight.w600,
                       color: selected
                           ? AppColors.primary
-                          : AppColors.textPrimary,
+                          : Color(0xFFF0F0F5),
                     ),
                   ),
                   leading: selected
-                      ? const Icon(Icons.check, color: AppColors.primary)
+                      ? Icon(Icons.check, color: AppColors.primary)
                       : null,
                   onTap: () {
                     Navigator.of(context).pop();
@@ -1253,14 +1255,22 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     });
   }
 
-  // 播放记录节流保存（10秒内最多保存一次）
+  // 播放记录节流保存（10秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
   void _savePlayRecordThrottled() {
     if (_isRecordSaveThrottled) return;
+    if (!_isPlaybackReadyForRecord()) return;
     _isRecordSaveThrottled = true;
     _savePlayRecordToLunaTV();
     Timer(const Duration(seconds: 10), () {
       _isRecordSaveThrottled = false;
     });
+  }
+
+  /// 仅当播放器已初始化且已取到有效时长时才允许写播放记录：
+  /// 视频未就绪（黑屏卡死、duration 仍为 0）时不落盘，
+  /// 防止用 playTime=0/totalTime=0 覆盖掉上次正常的续播进度。
+  bool _isPlaybackReadyForRecord() {
+    return _initialized && _backend != null && _duration.inMilliseconds > 0;
   }
 
   /// Windows 播放页键盘快捷键处理。
@@ -1364,7 +1374,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         debugPrint('小窗双击：先恢复普通窗口');
         await _toggleMiniPlayer();
         // 等待窗口管理器完成恢复，避免尺寸/状态不同步。
-        await Future.delayed(const Duration(milliseconds: 400));
+        await Future.delayed(Duration(milliseconds: 400));
         await WindowsWindowUtils.ensureResizableFrame();
       }
       // 若恢复后已经处于全屏（进入小窗前就是全屏），无需再次切换。
@@ -1482,7 +1492,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         // 恢复普通窗口：必须先放开尺寸限制，否则 setBounds/setFullScreen 会被小窗的
         // 最大尺寸截断，导致窗口无法放大、无法真正全屏。
         await windowManager.setMaximumSize(_kUnboundedSize);
-        await windowManager.setMinimumSize(const Size(320, 180));
+        await windowManager.setMinimumSize(Size(320, 180));
         await windowManager.setResizable(true);
         await windowManager.setTitleBarStyle(_previousTitleBarStyle);
         await windowManager.setAlwaysOnTop(false);
@@ -1492,11 +1502,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           // 进入小窗前是全屏：先恢复保存的窗口尺寸，再重新进入全屏。
           if (_isValidNormalBounds(_previousWindowBounds)) {
             await windowManager.setBounds(_previousWindowBounds!);
-            await Future.delayed(const Duration(milliseconds: 200));
+            await Future.delayed(Duration(milliseconds: 200));
           } else {
             await windowManager.setSize(_kNormalMinSize);
             await windowManager.center();
-            await Future.delayed(const Duration(milliseconds: 200));
+            await Future.delayed(Duration(milliseconds: 200));
           }
           // 进入全屏前必须先恢复普通标题栏，否则 window_manager 在 is_frameless_
           // 为 true 时不会执行实际全屏 resize。
@@ -1511,7 +1521,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           await windowManager.center();
         }
         // 恢复正常窗口的最小尺寸限制，并强制刷新框架确保可拉伸。
-        await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(Duration(milliseconds: 100));
         await windowManager.setMinimumSize(_kNormalMinSize);
         await windowManager.setMaximumSize(_kUnboundedSize);
         await WindowsWindowUtils.ensureResizableFrame();
@@ -1537,7 +1547,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         if (_wasFullScreenBeforeMini) {
           await toggleWindowsFullscreen();
           // 等待窗口管理器完成退出全屏，再读取正常窗口尺寸。
-          await Future.delayed(const Duration(milliseconds: 500));
+          await Future.delayed(Duration(milliseconds: 500));
         }
         // 保存当前窗口尺寸、位置和标题栏样式。
         // 每次进入小窗都刷新保存的边界，避免使用过期尺寸导致恢复后窗口变小。
@@ -1585,7 +1595,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
             miniSize.height,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(Duration(milliseconds: 100));
         await WindowsWindowUtils.ensureResizableFrame();
         if (mounted) setState(() => _isMiniPlayer = true);
       }
@@ -1614,7 +1624,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     try {
       // 先放开尺寸限制，再恢复窗口边界，避免被小窗最大尺寸截断。
       await windowManager.setMaximumSize(_kUnboundedSize);
-      await windowManager.setMinimumSize(const Size(320, 180));
+      await windowManager.setMinimumSize(Size(320, 180));
       await windowManager.setResizable(true);
       await windowManager.setTitleBarStyle(_previousTitleBarStyle);
       await windowManager.setAlwaysOnTop(false);
@@ -1625,7 +1635,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         await windowManager.setSize(_kNormalMinSize);
         await windowManager.center();
       }
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(Duration(milliseconds: 100));
       await windowManager.setMinimumSize(_kNormalMinSize);
       await windowManager.setMaximumSize(_kUnboundedSize);
       await WindowsWindowUtils.ensureResizableFrame();
@@ -1686,7 +1696,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         }),
       );
       unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 500), () async {
+        Future<void>.delayed(Duration(milliseconds: 500), () async {
           try {
             await backend.dispose();
           } catch (e) {
@@ -1751,8 +1761,16 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
+  /// 串行化（同一时间只允许一个保存任务）；未真正起播或进度无效时不落盘，
+  /// 进度越界时钳制在 [0, 总时长] 内，防止脏数据导致下次续播 seek 异常。
   Future<void> _savePlayRecordToLunaTV() async {
+    if (_recordSaveInFlight) return;
+    if (!_isPlaybackReadyForRecord()) return;
+    _recordSaveInFlight = true;
     try {
+      final totalSec = _duration.inSeconds;
+      final rawPos = _position.inSeconds;
+      final playSec = rawPos < 0 ? 0 : (rawPos > totalSec ? totalSec : rawPos);
       final record = PlayRecord(
         id: _currentVideoDetail.id,
         source: _currentVideoDetail.source,
@@ -1762,8 +1780,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         year: _currentVideoDetail.year,
         index: _currentEpisodeIndex + 1, // 1-based
         totalEpisodes: _currentVideoDetail.episodes.length,
-        playTime: _position.inSeconds,
-        totalTime: _duration.inSeconds,
+        playTime: playSec,
+        totalTime: totalSec,
         saveTime: DateTime.now().millisecondsSinceEpoch,
         searchTitle: _currentVideoDetail.title,
         doubanId: _currentVideoDetail.doubanId?.toString(),
@@ -1773,42 +1791,44 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     } catch (e) {
       // 保存失败不阻塞退出
       debugPrint('保存播放记录失败: $e');
+    } finally {
+      _recordSaveInFlight = false;
     }
   }
 
   Widget _buildVideo() {
     // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
     if (_switchingSource) {
-      return const ColoredBox(color: Colors.black);
+      return ColoredBox(color: Colors.black);
     }
     if (!_initialized || _backend == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      return Center(
+        child: TechLoadingIndicator(),
       );
     }
     return Container(color: Colors.black, child: _backend!.buildVideoWidget());
   }
 
   Widget _buildError() {
-    if (_error == null) return const SizedBox.shrink();
+    if (_error == null) return SizedBox.shrink();
     return Container(
       color: Colors.black54,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: Text(_error!, style: const TextStyle(color: AppColors.error)),
+      padding: EdgeInsets.all(AppSpacing.md),
+      child: Text(_error!, style: TextStyle(color: AppColors.error)),
     );
   }
 
   Widget _buildSwitchingOverlay() {
-    if (!_switchingSource) return const SizedBox.shrink();
+    if (!_switchingSource) return SizedBox.shrink();
     return Container(
       color: Colors.black54,
-      child: const Center(
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: AppColors.primary),
+            TechLoadingIndicator(),
             SizedBox(height: AppSpacing.md),
-            Text('切换播放源中...', style: TextStyle(color: AppColors.textPrimary)),
+            Text('切换播放源中...', style: TextStyle(color: Color(0xFFF0F0F5))),
           ],
         ),
       ),
@@ -1975,7 +1995,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 小窗模式下不启用此覆盖层，改由 [_buildMiniCentralGestureOverlay]
   /// 统一处理单击/双击/拖动。
   Widget _buildDoubleTapOverlay() {
-    return const SizedBox.shrink();
+    return SizedBox.shrink();
   }
 
   /// 小窗模式的中间手势区：支持单击显示控制栏、双击切换全屏、拖动窗口。
@@ -2064,7 +2084,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 延迟导致 Windows 无法进入 resize 循环。
   /// 该热区位于 Stack 最顶层（除中间双击区外），确保控制栏显示时也能命中。
   Widget _buildResizeEdges() {
-    if (!_isMiniPlayer) return const SizedBox.shrink();
+    if (!_isMiniPlayer) return SizedBox.shrink();
     const edgeSize = 12.0;
     Widget edge({
       required ResizeEdge resizeEdge,
@@ -2175,7 +2195,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         // 消费掉顶部控制栏背景点击，避免触发下层屏幕单击事件。
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
           vertical: AppSpacing.md,
         ),
@@ -2183,7 +2203,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [AppColors.bgOverlay, Colors.transparent],
+            colors: [Color(0xD90A0A0F), Colors.transparent],
           ),
         ),
         child: Stack(
@@ -2198,12 +2218,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                       Navigator.of(context).pop();
                     }
                   },
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.arrow_back,
-                    color: AppColors.textPrimary,
+                    color: Color(0xFFF0F0F5),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2213,19 +2233,19 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                         _currentVideoDetail.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                          color: Color(0xFFF0F0F5),
                         ),
                       ),
                       Text(
                         _episodeTitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 14,
-                          color: AppColors.textSecondary,
+                          color: Color(0xFF9CA3AF),
                         ),
                       ),
                     ],
@@ -2237,11 +2257,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
               child: Center(
                 child: Text(
                   _formatClock(_currentTime),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 18,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
+                    color: Color(0xFFF0F0F5),
                     shadows: [
                       Shadow(
                         color: Colors.black54,
@@ -2266,7 +2286,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         // 消费掉小窗控制栏背景点击，避免触发下层屏幕单击事件。
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
@@ -2275,7 +2295,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
             colors: [
-              AppColors.bgOverlay.withValues(alpha: 0.9),
+              Color(0xD90A0A0F).withValues(alpha: 0.9),
               Colors.transparent,
             ],
           ),
@@ -2324,12 +2344,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: EdgeInsets.all(AppSpacing.sm),
           decoration: BoxDecoration(
-            color: AppColors.bgElevated.withValues(alpha: 0.8),
+            color: Color(0xFF1C1C2E).withValues(alpha: 0.8),
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          child: Icon(icon, color: AppColors.textPrimary, size: 22),
+          child: Icon(icon, color: Color(0xFFF0F0F5), size: 22),
         ),
       ),
     );
@@ -2345,12 +2365,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         // 消费掉底部控制栏背景点击，避免触发下层屏幕单击事件。
       },
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [AppColors.bgOverlay, Colors.transparent],
+            colors: [Color(0xD90A0A0F), Colors.transparent],
           ),
         ),
         child: Column(
@@ -2378,8 +2398,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                             ? _buffered.inMilliseconds /
                                   _duration.inMilliseconds
                             : 0.0,
-                        backgroundColor: AppColors.border,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
+                        backgroundColor: Color(0x14FFFFFF),
+                        valueColor: AlwaysStoppedAnimation<Color>(
                           Colors.white24,
                         ),
                       ),
@@ -2389,7 +2409,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                                   _duration.inMilliseconds
                             : 0.0,
                         backgroundColor: Colors.transparent,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
+                        valueColor: AlwaysStoppedAnimation<Color>(
                           AppColors.primary,
                         ),
                       ),
@@ -2398,7 +2418,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            SizedBox(height: AppSpacing.md),
             Wrap(
               alignment: WrapAlignment.start,
               spacing: AppSpacing.sm,
@@ -2410,28 +2430,28 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   icon: _playing ? Icons.pause : Icons.play_arrow,
                   tooltip: _playing ? '暂停' : '播放',
                 ),
-                const SizedBox(width: AppSpacing.sm),
+                SizedBox(width: AppSpacing.sm),
                 _buildControlIconButton(
                   onTap: _previousEpisode,
                   icon: Icons.skip_previous,
                   tooltip: '上一集',
                 ),
-                const SizedBox(width: AppSpacing.sm),
+                SizedBox(width: AppSpacing.sm),
                 _buildControlIconButton(
                   onTap: _nextEpisode,
                   icon: Icons.skip_next,
                   tooltip: '下一集',
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 Text(
                   '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 14,
-                    color: AppColors.textPrimary,
+                    color: Color(0xFFF0F0F5),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 if (DeviceUtils.isWindows)
                   _buildControlTextButton(
                     onTap: toggleWindowsFullscreen,
@@ -2441,7 +2461,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: isWindowsFullScreen ? '退出全屏' : '全屏',
                     tooltip: isWindowsFullScreen ? '退出全屏' : '全屏',
                   ),
-                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
                 if (DeviceUtils.isWindows)
                   _buildControlTextButton(
                     onTap: _toggleMiniPlayer,
@@ -2451,7 +2471,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: _isMiniPlayer ? '恢复窗口' : '小窗播放',
                     tooltip: _isMiniPlayer ? '恢复窗口' : '小窗播放',
                   ),
-                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
                 if (DeviceUtils.isWindows)
                   _buildControlTextButton(
                     onTap: _toggleAlwaysOnTop,
@@ -2461,7 +2481,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: _isAlwaysOnTop ? '取消置顶' : '置顶',
                     tooltip: _isAlwaysOnTop ? '取消置顶' : '窗口置顶',
                   ),
-                if (DeviceUtils.isWindows) const SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
                 if (_currentVideoDetail.source.isNotEmpty &&
                     _currentVideoDetail.id.isNotEmpty)
                   _buildControlTextButton(
@@ -2472,35 +2492,35 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     foregroundColor:
                         _skipConfig != null && _skipConfig!.segments.isNotEmpty
                         ? AppColors.primary
-                        : AppColors.textPrimary,
+                        : Color(0xFFF0F0F5),
                     backgroundColor:
                         _skipConfig != null && _skipConfig!.segments.isNotEmpty
                         ? AppColors.primaryTint
-                        : AppColors.bgElevated,
+                        : Color(0xFF1C1C2E),
                     isLoading: _skipConfigLoading,
                   ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 _buildControlTextButton(
                   onTap: _cycleVideoFit,
                   icon: Icons.aspect_ratio,
                   label: _videoFitLabel(_videoFit),
                   tooltip: '切换画面比例',
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 _buildControlTextButton(
                   onTap: _showPlayerBackendSelectorDialog,
                   icon: Icons.settings_applications,
                   label: _playerBackendLabel(_currentPlayerBackend),
                   tooltip: '切换播放器',
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 _buildControlTextButton(
                   onTap: _cyclePlaybackSpeed,
                   icon: Icons.speed,
                   label: _playbackSpeedLabel(_playbackSpeed),
                   tooltip: '切换倍速',
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 if (_canSwitchSource)
                   _buildControlTextButton(
                     onTap: _showSourceSelectorDialog,
@@ -2508,7 +2528,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: '换源',
                     tooltip: '切换播放源',
                   ),
-                if (_canSwitchSource) const SizedBox(width: AppSpacing.md),
+                if (_canSwitchSource) SizedBox(width: AppSpacing.md),
                 if (_currentVideoDetail.episodes.length > 1)
                   _buildControlTextButton(
                     onTap: _showEpisodeSelectorDialog,
@@ -2517,7 +2537,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     tooltip: '选集',
                   ),
                 if (_currentVideoDetail.episodes.length > 1)
-                  const SizedBox(width: AppSpacing.md),
+                  SizedBox(width: AppSpacing.md),
               ],
             ),
           ],
@@ -2534,11 +2554,11 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }) {
     return IconButton(
       onPressed: onTap,
-      icon: Icon(icon, color: AppColors.textPrimary),
+      icon: Icon(icon, color: Color(0xFFF0F0F5)),
       iconSize: 28,
       tooltip: tooltip,
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      constraints: const BoxConstraints(),
+      padding: EdgeInsets.all(AppSpacing.sm),
+      constraints: BoxConstraints(),
     );
   }
 
@@ -2552,19 +2572,19 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     Color? backgroundColor,
     bool isLoading = false,
   }) {
-    final color = foregroundColor ?? AppColors.textPrimary;
-    final bgColor = backgroundColor ?? AppColors.bgElevated;
+    final color = foregroundColor ?? Color(0xFFF0F0F5);
+    final bgColor = backgroundColor ?? Color(0xFF1C1C2E);
     return Tooltip(
       message: tooltip,
       child: TextButton.icon(
         onPressed: isLoading ? null : onTap,
         icon: isLoading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(
+                child: TechLoadingIndicator(
+                  size: 16,
                   strokeWidth: 2,
-                  color: AppColors.primary,
                 ),
               )
             : Icon(icon, color: color, size: 18),
@@ -2578,13 +2598,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         ),
         style: TextButton.styleFrom(
           backgroundColor: bgColor,
-          padding: const EdgeInsets.symmetric(
+          padding: EdgeInsets.symmetric(
             horizontal: AppSpacing.md,
             vertical: AppSpacing.xs,
           ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
-            side: const BorderSide(color: AppColors.border),
+            side: BorderSide(color: Color(0x14FFFFFF)),
           ),
         ),
       ),
@@ -2615,7 +2635,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           children: [
             // 最底层：纯黑背景，确保黑边区域由 Flutter 绘制，
             // 避免 PlatformView 在隐藏控制栏后仍残留影像。
-            const Positioned.fill(child: ColoredBox(color: Colors.black)),
+            Positioned.fill(child: ColoredBox(color: Colors.black)),
             // 视频层：只覆盖实际画面区域，黑边留给我 Flutter 背景。
             // IgnorePointer 避免 PlatformView 拦截触摸事件，确保手势层能正常工作。
             Positioned.fill(child: IgnorePointer(child: _buildVideo())),

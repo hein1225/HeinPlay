@@ -13,6 +13,7 @@ import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/windows_logger.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -256,7 +257,7 @@ class SearchScreenState extends State<SearchScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
-          title: const Text(
+          title: Text(
             '手机扫码输入',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -297,7 +298,7 @@ class SearchScreenState extends State<SearchScreen> {
                   const SizedBox(height: AppSpacing.md),
                   Text(
                     '使用手机扫描上方二维码',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 14,
                       color: AppColors.textSecondary,
@@ -306,7 +307,7 @@ class SearchScreenState extends State<SearchScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     '或访问 $url',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -317,10 +318,7 @@ class SearchScreenState extends State<SearchScreen> {
                   const SizedBox(
                     width: 40,
                     height: 40,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   ),
               ],
             ),
@@ -625,7 +623,7 @@ class SearchScreenState extends State<SearchScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Text(
+          Text(
             '搜索',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -640,12 +638,12 @@ class SearchScreenState extends State<SearchScreen> {
               controller: _controller,
               focusNode: _focusNode,
               autofocus: true,
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: TextStyle(color: AppColors.textPrimary),
               textInputAction: TextInputAction.search,
               onSubmitted: (value) => _search(value),
               decoration: InputDecoration(
                 hintText: '输入关键词',
-                hintStyle: const TextStyle(color: AppColors.textMuted),
+                hintStyle: TextStyle(color: AppColors.textMuted),
                 suffixIcon: ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _controller,
                   builder: (context, value, child) {
@@ -655,7 +653,7 @@ class SearchScreenState extends State<SearchScreen> {
                       children: [
                         if (hasText)
                           IconButton(
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.clear,
                               color: AppColors.textSecondary,
                               size: 18,
@@ -663,7 +661,7 @@ class SearchScreenState extends State<SearchScreen> {
                             onPressed: _clearInput,
                           ),
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.search,
                             color: AppColors.textSecondary,
                             size: 18,
@@ -682,7 +680,7 @@ class SearchScreenState extends State<SearchScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(AppRadius.md),
-                  borderSide: const BorderSide(
+                  borderSide: BorderSide(
                     color: AppColors.primary,
                     width: 2,
                   ),
@@ -715,7 +713,7 @@ class SearchScreenState extends State<SearchScreen> {
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: AppColors.primary),
         ),
-        child: const Column(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -746,7 +744,12 @@ class SearchScreenState extends State<SearchScreen> {
     final itemWidth =
         (availableForItems - (crossAxisCount - 1) * crossSpacing) /
         crossAxisCount;
-    final sectionHeight = padding * 2 + 2 * targetItemHeight + mainSpacing;
+    final rowCount = _searchHistory.isEmpty
+        ? 1
+        : ((_searchHistory.length + crossAxisCount - 1) ~/ crossAxisCount);
+    final sectionHeight = padding * 2 +
+        rowCount * targetItemHeight +
+        (rowCount > 1 ? (rowCount - 1) * mainSpacing : 0);
 
     return Container(
       height: sectionHeight,
@@ -763,13 +766,13 @@ class SearchScreenState extends State<SearchScreen> {
             width: titleWidth,
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.history,
                   color: AppColors.textSecondary,
                   size: 16,
                 ),
                 const SizedBox(width: AppSpacing.xs),
-                const Expanded(
+                Expanded(
                   child: Text(
                     '近期搜索',
                     maxLines: 1,
@@ -788,7 +791,7 @@ class SearchScreenState extends State<SearchScreen> {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: _searchHistory.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
                       '暂无近期搜索',
                       style: TextStyle(
@@ -829,7 +832,7 @@ class SearchScreenState extends State<SearchScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: 'NotoSansSC',
                                 fontSize: 13,
                                 color: AppColors.textPrimary,
@@ -852,11 +855,11 @@ class SearchScreenState extends State<SearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const CircularProgressIndicator(color: AppColors.primary),
+            TechLoadingIndicator(),
             const SizedBox(height: AppSpacing.md),
             Text(
               _progressText ?? '正在搜索...',
-              style: const TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -867,7 +870,7 @@ class SearchScreenState extends State<SearchScreen> {
       return Center(
         child: Text(
           _error!,
-          style: const TextStyle(color: AppColors.textSecondary),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
       );
     }
@@ -877,9 +880,9 @@ class SearchScreenState extends State<SearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.search, size: 64, color: AppColors.textMuted),
+            Icon(Icons.search, size: 64, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
-            const Text(
+            Text(
               '输入关键词开始搜索',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
@@ -889,7 +892,7 @@ class SearchScreenState extends State<SearchScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             if (_hasQrInput)
-              const Text(
+              Text(
                 '或使用手机扫码输入',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -903,7 +906,7 @@ class SearchScreenState extends State<SearchScreen> {
     }
 
     if (_results.isEmpty && !_loading) {
-      return const Center(
+      return Center(
         child: Text(
           '未找到相关结果',
           style: TextStyle(color: AppColors.textSecondary),
@@ -938,15 +941,12 @@ class SearchScreenState extends State<SearchScreen> {
                     const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(
-                        color: AppColors.primary,
-                        strokeWidth: 2,
-                      ),
+                      child: TechLoadingIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     Text(
                       _progressText!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
                       ),

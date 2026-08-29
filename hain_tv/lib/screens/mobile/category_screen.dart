@@ -9,6 +9,7 @@ import 'package:hain_tv/services/douban_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/mobile_poster_grid.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class _OptionItem {
   final String label;
@@ -911,7 +912,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
         ),
         child: Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -944,7 +945,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                   children: [
                     Text(
                       dimension.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -953,7 +954,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.close,
                         color: AppColors.textSecondary,
                       ),
@@ -962,7 +963,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                   ],
                 ),
               ),
-              const Divider(height: 1, color: AppColors.border),
+              Divider(height: 1, color: AppColors.border),
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
@@ -986,7 +987,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
                         ),
                       ),
                       trailing: selected
-                          ? const Icon(
+                          ? Icon(
                               Icons.check,
                               color: AppColors.primary,
                               size: 20,
@@ -1026,7 +1027,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
       ),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.bgSurface,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
@@ -1051,7 +1052,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
           width: 40,
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -1068,7 +1069,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   Widget _buildBody(BuildContext context) {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -1079,7 +1080,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
           children: [
             Text(
               _error!,
-              style: const TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: AppSpacing.md),
             ElevatedButton(
@@ -1092,7 +1093,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
     }
 
     if (_movies.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('暂无数据', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
@@ -1115,7 +1116,8 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
       children: [
         Expanded(
           child: RefreshIndicator(
-            color: AppColors.primary,
+            // 下拉刷新为 Material 自带指示器，颜色统一到科技加载圈同色（AppColors.loading）。
+            color: AppColors.loading,
             backgroundColor: AppColors.bgSurface,
             onRefresh: () => _loadData(refresh: true),
             child: MobilePosterGrid(
@@ -1131,10 +1133,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
               child: SizedBox(
                 width: 24,
                 height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.primary,
-                ),
+                child: TechLoadingIndicator(strokeWidth: 2),
               ),
             ),
           ),

@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Theme applied to the Android Window while the process is starting -->
+    <!-- 进程启动瞬间主题：满屏封面，点开 App 即显示，无黑屏。 -->
     <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
-    <!-- Theme applied to the Android Window as soon as the process has started -->
+
+    <!-- Flutter 引擎就绪后切换到的主题。窗口背景继续使用满屏封面，这样在 MainActivity
+         附加的 ImageView 移除之前，即使露出窗口背景也仍然是封面，不会出现黑底空窗期。 -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-        <item name="android:windowBackground">#0A0A0F</item>
+        <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
 </resources>

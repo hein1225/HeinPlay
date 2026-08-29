@@ -8,6 +8,7 @@ import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/record_manage_view.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class MobileHistoryScreen extends StatefulWidget {
   final List<PlayRecord> initialRecords;
@@ -106,7 +107,7 @@ class _MobileHistoryScreenState extends State<MobileHistoryScreen> {
         backgroundColor: AppColors.bgApp,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
+        title: Text(
           '播放记录',
           style: TextStyle(
             fontFamily: 'NotoSansSC',
@@ -116,14 +117,14 @@ class _MobileHistoryScreenState extends State<MobileHistoryScreen> {
           ),
         ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+          icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: SafeArea(
         child: _loading
             ? const Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
+                child: TechLoadingIndicator(),
               )
             : Padding(
                 padding: const EdgeInsets.all(AppSpacing.md),

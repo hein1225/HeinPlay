@@ -5,6 +5,7 @@ import '../../services/cache_service.dart';
 import '../../services/live_service.dart';
 import '../../services/live_source_storage.dart';
 import '../../theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// Windows 直播源管理页。
 ///
@@ -52,7 +53,7 @@ class _WindowsLiveSourceManagerScreenState
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text(
+            child: Text(
               '删除',
               style: TextStyle(color: AppColors.error),
             ),
@@ -133,11 +134,11 @@ class _WindowsLiveSourceManagerScreenState
         children: [
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+            icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
             tooltip: '返回',
           ),
           const SizedBox(width: AppSpacing.sm),
-          const Expanded(
+          Expanded(
             child: Text(
               '直播源管理',
               style: TextStyle(
@@ -161,7 +162,7 @@ class _WindowsLiveSourceManagerScreenState
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -193,13 +194,13 @@ class _WindowsLiveSourceManagerScreenState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.settings_input_antenna,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无本地直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -249,7 +250,7 @@ class _WindowsLiveSourceManagerScreenState
                 color: AppColors.primary.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: const Text(
+              child: Text(
                 '服务器',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -262,7 +263,7 @@ class _WindowsLiveSourceManagerScreenState
           else
             ReorderableDragStartListener(
               index: index,
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.only(right: AppSpacing.xs),
                 child: Icon(Icons.drag_handle, size: 20, color: AppColors.textMuted),
               ),
@@ -275,7 +276,7 @@ class _WindowsLiveSourceManagerScreenState
               children: [
                 Text(
                   config.name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     color: AppColors.textPrimary,
                     fontWeight: FontWeight.w600,
@@ -287,7 +288,7 @@ class _WindowsLiveSourceManagerScreenState
                   config.isBuiltin ? 'LunaTV 服务端直播源' : config.url,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     color: AppColors.textMuted,
                     fontSize: 12,
@@ -301,12 +302,12 @@ class _WindowsLiveSourceManagerScreenState
             children: [
               TextButton.icon(
                 onPressed: () => _clearSourceCache(config),
-                icon: const Icon(
+                icon: Icon(
                   Icons.delete_sweep,
                   size: 18,
                   color: AppColors.textSecondary,
                 ),
-                label: const Text(
+                label: Text(
                   '清除缓存',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -323,7 +324,7 @@ class _WindowsLiveSourceManagerScreenState
                 ),
               if (!config.isBuiltin)
                 IconButton(
-                  icon: const Icon(Icons.edit, size: 20, color: AppColors.textSecondary),
+                  icon: Icon(Icons.edit, size: 20, color: AppColors.textSecondary),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
                     minWidth: 32,
@@ -333,7 +334,7 @@ class _WindowsLiveSourceManagerScreenState
                 ),
               if (!config.isBuiltin)
                 IconButton(
-                  icon: const Icon(Icons.delete, size: 20, color: AppColors.error),
+                  icon: Icon(Icons.delete, size: 20, color: AppColors.error),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
                     minWidth: 32,
@@ -416,7 +417,7 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
       backgroundColor: AppColors.bgSurface,
       title: Text(
         widget.config == null ? '添加直播源' : '编辑直播源',
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: 'NotoSansSC',
           color: AppColors.textPrimary,
         ),
@@ -451,7 +452,7 @@ class _SourceEditDialogState extends State<_SourceEditDialog> {
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                const Text(
+                Text(
                   '启用',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',

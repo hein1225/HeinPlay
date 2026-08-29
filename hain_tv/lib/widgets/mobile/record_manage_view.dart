@@ -124,7 +124,7 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
           backgroundColor: AppColors.bgElevated,
           title: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               color: AppColors.textPrimary,
               fontSize: 18,
@@ -133,19 +133,19 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
           ),
           content: Text(
             message,
-            style: const TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: AppColors.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text(
+              child: Text(
                 '取消',
                 style: TextStyle(color: AppColors.textSecondary),
               ),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text(
+              child: Text(
                 '确定',
                 style: TextStyle(color: AppColors.primary),
               ),
@@ -224,7 +224,7 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
           children: [
             Text(
               widget.title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
@@ -241,7 +241,7 @@ class _RecordManageViewState<T> extends State<RecordManageView<T>> {
               ? Center(
                   child: Text(
                     widget.emptyMessage,
-                    style: const TextStyle(color: AppColors.textSecondary),
+                    style: TextStyle(color: AppColors.textSecondary),
                   ),
                 )
               : MobilePosterGrid(

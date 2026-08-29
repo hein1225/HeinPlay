@@ -9,6 +9,7 @@ import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -314,7 +315,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: AppSpacing.md),
                         Text(
                           _error!,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: AppColors.primary,
                             fontSize: 14,
                           ),
@@ -322,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                       const SizedBox(height: AppSpacing.lg),
-                      const Text(
+                      Text(
                         '后续可在“我的-设置”中补充或修改服务器地址。',
                         style: TextStyle(
                           color: AppColors.textMuted,
@@ -351,14 +352,14 @@ class _LoginScreenState extends State<LoginScreen> {
             color: AppColors.primary.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
-          child: const Icon(
+          child: Icon(
             Icons.play_circle_fill,
             color: AppColors.primary,
             size: 40,
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text(
+        Text(
           '海因影视',
           style: TextStyle(
             fontSize: 28,
@@ -369,7 +370,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: AppSpacing.xs),
         Text(
           Platform.isWindows ? '电脑版' : 'TV 版',
-          style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
         ),
       ],
     );
@@ -389,7 +390,7 @@ class _LoginScreenState extends State<LoginScreen> {
           icon: Icons.link,
         ),
         const SizedBox(height: AppSpacing.sm),
-        const Text(
+        Text(
           '至少填写一个服务器地址，主域名建议公网域名，备用域名建议局域网地址',
           style: TextStyle(
             color: AppColors.textMuted,
@@ -467,12 +468,12 @@ class _LoginScreenState extends State<LoginScreen> {
           controller: controller,
           focusNode: focusNode,
           obscureText: obscureText,
-          style: const TextStyle(color: AppColors.textPrimary),
+          style: TextStyle(color: AppColors.textPrimary),
           decoration: InputDecoration(
             labelText: label,
             hintText: hint,
-            hintStyle: const TextStyle(color: AppColors.textMuted),
-            labelStyle: const TextStyle(color: AppColors.textSecondary),
+            hintStyle: TextStyle(color: AppColors.textMuted),
+            labelStyle: TextStyle(color: AppColors.textSecondary),
             prefixIcon: Icon(icon, color: AppColors.textSecondary),
             filled: true,
             fillColor: AppColors.bgElevated,
@@ -526,10 +527,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ? const SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
+                  child: TechLoadingIndicator(strokeWidth: 2, color: Colors.white),
                 )
               : const Text(
                   '登录',
@@ -622,7 +620,7 @@ class _LoginScreenState extends State<LoginScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
-          title: const Text(
+          title: Text(
             '手机扫码登录',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -661,7 +659,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  const Text(
+                  Text(
                     '使用手机扫描上方二维码',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -672,7 +670,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     '或访问 $url',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -680,7 +678,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  const Text(
+                  Text(
                     '在手机页面输入服务器、用户名和密码后，电视将自动登录',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -693,10 +691,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(
                     width: 40,
                     height: 40,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   ),
               ],
             ),

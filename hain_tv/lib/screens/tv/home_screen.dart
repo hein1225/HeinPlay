@@ -7,12 +7,14 @@ import 'package:hain_tv/models/play_record.dart';
 import 'package:hain_tv/services/connectivity_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
 import 'package:hain_tv/services/favorite_service.dart';
+import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -45,8 +47,21 @@ class HomeScreenState extends State<HomeScreen> {
     _hotTvFirstFocusNode = FocusNode(debugLabel: 'homeHotTvFirst');
     _hotShowsFirstFocusNode = FocusNode(debugLabel: 'homeHotShowsFirst');
     _hotAnimesFirstFocusNode = FocusNode(debugLabel: 'homeHotAnimesFirst');
+    _consumePreloadedData();
     _loadData();
     PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
+  }
+
+  /// 如果 SplashScreen 已预加载首页数据，直接填充状态并跳过初始加载圈。
+  void _consumePreloadedData() {
+    if (!HomeDataPreload.hasData) return;
+    _hotMovies = HomeDataPreload.hotMovies!;
+    _hotTvShows = HomeDataPreload.hotTvShows!;
+    _hotShows = HomeDataPreload.hotShows!;
+    _hotAnimes = HomeDataPreload.hotAnimes!;
+    _continueWatching = HomeDataPreload.continueWatching!;
+    _loading = false;
+    HomeDataPreload.clear();
   }
 
   @override
@@ -194,7 +209,7 @@ class HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -202,7 +217,7 @@ class HomeScreenState extends State<HomeScreen> {
       return Center(
         child: Text(
           _error!,
-          style: const TextStyle(color: AppColors.textSecondary),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
       );
     }

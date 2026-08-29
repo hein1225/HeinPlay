@@ -7,7 +7,7 @@
     </item>
     <item>
         <bitmap
-            android:gravity="center"
-            android:src="@mipmap/ic_launcher" />
+            android:gravity="fill"
+            android:src="@drawable/splash" />
     </item>
 </layer-list>

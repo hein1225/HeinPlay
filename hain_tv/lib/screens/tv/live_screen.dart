@@ -13,6 +13,7 @@ import '../../theme.dart';
 import '../../widgets/tv/focusable.dart';
 import '../live_player_screen.dart';
 import 'live_source_manager_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// TV 直播首页：左侧直播源列表，右侧频道预览，顶部功能选项行。
 class TvLiveScreen extends StatefulWidget {
@@ -210,7 +211,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          title: Text(
             '手机扫码管理直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -224,7 +225,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                 ? Center(
                     child: Text(
                       error,
-                      style: const TextStyle(color: AppColors.error),
+                      style: TextStyle(color: AppColors.error),
                     ),
                   )
                 : Column(
@@ -245,7 +246,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                           ),
                         ),
                       const SizedBox(height: AppSpacing.md),
-                      const Text(
+                      Text(
                         '使用手机扫描二维码，在网页上添加、编辑或删除直播源',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -270,7 +271,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: const Text(
+                child: Text(
                   '关闭',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -322,7 +323,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
       color: AppColors.bgSurface,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       alignment: Alignment.centerLeft,
-      child: const Text(
+      child: Text(
         '直播源',
         style: TextStyle(
           fontFamily: 'NotoSansSC',
@@ -450,7 +451,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -461,7 +462,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
           children: [
             Text(
               _error!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 color: AppColors.textSecondary,
               ),
@@ -517,13 +518,13 @@ class TvLiveScreenState extends State<TvLiveScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.live_tv,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无可用直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -629,7 +630,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
   Widget _buildPreview() {
     if (_loadingPreview) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -718,7 +719,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
               color: AppColors.bgSurface,
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.list_alt,
                     size: 16,
                     color: AppColors.textSecondary,
@@ -726,7 +727,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                   const SizedBox(width: AppSpacing.xs),
                   Text(
                     '频道预览 — ${_sources[_focusedIndex].name}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -736,7 +737,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                   const Spacer(),
                   Text(
                     '${channels.length} 个频道',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -783,7 +784,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
       padding: const EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.xs),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: 'NotoSansSC',
           fontSize: 12,
           fontWeight: FontWeight.w700,
@@ -812,7 +813,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
                 child: Image.network(
                   channel.logo!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
+                  errorBuilder: (_, __, ___) => Icon(
                     Icons.tv,
                     size: 14,
                     color: AppColors.textMuted,
@@ -825,7 +826,7 @@ class TvLiveScreenState extends State<TvLiveScreen> {
               channel.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 13,
                 color: AppColors.textSecondary,
@@ -894,7 +895,7 @@ class _SourceItemContent extends StatelessWidget {
                           : source.url),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     color: AppColors.textMuted,
                     fontSize: 12,
@@ -904,7 +905,7 @@ class _SourceItemContent extends StatelessWidget {
             ),
           ),
           if (highlighted)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(left: AppSpacing.xs),
               child: Icon(
                 Icons.chevron_right,

@@ -2,6 +2,10 @@
 cmake_minimum_required(VERSION 3.14)
 project(hain_tv LANGUAGES CXX)
 
+# 允许源文件包含 UTF-8 中文注释：否则 MSVC 在中文代码页(936)下报 C4819，
+# 并被 APPLY_STANDARD_SETTINGS 的 /WX 视为错误导致编译失败。
+add_compile_options("/utf-8")
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "hain_tv")

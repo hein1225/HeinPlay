@@ -68,7 +68,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
           ),
           title: Text(
             '发现新版本 ${widget.info.version}',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -96,7 +96,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                           if (widget.info.title.isNotEmpty) ...[
                             Text(
                               widget.info.title,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: 'NotoSansSC',
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -109,7 +109,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                             widget.info.body.isEmpty
                                 ? '暂无更新说明'
                                 : widget.info.body,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               fontSize: 12,
                               color: AppColors.textSecondary,
@@ -143,7 +143,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                                       value: _progress,
                                       backgroundColor: AppColors.bgElevated,
                                       valueColor:
-                                          const AlwaysStoppedAnimation<Color>(
+                                          AlwaysStoppedAnimation<Color>(
                                             AppColors.primary,
                                           ),
                                       minHeight: 8,
@@ -156,7 +156,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                                   child: Text(
                                     progressText,
                                     textAlign: TextAlign.right,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontFamily: 'NotoSansSC',
                                       fontSize: 12,
                                       color: AppColors.textSecondary,
@@ -166,7 +166,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                               ],
                             ),
                             const SizedBox(height: AppSpacing.xs),
-                            const Text(
+                            Text(
                               '正在下载安装包，请稍候...',
                               style: TextStyle(
                                 fontFamily: 'NotoSansSC',

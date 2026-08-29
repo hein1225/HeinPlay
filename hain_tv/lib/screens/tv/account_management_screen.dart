@@ -10,6 +10,7 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class AccountManagementScreen extends StatefulWidget {
   const AccountManagementScreen({super.key});
@@ -57,7 +58,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
 
   void _showSnackBar(
     String message, {
-    Color backgroundColor = AppColors.bgElevated,
+    Color? backgroundColor,
     Duration duration = const Duration(seconds: 2),
   }) {
     if (!mounted) return;
@@ -67,7 +68,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
           message,
           style: const TextStyle(color: Colors.white),
         ),
-        backgroundColor: backgroundColor,
+        backgroundColor: backgroundColor ?? AppColors.bgElevated,
         duration: duration,
       ),
     );
@@ -185,8 +186,8 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     controller: usernameController,
                     focusNode: usernameNode,
                     autofocus: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
                       hintText: '用户名（数据库模式需填写）',
                       hintStyle: TextStyle(color: AppColors.textMuted),
                       border: OutlineInputBorder(),
@@ -222,8 +223,8 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     controller: passwordController,
                     focusNode: passwordNode,
                     obscureText: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
                       hintText: '密码',
                       hintStyle: TextStyle(color: AppColors.textMuted),
                       border: OutlineInputBorder(),
@@ -253,7 +254,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           '取消',
@@ -288,7 +289,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           isEditing ? '保存' : '保存并切换',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -356,7 +357,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
           FocusableWidget(
             autofocus: true,
             onTap: () => Navigator.of(dialogContext).pop(false),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
               child: Text(
                 '取消',
@@ -370,7 +371,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
           ),
           FocusableWidget(
             onTap: () => Navigator.of(dialogContext).pop(true),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
               child: Text(
                 '删除',
@@ -459,8 +460,8 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     controller: usernameController,
                     focusNode: usernameNode,
                     autofocus: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
                       hintText: '用户名（数据库模式需填写）',
                       hintStyle: TextStyle(color: AppColors.textMuted),
                       border: OutlineInputBorder(),
@@ -496,8 +497,8 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     controller: passwordController,
                     focusNode: passwordNode,
                     obscureText: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
                       hintText: '密码',
                       hintStyle: TextStyle(color: AppColors.textMuted),
                       border: OutlineInputBorder(),
@@ -527,7 +528,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           '取消',
@@ -558,7 +559,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           '保存',
@@ -656,7 +657,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
-          title: const Text(
+          title: Text(
             '扫码输入子账号',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -695,7 +696,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  const Text(
+                  Text(
                     '使用手机扫描上方二维码',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -706,7 +707,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     '或访问 $url',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -714,7 +715,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  const Text(
+                  Text(
                     '在手机页面输入用户名和密码后，电视将保存并切换到子账号',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -727,10 +728,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                   const SizedBox(
                     width: 40,
                     height: 40,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   ),
               ],
             ),
@@ -820,7 +818,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
       ),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           color: AppColors.textMuted,
@@ -854,12 +852,12 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
             ),
             subtitle: Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
             ),
-            trailing: const Icon(
+            trailing: Icon(
               Icons.chevron_right,
               color: AppColors.textSecondary,
             ),
@@ -899,14 +897,14 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                       ? '已配置'
                       : _mainAccount!.username)
                   : '未配置，点击填写',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
             ),
             trailing: active
-                ? const Icon(Icons.check_circle, color: AppColors.primary)
-                : const Icon(
+                ? Icon(Icons.check_circle, color: AppColors.primary)
+                : Icon(
                     Icons.chevron_right,
                     color: AppColors.textSecondary,
                   ),
@@ -975,14 +973,14 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
                       ? '已配置'
                       : _subAccount!.username)
                   : '未配置，点击填写',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
             ),
             trailing: active
-                ? const Icon(Icons.check_circle, color: AppColors.primary)
-                : const Icon(
+                ? Icon(Icons.check_circle, color: AppColors.primary)
+                : Icon(
                     Icons.chevron_right,
                     color: AppColors.textSecondary,
                   ),
@@ -998,7 +996,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
         builder: (context) => FocusableWidget(
           onTap: _showSubAccountQrDialog,
           onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
-          child: const ListTile(
+          child: ListTile(
             leading: Icon(
               Icons.qr_code_scanner,
               color: AppColors.textSecondary,

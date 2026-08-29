@@ -14,6 +14,7 @@ import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/back_interceptor.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
 import 'detail_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class _OptionItem {
   final String label;
@@ -1101,7 +1102,7 @@ class CategoryScreenState extends State<CategoryScreen> {
               children: [
                 Text(
                   dimension.label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
@@ -1374,7 +1375,7 @@ class CategoryScreenState extends State<CategoryScreen> {
             width: 40,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
@@ -1393,7 +1394,7 @@ class CategoryScreenState extends State<CategoryScreen> {
     return Container(
       height: 80,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.bgSurface,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
@@ -1834,7 +1835,7 @@ class CategoryScreenState extends State<CategoryScreen> {
   Widget _buildBody(BuildContext context) {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -1842,13 +1843,13 @@ class CategoryScreenState extends State<CategoryScreen> {
       return Center(
         child: Text(
           _error!,
-          style: const TextStyle(color: AppColors.textSecondary),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
       );
     }
 
     if (_movies.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('暂无数据', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
@@ -1894,10 +1895,7 @@ class CategoryScreenState extends State<CategoryScreen> {
                   child: SizedBox(
                     width: 24,
                     height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   ),
                 ),
               ),

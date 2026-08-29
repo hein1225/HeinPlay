@@ -25,6 +25,7 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'player_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class DetailScreen extends StatefulWidget {
   final List<SourceOption> sources;
@@ -1535,7 +1536,7 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Center(
           child: Text(
             widget.title.isNotEmpty ? widget.title.substring(0, 1) : '',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 48,
               color: AppColors.textMuted,
@@ -1573,7 +1574,7 @@ class _DetailScreenState extends State<DetailScreen> {
       children: [
         Row(
           children: [
-            const Text(
+            Text(
               '播放源',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
@@ -1587,10 +1588,7 @@ class _DetailScreenState extends State<DetailScreen> {
               const SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.primary,
-                ),
+                child: TechLoadingIndicator(strokeWidth: 2),
               ),
             if (_searchingSources) const SizedBox(width: AppSpacing.sm),
             if (_sources.length >= 2)
@@ -1613,13 +1611,10 @@ class _DetailScreenState extends State<DetailScreen> {
                         const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.primary,
-                          ),
+                          child: TechLoadingIndicator(strokeWidth: 2),
                         )
                       else
-                        const Icon(
+                        Icon(
                           Icons.network_check,
                           color: AppColors.primary,
                           size: 16,
@@ -1627,7 +1622,7 @@ class _DetailScreenState extends State<DetailScreen> {
                       const SizedBox(width: AppSpacing.xs),
                       Text(
                         _speedTesting ? '测速中' : '优选测速',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 13,
                           color: AppColors.textPrimary,
@@ -1646,7 +1641,7 @@ class _DetailScreenState extends State<DetailScreen> {
               ? _searchingSources
                     ? const SizedBox.shrink()
                     : _fuzzySearchEnabled
-                    ? const Text(
+                    ? Text(
                         '未找到相关播放源',
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
@@ -1666,7 +1661,7 @@ class _DetailScreenState extends State<DetailScreen> {
                             borderRadius: BorderRadius.circular(AppRadius.sm),
                             border: Border.all(color: AppColors.border),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
@@ -1764,7 +1759,7 @@ class _DetailScreenState extends State<DetailScreen> {
                         source.title.isNotEmpty
                             ? source.title.substring(0, 1)
                             : '',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 24,
                           color: AppColors.textMuted,
@@ -1807,7 +1802,7 @@ class _DetailScreenState extends State<DetailScreen> {
                           source.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -1820,7 +1815,7 @@ class _DetailScreenState extends State<DetailScreen> {
                           source.sourceName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 10,
                             fontWeight: FontWeight.w500,
@@ -1847,7 +1842,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                     child: Text(
                       speedText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -1871,7 +1866,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                     child: Text(
                       resolutionText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -1881,7 +1876,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                 ),
               if (selected)
-                const Positioned(
+                Positioned(
                   top: 6,
                   left: 6,
                   child: Icon(
@@ -1934,7 +1929,7 @@ class _DetailScreenState extends State<DetailScreen> {
       children: [
         Text(
           widget.title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 28,
             fontWeight: FontWeight.w700,
@@ -1970,17 +1965,14 @@ class _DetailScreenState extends State<DetailScreen> {
           const SizedBox(
             width: 24,
             height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppColors.primary,
-            ),
+            child: TechLoadingIndicator(strokeWidth: 2),
           )
         else if (summary.isNotEmpty)
           Text(
             summary,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 14,
               height: 1.5,
@@ -2022,7 +2014,7 @@ class _DetailScreenState extends State<DetailScreen> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         text: TextSpan(
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 14,
             height: 1.5,
@@ -2031,7 +2023,7 @@ class _DetailScreenState extends State<DetailScreen> {
           children: [
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
               ),
@@ -2048,7 +2040,7 @@ class _DetailScreenState extends State<DetailScreen> {
       padding: const EdgeInsets.only(bottom: AppSpacing.xs),
       child: RichText(
         text: TextSpan(
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 14,
             height: 1.5,
@@ -2057,7 +2049,7 @@ class _DetailScreenState extends State<DetailScreen> {
           children: [
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
               ),
@@ -2169,7 +2161,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 borderRadius: BorderRadius.circular(AppRadius.md),
                 border: Border.all(color: AppColors.border),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.replay, color: AppColors.textPrimary),
@@ -2319,10 +2311,7 @@ class _DetailScreenState extends State<DetailScreen> {
       return const Padding(
         padding: EdgeInsets.all(AppSpacing.lg),
         child: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppColors.primary,
-          ),
+          child: TechLoadingIndicator(strokeWidth: 2),
         ),
       );
     }
@@ -2353,7 +2342,7 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
           child: Row(
             children: [
-              const Text(
+              Text(
                 '选集',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -2541,7 +2530,7 @@ class _DetailScreenState extends State<DetailScreen> {
             borderRadius: BorderRadius.circular(AppRadius.md),
             border: Border.all(color: AppColors.border),
           ),
-          child: const Row(
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.arrow_back, color: AppColors.textPrimary, size: 18),
@@ -2579,7 +2568,7 @@ class _DetailScreenState extends State<DetailScreen> {
             children: [
               Text(
                 _error!,
-                style: const TextStyle(color: AppColors.textSecondary),
+                style: TextStyle(color: AppColors.textSecondary),
               ),
               const SizedBox(height: AppSpacing.lg),
               FocusableWidget(

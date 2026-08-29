@@ -70,7 +70,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
       ),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           color: AppColors.textMuted,
@@ -113,10 +113,10 @@ class _UpdateScreenState extends State<UpdateScreen> {
             child: FocusableWidget(
               onTap: _selectDefaultChannel,
               child: ListTile(
-                leading: const Icon(Icons.swap_horiz, color: AppColors.primary),
+                leading: Icon(Icons.swap_horiz, color: AppColors.primary),
                 title: const Text('默认更新仓库'),
                 subtitle: Text(_channelLabel(_defaultUpdateChannel)),
-                trailing: const Text(
+                trailing: Text(
                   '已设置',
                   style: TextStyle(color: AppColors.primary),
                 ),
@@ -130,10 +130,10 @@ class _UpdateScreenState extends State<UpdateScreen> {
               onTap: _checkUpdate,
               child: ListTile(
                 leading:
-                    const Icon(Icons.system_update, color: AppColors.primary),
+                    Icon(Icons.system_update, color: AppColors.primary),
                 title: const Text('检测更新'),
                 subtitle: const Text('立即检查是否有新版本'),
-                trailing: const Icon(
+                trailing: Icon(
                   Icons.chevron_right,
                   color: AppColors.textSecondary,
                 ),

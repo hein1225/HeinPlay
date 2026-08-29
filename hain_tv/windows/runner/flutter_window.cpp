@@ -27,7 +27,16 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // 立即显示窗口，并创建原生启动封面覆盖层（位于 Flutter 视图之上）。Flutter 子
+  // 视图保持原有可见状态正常渲染，因此首帧回调会按原模板逻辑可靠触发；覆盖层在
+  // 引擎初始化阶段显示“零解码”封面，首帧就绪后移除，由 Flutter 视图（同一张 TV
+  // 封面）无缝衔接。
+  CreateSplashOverlay();
+  this->Show();
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
+    // 首帧就绪后移除原生封面覆盖层，Flutter 视图（同一张 TV 封面）无缝衔接显示。
+    DestroySplashOverlay();
     this->Show();
   });
 

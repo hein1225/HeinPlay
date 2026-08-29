@@ -77,7 +77,9 @@ class _MobileShellState extends State<MobileShell> {
       backgroundColor: AppColors.bgApp,
       body: IndexedStack(
         index: _selectedIndex,
-        children: const [
+        // 子项不要写成 const：主题切换时 MobileShell.build 重跑，需要这些页面返回新
+        // 实例才能触发各自 build 重读 AppColors，实现整页刷新。
+        children: [
           MobileHomeScreen(key: ValueKey('mobile_home')),
           MobileCategoryScreen(key: ValueKey('mobile_category')),
           MobileLiveScreen(key: ValueKey('mobile_live')),

@@ -11,6 +11,7 @@ import '../../theme.dart';
 import '../../widgets/tv/focusable.dart';
 import '../live_player_screen.dart';
 import 'live_source_manager_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// Windows 直播首页：左侧直播源列表，右侧频道预览，顶部功能选项行。
 ///
@@ -234,7 +235,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
       color: AppColors.bgSurface,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       alignment: Alignment.centerLeft,
-      child: const Text(
+      child: Text(
         '直播源',
         style: TextStyle(
           fontFamily: 'NotoSansSC',
@@ -311,7 +312,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -322,7 +323,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
           children: [
             Text(
               _error!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 color: AppColors.textSecondary,
               ),
@@ -358,13 +359,13 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.live_tv,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无可用直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -457,7 +458,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
   Widget _buildPreview() {
     if (_loadingPreview) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -542,7 +543,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
               color: AppColors.bgSurface,
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.list_alt,
                     size: 16,
                     color: AppColors.textSecondary,
@@ -550,7 +551,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                   const SizedBox(width: AppSpacing.xs),
                   Text(
                     '频道预览 — ${_sources[_focusedIndex].name}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -560,7 +561,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                   const Spacer(),
                   Text(
                     '${channels.length} 个频道',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -607,7 +608,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
       padding: const EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.xs),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: 'NotoSansSC',
           fontSize: 12,
           fontWeight: FontWeight.w700,
@@ -636,7 +637,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                 child: Image.network(
                   channel.logo!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
+                  errorBuilder: (_, __, ___) => Icon(
                     Icons.tv,
                     size: 14,
                     color: AppColors.textMuted,
@@ -653,7 +654,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                 borderRadius: BorderRadius.circular(4),
                 color: AppColors.bgSurface,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.tv,
                 size: 14,
                 color: AppColors.textMuted,
@@ -668,7 +669,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                   channel.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 13,
                     color: AppColors.textSecondary,
@@ -679,7 +680,7 @@ class WindowsLiveScreenState extends State<WindowsLiveScreen> {
                     channel.program!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 11,
                       color: AppColors.textMuted,
@@ -758,7 +759,7 @@ class _WindowsSourceItemContent extends StatelessWidget {
                           : source.url),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     color: AppColors.textMuted,
                     fontSize: 12,

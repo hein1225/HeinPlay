@@ -14,9 +14,11 @@ import '../platform/windows_fullscreen_mixin.dart';
 import '../platform/windows_window_utils.dart';
 import '../services/ad_filter_engine.dart';
 import '../services/live_service.dart';
+import '../services/live_source_storage.dart';
 import '../services/user_data_service.dart';
 import '../theme.dart';
 import '../utils/windows_logger.dart';
+import '../widgets/common/tech_loading_indicator.dart';
 import '../widgets/live/live_player.dart';
 
 /// 全屏直播播放页。
@@ -41,7 +43,7 @@ class LivePlayerScreen extends StatefulWidget {
   /// 当前直播源在 [allSources] 中的索引。
   final int sourceIndex;
 
-  const LivePlayerScreen({
+  LivePlayerScreen({
     super.key,
     required this.source,
     this.allSources,
@@ -135,11 +137,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 当前光标是否已隐藏。
   bool _isCursorHidden = false;
   /// 鼠标无操作多少秒后自动隐藏光标。
-  static const Duration _kMouseHideDelay = Duration(seconds: 5);
+  static Duration _kMouseHideDelay = Duration(seconds: 5);
 
-  static const Size _kUnboundedSize = Size(100000, 100000);
-  static const Size _kNormalMinSize = Size(900, 600);
-  static const Size _kMiniMinSize = Size(320, 180);
+  static Size _kUnboundedSize = Size(100000, 100000);
+  static Size _kNormalMinSize = Size(900, 600);
+  static Size _kMiniMinSize = Size(320, 180);
   static const double _kChannelListWidth = 480;
   static const double _kCategoryColumnWidth = 100;
   static const double _kChannelItemHeight = 102;
@@ -298,12 +300,38 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       return;
     }
 
+    // 恢复上次退出直播模式时观看的频道：按 url / name 在频道列表中匹配，匹配到则定位到
+    // 该频道，否则回退到列表第一个。下次进入同一直播源即自动续播上次频道。
+    int initialIndex = 0;
+    String restoredInfo;
+    final last = await LiveSourceStorage.getLastChannel(widget.source.id);
+    if (last != null) {
+      final lastUrl = last['url'] ?? '';
+      final lastName = last['name'] ?? '';
+      for (int i = 0; i < channels.length; i++) {
+        final c = channels[i];
+        if ((lastUrl.isNotEmpty && c.currentUrl == lastUrl) ||
+            (lastName.isNotEmpty && c.name == lastName)) {
+          initialIndex = i;
+          break;
+        }
+      }
+      restoredInfo = 'found url=$lastUrl name=$lastName -> index=$initialIndex';
+    } else {
+      restoredInfo = 'none';
+    }
+    debugPrint(
+      '[LiveLastChannel] restore sourceId=${widget.source.id} $restoredInfo',
+    );
+
     setState(() {
       _loading = false;
       _channels = channels;
-      _currentIndex = 0;
-      _currentChannel = channels.first;
+      _currentIndex = initialIndex;
+      _currentChannel = channels[initialIndex];
     });
+    // 即便本次未手动切台，也把恢复到的频道重新持久化，保证该源的“上次频道”始终有效。
+    unawaited(_saveCurrentChannel());
     _buildGroups();
     _syncSelectionToCurrentChannel();
 
@@ -357,8 +385,31 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (mounted) setState(() {});
   }
 
+  /// 持久化“当前直播源当前观看的频道”，用于退出直播模式后下次进入自动续播。
+  /// 每次切换频道、以及退出播放页（dispose）时都会调用。带 try/catch 与诊断日志，
+  /// 便于在无原生日志时通过 flutter 日志确认存储是否成功、key 是否正确。
+  Future<void> _saveCurrentChannel() async {
+    final ch = _currentChannel;
+    if (ch == null) return;
+    try {
+      await LiveSourceStorage.saveLastChannel(
+        widget.source.id,
+        ch.currentUrl,
+        ch.name,
+      );
+      debugPrint(
+        '[LiveLastChannel] save sourceId=${widget.source.id} '
+        'name=${ch.name} url=${ch.currentUrl}',
+      );
+    } catch (e, st) {
+      debugPrint('[LiveLastChannel] save ERROR: $e\n$st');
+    }
+  }
+
   void _playChannel(int index, {bool showInfo = true}) {
     if (index < 0 || index >= _channels.length) return;
+    // 记住该直播源当前观看的频道；每次切换即持久化，退出直播模式后下次进入可自动续播。
+    unawaited(_saveCurrentChannel());
     setState(() {
       _currentIndex = index;
       _currentChannel = _channels[index];
@@ -554,7 +605,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         targetOffset + itemHeight > currentOffset + viewport) {
       _categoryScrollController.animateTo(
         targetOffset.clamp(0.0, _categoryScrollController.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 200),
+        duration: Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     }
@@ -569,7 +620,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         targetOffset + _channelItemHeight > currentOffset + viewport) {
       _channelListScrollController.animateTo(
         targetOffset.clamp(0.0, _channelListScrollController.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 200),
+        duration: Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     }
@@ -626,7 +677,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _showChannelInfoBriefly() {
     _channelInfoTimer?.cancel();
     setState(() => _showChannelInfo = true);
-    _channelInfoTimer = Timer(const Duration(seconds: 5), () {
+    _channelInfoTimer = Timer(Duration(seconds: 5), () {
       if (mounted) setState(() => _showChannelInfo = false);
     });
   }
@@ -733,11 +784,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         if (saved != null && _isValidNormalBounds(saved)) {
           await windowManager.setBounds(saved);
         } else {
-          await windowManager.setSize(const Size(900, 600));
+          await windowManager.setSize(Size(900, 600));
           await windowManager.center();
         }
         if (_wasFullScreenBeforeMini) {
-          await Future.delayed(const Duration(milliseconds: 100));
+          await Future.delayed(Duration(milliseconds: 100));
           await toggleWindowsFullscreen();
         }
         _isMiniPlayer = false;
@@ -746,7 +797,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _wasFullScreenBeforeMini = isWindowsFullScreen;
         if (isWindowsFullScreen) {
           await toggleWindowsFullscreen();
-          await Future.delayed(const Duration(milliseconds: 100));
+          await Future.delayed(Duration(milliseconds: 100));
         }
         final bounds = await windowManager.getBounds();
         if (_isValidNormalBounds(bounds)) {
@@ -758,7 +809,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         await windowManager.setResizable(true);
         await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
         await WindowsWindowUtils.ensureNormalWindowFrame();
-        await windowManager.setSize(const Size(400, 225));
+        await windowManager.setSize(Size(400, 225));
         await windowManager.setAlwaysOnTop(true);
         _isMiniPlayer = true;
         _isAlwaysOnTop = true;
@@ -808,7 +859,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _exitingWindowsPlayback = true;
     WindowsLogger.log('LivePlayerScreen', 'Windows 退出播放：暂停渲染后 pop');
     unawaited(_livePlayerController.pause());
-    Future<void>.delayed(const Duration(milliseconds: 150), () {
+    Future<void>.delayed(Duration(milliseconds: 150), () {
       if (mounted) {
         // 直接 pop 绕过 canPop（Windows 下 canPop 恒 false），
         // 避免再次进入 onPopInvoked 导致死循环。
@@ -869,7 +920,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         return true;
       case LogicalKeyboardKey.arrowLeft:
         if (_isReplayMode) {
-          _seekReplay(const Duration(seconds: -30));
+          _seekReplay(Duration(seconds: -30));
           return true;
         }
         if (_showChannelList) {
@@ -885,7 +936,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         return true;
       case LogicalKeyboardKey.arrowRight:
         if (_isReplayMode) {
-          _seekReplay(const Duration(seconds: 30));
+          _seekReplay(Duration(seconds: 30));
           return true;
         }
         if (_showChannelList) {
@@ -942,7 +993,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (event is KeyDownEvent) {
       _selectKeyDownAt = DateTime.now();
       _selectLongPressTimer?.cancel();
-      _selectLongPressTimer = Timer(const Duration(milliseconds: 600), () {
+      _selectLongPressTimer = Timer(Duration(milliseconds: 600), () {
         _selectKeyDownAt = null;
         _selectLongPressTimer = null;
         // 长按直接显示频道列表（回放模式下先退出回放再显示列表）。
@@ -1143,7 +1194,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _replayGestureForward = forward;
     });
     if (!persistent) {
-      _replayGestureTimer = Timer(const Duration(seconds: 1), () {
+      _replayGestureTimer = Timer(Duration(seconds: 1), () {
         if (mounted) {
           setState(() => _replayGestureVisible = false);
         }
@@ -1161,7 +1212,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _replayGestureKind = 'pause';
       _replayGestureForward = playing;
     });
-    _replayGestureTimer = Timer(const Duration(seconds: 1), () {
+    _replayGestureTimer = Timer(Duration(seconds: 1), () {
       if (mounted) {
         setState(() => _replayGestureVisible = false);
       }
@@ -1195,7 +1246,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     // 先标记正在快进快退，再执行首次定位，避免被 _replayHoldTick 的防御检查拦截。
     _replayHoldTick();
     _replayHoldTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
+      Duration(milliseconds: 250),
       (_) => _replayHoldTick(),
     );
     // 长按期间持续显示快进/快退手势标识。
@@ -1236,7 +1287,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     // 松手结束长按，隐藏手势标识，并重新启动信息卡自动隐藏。
     _hideReplayGestureIndicator();
     _channelInfoTimer?.cancel();
-    _channelInfoTimer = Timer(const Duration(seconds: 5), () {
+    _channelInfoTimer = Timer(Duration(seconds: 5), () {
       if (mounted && !_isReplaySeeking) {
         setState(() => _showChannelInfo = false);
       }
@@ -1306,7 +1357,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         targetOffset + itemHeight > currentOffset + viewport) {
       _epgListScrollController.animateTo(
         targetOffset.clamp(0.0, _epgListScrollController.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 200),
+        duration: Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     }
@@ -1378,6 +1429,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   @override
   void dispose() {
     WindowsLogger.log('LivePlayerScreen', 'dispose 开始');
+    // 退出直播播放页时持久化当前观看的频道（覆盖“退出直播模式”的语义）；
+    // 与每次切台的保存共同保证各直播源的最后观看频道不丢失。
+    unawaited(_saveCurrentChannel());
     _channelInfoTimer?.cancel();
     _controlsTimer?.cancel();
     _replayGestureTimer?.cancel();
@@ -1475,8 +1529,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   Widget _buildPlayer() {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      return Center(
+        child: TechLoadingIndicator(),
       );
     }
 
@@ -1490,16 +1544,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               Text(
                 _error!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   color: AppColors.error,
                   fontSize: 14,
                 ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              SizedBox(height: AppSpacing.md),
               ElevatedButton(
                 onPressed: _loadChannels,
-                child: const Text('重新加载'),
+                child: Text('重新加载'),
               ),
             ],
           ),
@@ -1508,7 +1562,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
 
     if (_currentChannel == null) {
-      return const Center(
+      return Center(
         child: Text(
           '请选择频道',
           style: TextStyle(
@@ -1528,7 +1582,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _currentReplayProgram!,
       );
       if (catchupUrl == null || catchupUrl.isEmpty) {
-        return const Center(
+        return Center(
           child: Text(
             '无法生成回放地址',
             style: TextStyle(
@@ -1815,7 +1869,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 回放快进/快退与暂停/播放手势标识浮层（居中显示，样式与点播模式一致）。
   Widget _buildReplayGestureIndicator() {
-    if (!_replayGestureVisible) return const SizedBox.shrink();
+    if (!_replayGestureVisible) return SizedBox.shrink();
     final bool isPauseKind = _replayGestureKind == 'pause';
     final IconData icon;
     final String text;
@@ -1830,9 +1884,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
     return Center(
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
-          color: AppColors.bgOverlay,
+          color: Color(0xD90A0A0F),
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
         child: Column(
@@ -1840,16 +1894,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           children: [
             Icon(
               icon,
-              color: AppColors.textPrimary,
+              color: Color(0xFFF0F0F5),
               size: 32,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            SizedBox(height: AppSpacing.sm),
             Text(
               text,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
-                color: AppColors.textPrimary,
+                color: Color(0xFFF0F0F5),
               ),
             ),
           ],
@@ -1860,7 +1914,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   Widget _buildChannelInfoOverlay() {
     final channel = _currentChannel;
-    if (channel == null) return const SizedBox.shrink();
+    if (channel == null) return SizedBox.shrink();
     final program = channel.currentProgram;
     final programTitle = program?.title ?? channel.program?.trim();
     final nextProgram = _findNextProgram(channel);
@@ -1900,7 +1954,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       ? _replayProgressRatio
                       : (program != null ? channel.programProgressRatio(program) : 0),
                   backgroundColor: Colors.white.withValues(alpha: 0.1),
-                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                   minHeight: 3,
                 ),
               ),
@@ -1975,7 +2029,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       ),
                       if (_isReplayMode && _currentReplayProgram != null)
                         Padding(
-                          padding: const EdgeInsets.only(top: 2),
+                          padding: EdgeInsets.only(top: 2),
                           child: Text(
                             _isReplayPaused && _isReplaySeeking
                                 ? '回放定位: ${_currentReplayProgram!.title}'
@@ -1994,7 +2048,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         )
                       else if (programTitle != null && programTitle.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 2),
+                          padding: EdgeInsets.only(top: 2),
                           child: Text(
                             programTitle,
                             maxLines: 2,
@@ -2008,12 +2062,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         )
                       else if (channel.group != null && channel.group!.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 2),
+                          padding: EdgeInsets.only(top: 2),
                           child: Text(
                             channel.group!,
                             style: TextStyle(
                               fontFamily: 'NotoSansSC',
-                              color: AppColors.textSecondary,
+                              color: Color(0xFF9CA3AF),
                               fontSize: isMobile ? 10 : 12,
                             ),
                           ),
@@ -2055,8 +2109,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     ),
                     if (channel.hasMultipleUrls)
                       Container(
-                        margin: const EdgeInsets.only(left: AppSpacing.xs),
-                        padding: const EdgeInsets.symmetric(
+                        margin: EdgeInsets.only(left: AppSpacing.xs),
+                        padding: EdgeInsets.symmetric(
                           horizontal: 6,
                           vertical: 1,
                         ),
@@ -2066,7 +2120,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         ),
                         child: Text(
                           '源 ${channel.currentBackupIndex + 1}/${channel.allUrls.length}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             color: Colors.white,
                             fontSize: 10,
@@ -2110,7 +2164,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               GestureDetector(
                 onTap: _openEpgListForCurrentChannel,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                     vertical: AppSpacing.xs,
                   ),
@@ -2118,7 +2172,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     color: AppColors.primary.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.history, color: Colors.white, size: 14),
@@ -2177,7 +2231,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Widget _buildChannelListOverlay() {
-    if (_groups.isEmpty) return const SizedBox.shrink();
+    if (_groups.isEmpty) return SizedBox.shrink();
     final channelIndices = _groupedChannelIndices[_groups[_selectedGroupIndex]] ?? [];
     final isMobile = DeviceUtils.isMobile;
     // Windows 版也显示右侧节目单条幅（支持鼠标点击），TV 版使用右键展开。
@@ -2212,7 +2266,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             if (!DeviceUtils.isWindows)
               Container(
                 height: 56,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 alignment: Alignment.centerLeft,
                 child: Row(
                   children: [
@@ -2221,7 +2275,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         widget.source.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           color: Colors.white,
                           fontSize: 16,
@@ -2231,9 +2285,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     ),
                     Text(
                       '${_channels.length} 个频道',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        color: AppColors.textSecondary,
+                        color: Color(0xFF9CA3AF),
                         fontSize: 12,
                       ),
                     ),
@@ -2250,7 +2304,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       focusNode: _categoryFocusNode,
                       child: ListView.builder(
                         controller: _categoryScrollController,
-                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                        padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                         itemCount: _groups.length,
                         itemBuilder: (context, index) {
                           return _buildCategoryItem(index);
@@ -2264,7 +2318,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       focusNode: _channelListFocusNode,
                       child: ListView.builder(
                         controller: _channelListScrollController,
-                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                        padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                         itemCount: channelIndices.length,
                         itemExtent: _channelItemHeight,
                         itemBuilder: (context, position) {
@@ -2294,7 +2348,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             ),
             Container(
               height: isMobile ? 32 : 40,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
               alignment: Alignment.centerLeft,
               child: Text(
                 DeviceUtils.isTv && !DeviceUtils.isWindows
@@ -2323,17 +2377,17 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final channel = _currentChannel;
     return Container(
       height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
       alignment: Alignment.centerLeft,
       child: Row(
         children: [
           IconButton(
             // Windows 频道列表左上角返回直接退出播放。
             onPressed: handleWindowsEsc,
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: Icon(Icons.arrow_back, color: Colors.white),
             tooltip: '退出播放',
           ),
-          const SizedBox(width: AppSpacing.sm),
+          SizedBox(width: AppSpacing.sm),
           if (channel != null)
             Expanded(
               child: Column(
@@ -2344,7 +2398,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     channel.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       color: Colors.white,
                       fontSize: 16,
@@ -2354,9 +2408,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   if (channel.group != null && channel.group!.isNotEmpty)
                     Text(
                       channel.group!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        color: AppColors.textSecondary,
+                        color: Color(0xFF9CA3AF),
                         fontSize: 12,
                       ),
                     ),
@@ -2365,9 +2419,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             ),
           Text(
             '${_channels.length} 个频道',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
-              color: AppColors.textSecondary,
+              color: Color(0xFF9CA3AF),
               fontSize: 12,
             ),
           ),
@@ -2380,13 +2434,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   Widget _buildWindowsChannelListControls() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
           colors: [
-            AppColors.bgOverlay,
+            Color(0xD90A0A0F),
             Colors.transparent,
           ],
         ),
@@ -2423,7 +2477,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final isMobile = DeviceUtils.isMobile;
     return ListView.builder(
       controller: _epgBannerScrollController,
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
       itemCount: channelIndices.length,
       itemExtent: _channelItemHeight,
       itemBuilder: (context, position) {
@@ -2457,13 +2511,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       '节目单',
                       style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        color: isOpen ? Colors.white : AppColors.textSecondary,
+                        color: isOpen ? Colors.white : Color(0xFF9CA3AF),
                         fontSize: isMobile ? 10 : 11,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   )
-                : const SizedBox.shrink(),
+                : SizedBox.shrink(),
           ),
         );
       },
@@ -2473,13 +2527,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 非 TV 版嵌入在频道列表中的节目单面板。
   Widget _buildEpgListPanel() {
     final channel = _epgListChannel ?? _currentChannel;
-    if (channel == null || channel.programs.isEmpty) return const SizedBox.shrink();
+    if (channel == null || channel.programs.isEmpty) return SizedBox.shrink();
     final programs = _epgProgramsFor(channel);
     final hasCatchup = channel.catchupSource != null && channel.catchupSource!.isNotEmpty;
     final isMobile = DeviceUtils.isMobile;
 
     return Container(
-      color: isMobile ? AppColors.bgApp : Colors.black.withValues(alpha: 0.88),
+      color: isMobile ? Color(0xFF0A0A0F) : Colors.black.withValues(alpha: 0.88),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2507,7 +2561,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   icon: Icon(Icons.close, color: Colors.white, size: isMobile ? 18 : 20),
                   tooltip: '关闭',
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  constraints: BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ],
             ),
@@ -2518,7 +2572,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               focusNode: _epgListFocusNode,
               child: ListView.builder(
                 controller: _epgListScrollController,
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 itemCount: programs.length,
                 itemExtent: isMobile ? 44 : 56,
                 itemBuilder: (context, index) {
@@ -2547,7 +2601,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   Widget _buildEpgListOverlay() {
     final channel = _currentChannel;
-    if (channel == null || channel.programs.isEmpty) return const SizedBox.shrink();
+    if (channel == null || channel.programs.isEmpty) return SizedBox.shrink();
 
     final programs = _epgProgramsFor(channel);
     final hasCatchup = channel.catchupSource != null && channel.catchupSource!.isNotEmpty;
@@ -2564,7 +2618,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             children: [
               Container(
                 height: 56,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 alignment: Alignment.centerLeft,
                 child: Row(
                   children: [
@@ -2573,7 +2627,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         '${channel.name} 节目单',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           color: Colors.white,
                           fontSize: 16,
@@ -2583,9 +2637,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     ),
                     Text(
                       '${programs.length} 个节目',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        color: AppColors.textSecondary,
+                        color: Color(0xFF9CA3AF),
                         fontSize: 12,
                       ),
                     ),
@@ -2598,7 +2652,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   focusNode: _epgListFocusNode,
                   child: ListView.builder(
                     controller: _epgListScrollController,
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                     itemCount: programs.length,
                     itemExtent: 56,
                     itemBuilder: (context, index) {
@@ -2609,7 +2663,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ),
               Container(
                 height: 40,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '← 返回频道    确认键回放',
@@ -2713,7 +2767,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                             fontFamily: 'NotoSansSC',
                             color: isSelected
                                 ? Colors.white.withValues(alpha: 0.9)
-                                : AppColors.textSecondary,
+                                : Color(0xFF9CA3AF),
                             fontSize: isMobile ? 10 : 11,
                           ),
                         ),
@@ -2744,7 +2798,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       },
       child: Container(
         height: isMobile ? 36 : 44,
-        margin: const EdgeInsets.symmetric(
+        margin: EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
@@ -2796,7 +2850,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       },
       child: Container(
         height: _channelItemHeight,
-        margin: const EdgeInsets.symmetric(
+        margin: EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
@@ -2842,7 +2896,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     Container(
                       width: isMobile ? 3 : 4,
                       height: isMobile ? 28 : 40,
-                      margin: const EdgeInsets.only(right: AppSpacing.sm),
+                      margin: EdgeInsets.only(right: AppSpacing.sm),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(2),
@@ -2856,19 +2910,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                           ? Image.network(
                               channel.logo!,
                               fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Icon(
+                              errorBuilder: (_, __, ___) => Icon(
                                 Icons.tv,
                                 size: 30,
                                 color: Colors.white70,
                               ),
                             )
-                          : const Icon(
+                          : Icon(
                               Icons.tv,
                               size: 30,
                               color: Colors.white70,
                             ),
                     ),
-                  if (!isMobile) const SizedBox(width: AppSpacing.sm),
+                  if (!isMobile) SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: isMobile
                         ? Row(
@@ -2889,7 +2943,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: AppSpacing.sm),
+                              SizedBox(width: AppSpacing.sm),
                               // 第二列：节目信息（当前节目 + 下一个节目）
                               Expanded(
                                 child: Column(
@@ -2905,13 +2959,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                           fontFamily: 'NotoSansSC',
                                           color: isSelected
                                               ? Colors.white.withValues(alpha: 0.95)
-                                              : AppColors.textSecondary,
+                                              : Color(0xFF9CA3AF),
                                           fontSize: 11,
                                         ),
                                       ),
                                     if (nextProgram != null)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 2),
+                                        padding: EdgeInsets.only(top: 2),
                                         child: Text(
                                           '下一个: ${nextProgram.title}',
                                           maxLines: 1,
@@ -2920,21 +2974,21 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                             fontFamily: 'NotoSansSC',
                                             color: isSelected
                                                 ? Colors.white.withValues(alpha: 0.75)
-                                                : AppColors.textMuted,
+                                                : Color(0xFF6B7280),
                                             fontSize: 10,
                                           ),
                                         ),
                                       )
                                     else if (channel.group != null && channel.group!.isNotEmpty)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 2),
+                                        padding: EdgeInsets.only(top: 2),
                                         child: Text(
                                           channel.group!,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
                                             fontFamily: 'NotoSansSC',
-                                            color: AppColors.textMuted,
+                                            color: Color(0xFF6B7280),
                                             fontSize: 10,
                                           ),
                                         ),
@@ -2942,7 +2996,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: AppSpacing.sm),
+                              SizedBox(width: AppSpacing.sm),
                               // 第三列：支持回放、时间、源数量
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -2957,16 +3011,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                           size: 10,
                                           color: isSelected
                                               ? Colors.white.withValues(alpha: 0.9)
-                                              : AppColors.textSecondary,
+                                              : Color(0xFF9CA3AF),
                                         ),
-                                        const SizedBox(width: 2),
+                                        SizedBox(width: 2),
                                         Text(
                                           '支持回放',
                                           style: TextStyle(
                                             fontFamily: 'NotoSansSC',
                                             color: isSelected
                                                 ? Colors.white.withValues(alpha: 0.9)
-                                                : AppColors.textSecondary,
+                                                : Color(0xFF9CA3AF),
                                             fontSize: 10,
                                           ),
                                         ),
@@ -2979,14 +3033,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                         fontFamily: 'NotoSansSC',
                                         color: isSelected
                                             ? Colors.white.withValues(alpha: 0.9)
-                                            : AppColors.textSecondary,
+                                            : Color(0xFF9CA3AF),
                                         fontSize: 10,
                                       ),
                                     ),
                                   if (channel.hasMultipleUrls)
                                     Container(
-                                      margin: const EdgeInsets.only(top: 2),
-                                      padding: const EdgeInsets.symmetric(
+                                      margin: EdgeInsets.only(top: 2),
+                                      padding: EdgeInsets.symmetric(
                                         horizontal: 4,
                                         vertical: 1,
                                       ),
@@ -3027,7 +3081,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                               ),
                               if (programText != null && programText.isNotEmpty)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 2),
+                                  padding: EdgeInsets.only(top: 2),
                                   child: Row(
                                     children: [
                                       Expanded(
@@ -3039,20 +3093,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                             fontFamily: 'NotoSansSC',
                                             color: isSelected
                                                 ? Colors.white.withValues(alpha: 0.95)
-                                                : AppColors.textSecondary,
+                                                : Color(0xFF9CA3AF),
                                             fontSize: 12,
                                           ),
                                         ),
                                       ),
                                       if (program != null) ...[
-                                        const SizedBox(width: 6),
+                                        SizedBox(width: 6),
                                         Text(
                                           '${channel.programElapsedMinutes(program)}/${channel.programDurationMinutes(program)}分',
                                           style: TextStyle(
                                             fontFamily: 'NotoSansSC',
                                             color: isSelected
                                                 ? Colors.white.withValues(alpha: 0.9)
-                                                : AppColors.textSecondary,
+                                                : Color(0xFF9CA3AF),
                                             fontSize: 10,
                                           ),
                                         ),
@@ -3062,19 +3116,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                 )
                               else if (channel.group != null && channel.group!.isNotEmpty)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 3),
+                                  padding: EdgeInsets.only(top: 3),
                                   child: Text(
                                     channel.group!,
                                     style: TextStyle(
                                       fontFamily: 'NotoSansSC',
-                                      color: AppColors.textSecondary,
+                                      color: Color(0xFF9CA3AF),
                                       fontSize: 12,
                                     ),
                                   ),
                                 ),
                               if (hasReplayPrograms)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 4),
+                                  padding: EdgeInsets.only(top: 4),
                                   child: Row(
                                     children: [
                                       Icon(
@@ -3082,16 +3136,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                         size: 12,
                                         color: isSelected
                                             ? Colors.white.withValues(alpha: 0.9)
-                                            : AppColors.textSecondary,
+                                            : Color(0xFF9CA3AF),
                                       ),
-                                      const SizedBox(width: 4),
+                                      SizedBox(width: 4),
                                       Text(
                                         '支持回放',
                                         style: TextStyle(
                                           fontFamily: 'NotoSansSC',
                                           color: isSelected
                                               ? Colors.white.withValues(alpha: 0.9)
-                                              : AppColors.textSecondary,
+                                              : Color(0xFF9CA3AF),
                                           fontSize: 11,
                                         ),
                                       ),
@@ -3103,8 +3157,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   ),
                   if (!isMobile && channel.hasMultipleUrls)
                     Container(
-                      margin: const EdgeInsets.only(left: AppSpacing.sm),
-                      padding: const EdgeInsets.symmetric(
+                      margin: EdgeInsets.only(left: AppSpacing.sm),
+                      padding: EdgeInsets.symmetric(
                         horizontal: 6,
                         vertical: 2,
                       ),
@@ -3136,7 +3190,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   Widget _buildWindowsControls() {
     final channel = _currentChannel;
     if (_isMiniPlayer) {
-      if (!_controlsVisible) return const SizedBox.shrink();
+      if (!_controlsVisible) return SizedBox.shrink();
       return Positioned(
         left: 0,
         right: 0,
@@ -3164,7 +3218,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.md,
                     vertical: AppSpacing.sm,
                   ),
@@ -3173,7 +3227,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        AppColors.bgOverlay,
+                        Color(0xD90A0A0F),
                         Colors.transparent,
                       ],
                     ),
@@ -3182,13 +3236,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                     children: [
                       IconButton(
                         onPressed: _onWindowsBack,
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.arrow_back,
                           color: Colors.white,
                         ),
                         tooltip: '返回',
                       ),
-                      const SizedBox(width: AppSpacing.sm),
+                      SizedBox(width: AppSpacing.sm),
                       if (channel != null)
                         Expanded(
                           child: Column(
@@ -3199,7 +3253,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                 channel.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontFamily: 'NotoSansSC',
                                   color: Colors.white,
                                   fontSize: 16,
@@ -3210,9 +3264,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                   channel.group!.isNotEmpty)
                                 Text(
                                   channel.group!,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontFamily: 'NotoSansSC',
-                                    color: AppColors.textSecondary,
+                                    color: Color(0xFF9CA3AF),
                                     fontSize: 12,
                                   ),
                                 ),
@@ -3223,20 +3277,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   ),
                 ),
               ),
-              const Spacer(),
+              Spacer(),
               // 底部控制栏
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.bottomCenter,
                       end: Alignment.topCenter,
                       colors: [
-                        AppColors.bgOverlay,
+                        Color(0xD90A0A0F),
                         Colors.transparent,
                       ],
                     ),
@@ -3283,7 +3337,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       behavior: HitTestBehavior.opaque,
       onTap: () {},
       child: Container(
-        padding: const EdgeInsets.symmetric(
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
@@ -3292,7 +3346,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
             colors: [
-              AppColors.bgOverlay.withValues(alpha: 0.9),
+              Color(0xD90A0A0F).withValues(alpha: 0.9),
               Colors.transparent,
             ],
           ),
@@ -3345,12 +3399,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: EdgeInsets.all(AppSpacing.sm),
           decoration: BoxDecoration(
-            color: AppColors.bgElevated.withValues(alpha: 0.8),
+            color: Color(0xFF1C1C2E).withValues(alpha: 0.8),
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          child: Icon(icon, color: AppColors.textPrimary, size: 22),
+          child: Icon(icon, color: Color(0xFFF0F0F5), size: 22),
         ),
       ),
     );
@@ -3367,22 +3421,22 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Container(
-          padding: const EdgeInsets.symmetric(
+          padding: EdgeInsets.symmetric(
             horizontal: AppSpacing.md,
             vertical: AppSpacing.sm,
           ),
           decoration: BoxDecoration(
-            color: AppColors.bgElevated.withValues(alpha: 0.8),
+            color: Color(0xFF1C1C2E).withValues(alpha: 0.8),
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, color: Colors.white, size: 20),
-              const SizedBox(width: AppSpacing.xs),
+              SizedBox(width: AppSpacing.xs),
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   color: Colors.white,
                   fontSize: 13,

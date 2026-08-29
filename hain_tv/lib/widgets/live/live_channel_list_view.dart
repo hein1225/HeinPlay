@@ -60,7 +60,7 @@ class LiveChannelListView extends StatelessWidget {
       color: AppColors.bgSurface,
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: 'NotoSansSC',
           fontSize: 13,
           fontWeight: FontWeight.w700,
@@ -111,7 +111,7 @@ class LiveChannelListView extends StatelessWidget {
                     width: 40,
                     height: 28,
                     color: AppColors.bgElevated,
-                    child: const Icon(
+                    child: Icon(
                       Icons.live_tv,
                       size: 16,
                       color: AppColors.textMuted,
@@ -127,7 +127,7 @@ class LiveChannelListView extends StatelessWidget {
                   color: AppColors.bgElevated,
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.live_tv,
                   size: 16,
                   color: AppColors.textMuted,
@@ -148,7 +148,7 @@ class LiveChannelListView extends StatelessWidget {
               ),
             ),
             if (isSelected)
-              const Icon(
+              Icon(
                 Icons.play_arrow,
                 size: 16,
                 color: AppColors.primary,

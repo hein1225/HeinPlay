@@ -62,6 +62,9 @@ class UserDataService {
   static const String _lunaTvLiveEnabledKey = 'lunatv_live_enabled';
   static const String _liveSourceCacheHoursKey = 'live_source_cache_hours';
   static const String _epgLoadEnabledKey = 'epg_load_enabled';
+  // 本地 M3U8 代理总开关：开启时点播 M3U8 经由本地代理（统一请求头/去广告），
+  // 关闭时直接播放原始地址。直播默认直连，不受此开关影响。
+  static const String _localProxyEnabledKey = 'local_proxy_enabled';
 
   // Bangumi 代理设置
   static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
@@ -666,6 +669,20 @@ class UserDataService {
   static Future<void> saveEpgLoadEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_epgLoadEnabledKey, enabled);
+  }
+
+  /// 本地 M3U8 代理总开关，默认开启。
+  ///
+  /// 关闭后点播 M3U8 直接播放原始地址，不经过本地代理；用于排查代理导致的
+  /// 播放卡顿/兼容问题（例如部分设备对本地代理不兼容时）。
+  static Future<bool> getLocalProxyEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_localProxyEnabledKey) ?? false;
+  }
+
+  static Future<void> saveLocalProxyEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_localProxyEnabledKey, enabled);
   }
 
   static String _perVideoBackendKey(String source, String id) {

@@ -1091,6 +1091,10 @@ class LunaTVService {
         if (headers != null && headers.isNotEmpty) {
           req.headers.addAll(headers);
         }
+        // 大多数 HLS 分片服务器对 Range 请求响应更快、返回 206，与原生播放器
+        // 按分片拉取一致；整段 GET 易被节流或超时，导致可流畅播放的源被误判为“仅可用”。
+        // 仅在不含 Range 时补充，避免覆盖调用方显式设置的分片范围。
+        req.headers.putIfAbsent('Range', () => 'bytes=0-${maxBytes - 1}');
         final streamedResponse = await client.send(req).timeout(measureTimeout);
 
         if (streamedResponse.statusCode == 200 ||

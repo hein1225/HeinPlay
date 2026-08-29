@@ -45,7 +45,7 @@ class TvPosterCard extends StatelessWidget {
       child: Center(
         child: Text(
           title.isNotEmpty ? title.substring(0, 1) : '',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 32,
             color: AppColors.textMuted,
@@ -200,7 +200,7 @@ class TvPosterCard extends StatelessWidget {
             right: AppSpacing.sm,
             child: Container(
               padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),

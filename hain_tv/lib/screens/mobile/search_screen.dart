@@ -7,6 +7,7 @@ import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/mobile_poster_grid.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class MobileSearchScreen extends StatefulWidget {
   const MobileSearchScreen({super.key});
@@ -153,17 +154,17 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     return TextField(
       controller: _controller,
       textInputAction: TextInputAction.search,
-      style: const TextStyle(color: AppColors.textPrimary),
+      style: TextStyle(color: AppColors.textPrimary),
       onSubmitted: (value) => _search(value),
       decoration: InputDecoration(
         hintText: '输入关键词搜索',
-        prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+        prefixIcon: Icon(Icons.search, color: AppColors.textSecondary),
         suffixIcon: ValueListenableBuilder<TextEditingValue>(
           valueListenable: _controller,
           builder: (context, value, child) {
             if (value.text.isEmpty) return const SizedBox.shrink();
             return IconButton(
-              icon: const Icon(Icons.clear, color: AppColors.textSecondary),
+              icon: Icon(Icons.clear, color: AppColors.textSecondary),
               onPressed: _clearInput,
             );
           },
@@ -180,9 +181,9 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       children: [
         Row(
           children: [
-            const Icon(Icons.history, color: AppColors.textSecondary, size: 16),
+            Icon(Icons.history, color: AppColors.textSecondary, size: 16),
             const SizedBox(width: AppSpacing.xs),
-            const Expanded(
+            Expanded(
               child: Text(
                 '搜索历史',
                 style: TextStyle(
@@ -198,7 +199,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
                 await LocalStorageService.clearSearchHistory();
                 _loadSearchHistory();
               },
-              child: const Text(
+              child: Text(
                 '清空',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -216,10 +217,10 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
           children: _searchHistory.map((query) {
             return ActionChip(
               backgroundColor: AppColors.bgElevated,
-              side: const BorderSide(color: AppColors.border),
+              side: BorderSide(color: AppColors.border),
               label: Text(
                 query,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   fontSize: 13,
                   color: AppColors.textPrimary,
@@ -245,11 +246,11 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const CircularProgressIndicator(color: AppColors.primary),
+            TechLoadingIndicator(),
             const SizedBox(height: AppSpacing.md),
             Text(
               _progressText ?? '正在搜索...',
-              style: const TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -260,13 +261,13 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       return Center(
         child: Text(
           _error!,
-          style: const TextStyle(color: AppColors.textSecondary),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
       );
     }
 
     if (_controller.text.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -286,7 +287,7 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     }
 
     if (_results.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           '未找到相关结果',
           style: TextStyle(color: AppColors.textSecondary),
@@ -318,15 +319,12 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
                 const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(
-                    color: AppColors.primary,
-                    strokeWidth: 2,
-                  ),
+                  child: TechLoadingIndicator(strokeWidth: 2),
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 Text(
                   _progressText!,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,
                   ),

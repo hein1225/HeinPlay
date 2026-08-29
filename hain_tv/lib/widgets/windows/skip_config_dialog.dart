@@ -118,7 +118,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
     return AlertDialog(
       scrollable: true,
       backgroundColor: AppColors.bgApp,
-      title: const Text(
+      title: Text(
         '跳过片头片尾',
         style: TextStyle(
           fontFamily: 'NotoSansSC',
@@ -137,8 +137,8 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
               children: [
                 TextButton.icon(
                   onPressed: () => _addSegment('opening'),
-                  icon: const Icon(Icons.add, color: AppColors.primary, size: 18),
-                  label: const Text(
+                  icon: Icon(Icons.add, color: AppColors.primary, size: 18),
+                  label: Text(
                     '片头',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -156,8 +156,8 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                 const SizedBox(width: AppSpacing.md),
                 TextButton.icon(
                   onPressed: () => _addSegment('ending'),
-                  icon: const Icon(Icons.add, color: AppColors.primary, size: 18),
-                  label: const Text(
+                  icon: Icon(Icons.add, color: AppColors.primary, size: 18),
+                  label: Text(
                     '片尾',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -176,7 +176,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
             ),
             const SizedBox(height: AppSpacing.lg),
             if (_segments.isEmpty)
-              const Text(
+              Text(
                 '暂无跳过配置，点击上方按钮添加片头或片尾。',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -202,7 +202,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
               vertical: AppSpacing.sm,
             ),
           ),
-          child: const Text(
+          child: Text(
             '取消',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -250,7 +250,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
               children: [
                 Text(
                   segment.type == 'opening' ? '片头' : '片尾',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -260,7 +260,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                 const Spacer(),
                 IconButton(
                   onPressed: () => _removeSegment(index),
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.delete_outline,
                     color: AppColors.error,
                     size: 20,
@@ -274,7 +274,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
             const SizedBox(height: AppSpacing.sm),
             Text(
               '${_formatSeconds(segment.start)} - ${_formatSeconds(segment.end)}',
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 13,
                 color: AppColors.textSecondary,
@@ -290,7 +290,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                     segment.copyWith(autoSkip: value ?? segment.autoSkip),
                   ),
                 ),
-                const Text(
+                Text(
                   '自动跳过',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -309,7 +309,7 @@ class _SkipConfigDialogState extends State<SkipConfigDialog> {
                       ),
                     ),
                   ),
-                  const Text(
+                  Text(
                     '自动下一集',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',

@@ -173,9 +173,9 @@ class _TvShellState extends State<TvShell> {
       },
       child: GestureDetector(
         onTap: () => _onNavTap(index),
-        child: Container(
+          child: Container(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
+            horizontal: 12,
             vertical: AppSpacing.sm,
           ),
           decoration: BoxDecoration(
@@ -241,7 +241,7 @@ class _TvShellState extends State<TvShell> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
-          title: const Text(
+          title: Text(
             '退出应用',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -250,7 +250,7 @@ class _TvShellState extends State<TvShell> {
               color: AppColors.textPrimary,
             ),
           ),
-          content: const Text(
+          content: Text(
             '确定要退出海因影视吗？',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -275,7 +275,7 @@ class _TvShellState extends State<TvShell> {
                   borderRadius: BorderRadius.circular(AppRadius.md),
                   border: Border.all(color: AppColors.border),
                 ),
-                child: const Text(
+                child: Text(
                   '取消',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -389,14 +389,14 @@ class _TvShellState extends State<TvShell> {
               Container(
                 height: 56,
                 color: AppColors.bgSurface,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                 child: Row(
                   children: [
                     Text(
                       '海因影视',
                       style: TextStyle(
                         fontFamily: 'NotoSansSC',
-                        fontSize: 26,
+                        fontSize: 28,
                         fontWeight: FontWeight.w900,
                         color: AppColors.primary,
                         letterSpacing: 1.2,
@@ -409,7 +409,7 @@ class _TvShellState extends State<TvShell> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: AppSpacing.md),
+                    const SizedBox(width: AppSpacing.sm),
                     const ConnectionStatusBadge(),
                     const Spacer(),
                     ..._items.asMap().entries.map((entry) {

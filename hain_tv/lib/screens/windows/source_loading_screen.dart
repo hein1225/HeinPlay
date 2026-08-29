@@ -8,6 +8,7 @@ import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/screens/windows/player_screen.dart' as windows_player;
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class SourceLoadingScreen extends StatefulWidget {
   final models.PlayRecord record;
@@ -115,7 +116,7 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
                         borderRadius: BorderRadius.circular(AppRadius.md),
                         border: Border.all(color: AppColors.border),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
@@ -145,10 +146,10 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
   }
 
   Widget _buildLoading() {
-    return const Column(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircularProgressIndicator(strokeWidth: 3, color: AppColors.primary),
+        TechLoadingIndicator(strokeWidth: 3),
         SizedBox(height: AppSpacing.lg),
         Text(
           '加载中...',
@@ -168,7 +169,7 @@ class _SourceLoadingScreenState extends State<SourceLoadingScreen> {
       children: [
         Text(
           _error!,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 16,
             color: AppColors.textSecondary,

@@ -21,6 +21,7 @@ import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/screens/mobile/player_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class MobileDetailScreen extends StatefulWidget {
   final List<SourceOption> sources;
@@ -1474,7 +1475,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         child: Center(
           child: Text(
             widget.title.isNotEmpty ? widget.title.substring(0, 1) : '',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 48,
               color: AppColors.textMuted,
@@ -1512,7 +1513,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       children: [
         Row(
           children: [
-            const Text(
+            Text(
               '播放源',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
@@ -1526,10 +1527,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
               const SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.primary,
-                ),
+                child: TechLoadingIndicator(strokeWidth: 2),
               ),
             if (_searchingSources) const SizedBox(width: AppSpacing.sm),
             if (_sources.length >= 2)
@@ -1552,13 +1550,10 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                         const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.primary,
-                          ),
+                          child: TechLoadingIndicator(strokeWidth: 2),
                         )
                       else
-                        const Icon(
+                        Icon(
                           Icons.network_check,
                           color: AppColors.primary,
                           size: 16,
@@ -1566,7 +1561,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                       const SizedBox(width: AppSpacing.xs),
                       Text(
                         _speedTesting ? '测速中' : '优选测速',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 13,
                           color: AppColors.textPrimary,
@@ -1585,7 +1580,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
               ? _searchingSources
                     ? const SizedBox.shrink()
                     : _fuzzySearchEnabled
-                    ? const Text(
+                    ? Text(
                         '未找到相关播放源',
                         style: TextStyle(
                           fontFamily: 'NotoSansSC',
@@ -1605,7 +1600,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                             borderRadius: BorderRadius.circular(AppRadius.sm),
                             border: Border.all(color: AppColors.border),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
@@ -1684,7 +1679,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                         source.title.isNotEmpty
                             ? source.title.substring(0, 1)
                             : '',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 24,
                           color: AppColors.textMuted,
@@ -1727,7 +1722,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                           source.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -1740,7 +1735,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                           source.sourceName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 10,
                             fontWeight: FontWeight.w500,
@@ -1767,7 +1762,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                     ),
                     child: Text(
                       speedText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -1791,7 +1786,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                     ),
                     child: Text(
                       resolutionText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -1801,7 +1796,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
                   ),
                 ),
               if (selected)
-                const Positioned(
+                Positioned(
                   top: 6,
                   left: 6,
                   child: Icon(
@@ -1854,7 +1849,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       children: [
         Text(
           widget.title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 24,
             fontWeight: FontWeight.w700,
@@ -1885,10 +1880,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           const SizedBox(
             width: 24,
             height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppColors.primary,
-            ),
+            child: TechLoadingIndicator(strokeWidth: 2),
           )
         else if (summary.isNotEmpty)
           GestureDetector(
@@ -1899,7 +1891,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
               overflow: _summaryExpanded
                   ? TextOverflow.visible
                   : TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
                 height: 1.5,
@@ -1943,7 +1935,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         children: [
           Text(
             '$label: ',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 14,
               height: 1.5,
@@ -1956,7 +1948,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
               value,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
                 height: 1.5,
@@ -1977,7 +1969,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         children: [
           Text(
             '$label: ',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 14,
               height: 1.5,
@@ -1988,7 +1980,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
                 height: 1.5,
@@ -2073,8 +2065,8 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
         if (hasRecord)
           OutlinedButton.icon(
             onPressed: () => _playEpisode(0),
-            icon: const Icon(Icons.replay, color: AppColors.textPrimary),
-            label: const Text(
+            icon: Icon(Icons.replay, color: AppColors.textPrimary),
+            label: Text(
               '从头播放',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
@@ -2085,7 +2077,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
             ),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.textPrimary,
-              side: const BorderSide(color: AppColors.border),
+              side: BorderSide(color: AppColors.border),
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.lg,
                 vertical: AppSpacing.sm,
@@ -2203,10 +2195,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
       return const Padding(
         padding: EdgeInsets.all(AppSpacing.lg),
         child: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppColors.primary,
-          ),
+          child: TechLoadingIndicator(strokeWidth: 2),
         ),
       );
     }
@@ -2237,7 +2226,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
           ),
           child: Row(
             children: [
-              const Text(
+              Text(
                 '选集',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -2404,7 +2393,7 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
             children: [
               Text(
                 _error!,
-                style: const TextStyle(color: AppColors.textSecondary),
+                style: TextStyle(color: AppColors.textSecondary),
               ),
               const SizedBox(height: AppSpacing.lg),
               ElevatedButton(

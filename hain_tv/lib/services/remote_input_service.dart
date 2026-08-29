@@ -58,11 +58,11 @@ class RemoteInputService {
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
     .name { font-size: 15px; font-weight: 600; color: #fff; word-break: break-all; }
     .url { font-size: 12px; color: #888; word-break: break-all; margin-top: 4px; }
-    .badge { display: inline-block; font-size: 11px; color: #E50914; border: 1px solid #E50914; border-radius: 4px; padding: 1px 6px; margin-left: 8px; }
+    .badge { display: inline-block; font-size: 11px; color: #00C8E0; border: 1px solid #00C8E0; border-radius: 4px; padding: 1px 6px; margin-left: 8px; }
     .actions { display: flex; gap: 8px; margin-top: 10px; }
     button { border: none; border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
-    .btn-primary { background-color: #E50914; color: white; }
-    .btn-primary:active { background-color: #b20710; }
+    .btn-primary { background-color: #00C8E0; color: white; }
+    .btn-primary:active { background-color: #0098B0; }
     .btn-secondary { background-color: #333; color: white; }
     .btn-danger { background-color: #5c1a1a; color: #ff6b6b; }
     .field { margin-bottom: 12px; }
@@ -235,8 +235,8 @@ class RemoteInputService {
     label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
     input { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
     input::placeholder { color: #666; }
-    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
-    button:active { background-color: #b20710; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #00C8E0; color: white; cursor: pointer; }
+    button:active { background-color: #0098B0; }
     #status { margin-top: 16px; font-size: 14px; color: #888; }
   </style>
 </head>
@@ -325,8 +325,8 @@ class RemoteInputService {
     label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
     input { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
     input::placeholder { color: #666; }
-    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
-    button:active { background-color: #b20710; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #00C8E0; color: white; cursor: pointer; }
+    button:active { background-color: #0098B0; }
     #status { margin-top: 16px; font-size: 14px; color: #888; }
   </style>
 </head>
@@ -398,8 +398,8 @@ class RemoteInputService {
     label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
     input { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; box-sizing: border-box; }
     input::placeholder { color: #666; }
-    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
-    button:active { background-color: #b20710; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #00C8E0; color: white; cursor: pointer; }
+    button:active { background-color: #0098B0; }
     #status { margin-top: 16px; font-size: 14px; color: #888; }
   </style>
 </head>
@@ -470,8 +470,8 @@ class RemoteInputService {
     p { color: #888; font-size: 14px; margin-bottom: 20px; }
     #container { display: flex; flex-direction: column; align-items: center; width: 90%; max-width: 400px; }
     #text { width: 100%; padding: 15px; font-size: 16px; border-radius: 8px; border: 1px solid #333; background-color: #2a2a2a; color: white; margin-bottom: 20px; box-sizing: border-box; }
-    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #E50914; color: white; cursor: pointer; }
-    button:active { background-color: #b20710; }
+    button { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #00C8E0; color: white; cursor: pointer; }
+    button:active { background-color: #0098B0; }
     #status { margin-top: 16px; font-size: 14px; color: #888; }
   </style>
 </head>

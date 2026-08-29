@@ -7,6 +7,7 @@ import '../../player/player_backend_factory.dart';
 import '../../player/video_player_backend.dart';
 import '../../theme.dart';
 import '../../utils/windows_logger.dart';
+import '../common/tech_loading_indicator.dart';
 
 /// 直播播放器控制器：用于在播放器外部对已挂载的播放器进行定位（回放流内 seek）。
 class LivePlayerController {
@@ -43,7 +44,7 @@ class LivePlayer extends StatefulWidget {
   /// 附加到播放请求的 HTTP 请求头（可包含内部特殊键如代理地址）。
   final Map<String, String>? headers;
 
-  const LivePlayer({
+  LivePlayer({
     super.key,
     required this.url,
     this.formatHint,
@@ -191,7 +192,7 @@ class _LivePlayerState extends State<LivePlayer> {
         }),
       );
       unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 500), () async {
+        Future<void>.delayed(Duration(milliseconds: 500), () async {
           WindowsLogger.log('LivePlayer', '开始延迟销毁');
           try {
             await backend.dispose();
@@ -218,8 +219,8 @@ class _LivePlayerState extends State<LivePlayer> {
           if (_initializing)
             Container(
               color: Colors.black54,
-              child: const Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
+              child: Center(
+                child: TechLoadingIndicator(),
               ),
             ),
           if (_error != null)
@@ -227,11 +228,11 @@ class _LivePlayerState extends State<LivePlayer> {
               color: Colors.black87,
               child: Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  padding: EdgeInsets.all(AppSpacing.lg),
                   child: Text(
                     _error!,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       color: AppColors.error,
                       fontSize: 14,

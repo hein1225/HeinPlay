@@ -239,14 +239,14 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
       color: AppColors.bgElevated,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        side: const BorderSide(color: AppColors.border),
+        side: BorderSide(color: AppColors.border),
       ),
       margin: EdgeInsets.zero,
       child: ListTile(
         leading: Icon(icon, color: AppColors.primary, size: 28),
         title: Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -255,14 +255,14 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
         ),
         subtitle: Text(
           subtitle,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             fontSize: 13,
             color: AppColors.textSecondary,
           ),
         ),
         trailing: trailing ??
-            const Icon(
+            Icon(
               Icons.chevron_right,
               color: AppColors.textSecondary,
             ),
@@ -282,7 +282,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '软件介绍',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -292,7 +292,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          const Text(
+          Text(
             '海因影视是一款基于 Flutter 开发的跨平台影视应用，TV 版支持多源播放、豆瓣数据展示等功能。手机版与 Windows 版本可前往下方开源仓库下载。',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -330,11 +330,11 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.code, color: AppColors.primary, size: 16),
+            Icon(Icons.code, color: AppColors.primary, size: 16),
             const SizedBox(width: AppSpacing.xs),
             Text(
               '$label：',
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 13,
                 color: AppColors.textSecondary,
@@ -343,7 +343,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
             Expanded(
               child: Text(
                 url,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   fontSize: 13,
                   color: AppColors.primary,
@@ -378,7 +378,7 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
                   child: Text(
                     '我的',

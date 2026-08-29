@@ -10,6 +10,7 @@ import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class ServerManagementScreen extends StatefulWidget {
   const ServerManagementScreen({super.key});
@@ -61,7 +62,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
 
   void _showSnackBar(
     String message, {
-    Color backgroundColor = AppColors.bgElevated,
+    Color? backgroundColor,
     Duration duration = const Duration(seconds: 2),
   }) {
     if (!mounted) return;
@@ -71,7 +72,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
           message,
           style: const TextStyle(color: Colors.white),
         ),
-        backgroundColor: backgroundColor,
+        backgroundColor: backgroundColor ?? AppColors.bgElevated,
         duration: duration,
       ),
     );
@@ -179,7 +180,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
-          title: const Text(
+          title: Text(
             '扫码修改服务器地址',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -218,7 +219,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  const Text(
+                  Text(
                     '使用手机扫描上方二维码',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -229,7 +230,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     '或访问 $url',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -237,7 +238,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  const Text(
+                  Text(
                     '在手机页面输入互联网/局域网服务器地址后，电视将自动保存',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
@@ -250,10 +251,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   const SizedBox(
                     width: 40,
                     height: 40,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   ),
               ],
             ),
@@ -333,7 +331,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
       ),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           color: AppColors.textMuted,
@@ -362,7 +360,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '互联网服务器地址',
                   style: TextStyle(
                     fontSize: 15,
@@ -375,7 +373,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   _primaryServerUrl.isEmpty
                       ? '未配置，点击填写（公网域名）'
                       : _primaryServerUrl,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     color: AppColors.textMuted,
                   ),
@@ -383,7 +381,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                const Text(
+                Text(
                   '建议填写公网可访问域名',
                   style: TextStyle(
                     fontSize: 12,
@@ -418,7 +416,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '局域网服务器地址',
                   style: TextStyle(
                     fontSize: 15,
@@ -431,7 +429,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   _backupServerUrl.isEmpty
                       ? '未配置，点击填写（局域网地址）'
                       : _backupServerUrl,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     color: AppColors.textMuted,
                   ),
@@ -439,7 +437,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                const Text(
+                Text(
                   '建议填写内网地址',
                   style: TextStyle(
                     fontSize: 12,
@@ -462,7 +460,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
       ),
       child: Text(
         '提示：首次登录时至少填写一个服务器地址即可；后续可在此补充或修改两个地址。',
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           color: AppColors.textSecondary,
         ),
@@ -477,13 +475,13 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
           onTap: () => _setPreferIpv6(!_preferIpv6),
           onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
           child: SwitchListTile(
-            title: const Text(
+            title: Text(
               '互联网服务器地址优先解析 IPv6',
               style: TextStyle(color: AppColors.textPrimary),
             ),
             subtitle: Text(
               _preferIpv6 ? '优先解析 IPv6 地址' : '优先解析 IPv4 地址',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
@@ -505,11 +503,11 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
           onTap: () => _setAutoSelectLowLatency(!_autoSelectLowLatency),
           onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
           child: SwitchListTile(
-            title: const Text(
+            title: Text(
               '启动时自动测速并切换',
               style: TextStyle(color: AppColors.textPrimary),
             ),
-            subtitle: const Text(
+            subtitle: Text(
               '每次启动时自动选择互联网/局域网服务器中延迟最低的地址',
               style: TextStyle(
                 color: AppColors.textSecondary,
@@ -539,13 +537,13 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
             ),
             title: Text(
               _speedTesting ? '测速中...' : '立即测速并切换',
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: TextStyle(color: AppColors.textPrimary),
             ),
             subtitle: Text(
               _speedTesting
                   ? '正在测试互联网/局域网服务器延迟'
                   : '手动触发一次服务器延迟测速并切换到最优地址',
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
@@ -554,12 +552,9 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: TechLoadingIndicator(strokeWidth: 2),
                   )
-                : const Icon(
+                : Icon(
                     Icons.chevron_right,
                     color: AppColors.textSecondary,
                   ),
@@ -575,7 +570,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
         builder: (context) => FocusableWidget(
           onTap: _showServerConfigQrDialog,
           onFocusChange: (focused) => _ensureVisibleOnFocus(context, focused),
-          child: const ListTile(
+          child: ListTile(
             leading: Icon(
               Icons.qr_code_scanner,
               color: AppColors.textSecondary,
@@ -652,10 +647,10 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                     controller: controller,
                     focusNode: fieldNode,
                     autofocus: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       hintText: hint,
-                      hintStyle: const TextStyle(color: AppColors.textMuted),
+                      hintStyle: TextStyle(color: AppColors.textMuted),
                       border: const OutlineInputBorder(),
                     ),
                   ),
@@ -679,7 +674,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           '取消',
@@ -706,7 +701,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
                         child: Text(
                           '保存',

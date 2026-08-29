@@ -241,7 +241,7 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
               ),
               child: Text(
                 widget.title!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   fontSize: 18,
                   fontWeight: FontWeight.w700,

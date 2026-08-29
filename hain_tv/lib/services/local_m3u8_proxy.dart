@@ -182,17 +182,17 @@ class LocalM3u8Proxy {
       headers['Range'] = range;
     }
 
-    try {
-      final requestMethod = isHead ? 'HEAD' : 'GET';
-      final requestUri = Uri.parse(targetUrl);
-      final client = _client ?? http.Client();
-      _log('proxySegment request: $targetUrl');
-      final response = await client
-          .send(
-            http.Request(requestMethod, requestUri)..headers.addAll(headers),
-          )
-          .timeout(const Duration(seconds: 30))
-          .then(http.Response.fromStream);
+      try {
+        final requestMethod = isHead ? 'HEAD' : 'GET';
+        final requestUri = Uri.parse(targetUrl);
+        final client = _client ?? http.Client();
+        _log('proxySegment request: $targetUrl');
+        final response = await client
+            .send(
+              http.Request(requestMethod, requestUri)..headers.addAll(headers),
+            )
+            .timeout(const Duration(seconds: 30))
+            .then(http.Response.fromStream);
 
       _log(
         'proxySegment response: $targetUrl status=${response.statusCode} '

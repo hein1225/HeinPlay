@@ -32,7 +32,7 @@ class MobileHorizontalList extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -42,7 +42,7 @@ class MobileHorizontalList extends StatelessWidget {
                 ),
                 GestureDetector(
                   onTap: onViewMore,
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(

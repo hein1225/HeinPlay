@@ -67,7 +67,7 @@ class _UpdateChannelDialogState extends State<UpdateChannelDialog> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
-          title: const Text(
+          title: Text(
             '选择更新渠道',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -76,7 +76,7 @@ class _UpdateChannelDialogState extends State<UpdateChannelDialog> {
               color: AppColors.textPrimary,
             ),
           ),
-          content: const SizedBox(
+          content: SizedBox(
             width: 420,
             child: Text(
               '请选择检查更新的来源渠道：',

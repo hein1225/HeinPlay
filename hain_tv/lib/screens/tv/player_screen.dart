@@ -18,6 +18,7 @@ import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 
@@ -30,7 +31,7 @@ class PlayerScreen extends StatefulWidget {
   final PlayerBackendType playerBackend;
   final int initialPositionMs;
 
-  const PlayerScreen({
+  PlayerScreen({
     super.key,
     required this.videoDetail,
     this.episodeIndex = 0,
@@ -87,6 +88,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   static const int _controlsAutoHideSeconds = 10;
   late int _pendingInitialPositionMs;
   bool _isRecordSaveThrottled = false;
+  bool _recordSaveInFlight = false;
 
   late final FocusScopeNode _bottomControlsFocusNode;
   late final FocusNode _playPauseFocusNode;
@@ -170,7 +172,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _startClock() {
     _currentTime = DateTime.now();
-    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+    _clockTimer = Timer.periodic(Duration(minutes: 1), (_) {
       if (mounted) {
         setState(() => _currentTime = DateTime.now());
       }
@@ -336,7 +338,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // 刚切换集数/源的前 2 秒内不处理跳过/自动下一集，避免初始化阶段位置抖动导致误触发。
     final switchAt = _episodeSwitchAt;
     if (switchAt != null &&
-        DateTime.now().difference(switchAt) < const Duration(seconds: 2)) {
+        DateTime.now().difference(switchAt) < Duration(seconds: 2)) {
       return;
     }
 
@@ -347,7 +349,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // 跳过 seek 冷却：触发一次跳过后 3 秒内不再重复触发，避免 seek 后画面未更新
     // 导致位置流仍报告在片头片尾区间内而连续 seek。
     final skipSeekCooldown = _lastSkipSeekAt != null &&
-        DateTime.now().difference(_lastSkipSeekAt!) < const Duration(seconds: 3);
+        DateTime.now().difference(_lastSkipSeekAt!) < Duration(seconds: 3);
 
     if (_skipConfig != null && _skipConfig!.segments.isNotEmpty) {
       for (final segment in _skipConfig!.segments) {
@@ -445,7 +447,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final start = DateTime.now();
     while (DateTime.now().difference(start) < timeout) {
       if (_duration.inMilliseconds > 0) return true;
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(Duration(milliseconds: 200));
     }
     return _duration.inMilliseconds > 0;
   }
@@ -584,7 +586,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ? _duration.inMilliseconds - 500
             : _duration.inMilliseconds;
         final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
-        await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(Duration(milliseconds: 200));
         if (mounted) {
           _backend?.seek(Duration(milliseconds: clampedMs));
         }
@@ -860,7 +862,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_dialogOpen) return;
     _controlsTimer?.cancel();
     _controlsTimer = Timer(
-      const Duration(seconds: _controlsAutoHideSeconds),
+      Duration(seconds: _controlsAutoHideSeconds),
       () {
         debugPrint('控制栏自动隐藏定时器触发');
         _hideControls();
@@ -973,12 +975,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          title: const Text(
+          backgroundColor: Color(0xFF14141F),
+          title: Text(
             '切换播放器',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
-              color: AppColors.textPrimary,
+              color: Color(0xFFF0F0F5),
             ),
           ),
           content: FocusScope(
@@ -1011,17 +1013,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       _switchPlayerBackend(type);
                     },
                     child: Container(
-                      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-                      padding: const EdgeInsets.all(AppSpacing.md),
+                      margin: EdgeInsets.only(bottom: AppSpacing.sm),
+                      padding: EdgeInsets.all(AppSpacing.md),
                       decoration: BoxDecoration(
                         color: selected
                             ? AppColors.primaryTint
-                            : AppColors.bgElevated,
+                            : Color(0xFF1C1C2E),
                         borderRadius: BorderRadius.circular(AppRadius.md),
                         border: Border.all(
                           color: selected
                               ? AppColors.primary
-                              : AppColors.border,
+                              : Color(0x14FFFFFF),
                         ),
                       ),
                       child: Text(
@@ -1032,7 +1034,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           fontWeight: FontWeight.w600,
                           color: selected
                               ? AppColors.primary
-                              : AppColors.textPrimary,
+                              : Color(0xFFF0F0F5),
                         ),
                       ),
                     ),
@@ -1134,10 +1136,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // 长按连续快进/快退，支持加速
   void _startLongPressSeek(String direction) {
     _longPressSeekTimer?.cancel();
-    _longPressSeekTimer = Timer(const Duration(milliseconds: 400), () {
+    _longPressSeekTimer = Timer(Duration(milliseconds: 400), () {
       _continuousSeekTimer?.cancel();
       final startTime = DateTime.now();
-      _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
+      _continuousSeekTimer = Timer.periodic(Duration(milliseconds: 200), (
         _,
       ) {
         final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
@@ -1163,14 +1165,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _continuousSeekTimer = null;
   }
 
-  // 播放记录节流保存（10秒内最多保存一次）
+  // 播放记录节流保存（10秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
   void _savePlayRecordThrottled() {
     if (_isRecordSaveThrottled) return;
+    if (!_isPlaybackReadyForRecord()) return;
     _isRecordSaveThrottled = true;
     _savePlayRecordToLunaTV();
     Timer(const Duration(seconds: 10), () {
       _isRecordSaveThrottled = false;
     });
+  }
+
+  /// 仅当播放器已初始化且已取到有效时长时才允许写播放记录：
+  /// 视频未就绪（黑屏卡死、duration 仍为 0）时不落盘，
+  /// 防止用 playTime=0/totalTime=0 覆盖掉上次正常的续播进度。
+  bool _isPlaybackReadyForRecord() {
+    return _initialized && _backend != null && _duration.inMilliseconds > 0;
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event) {
@@ -1387,7 +1397,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _gestureIndicatorIcon = icon;
     });
     _gestureIndicatorTimer?.cancel();
-    _gestureIndicatorTimer = Timer(const Duration(seconds: 1), () {
+    _gestureIndicatorTimer = Timer(Duration(seconds: 1), () {
       if (mounted) {
         setState(() => _gestureIndicatorVisible = false);
       }
@@ -1427,7 +1437,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _start3xSeek() {
     _longPressSeekTimer?.cancel();
     _continuousSeekTimer?.cancel();
-    _continuousSeekTimer = Timer.periodic(const Duration(milliseconds: 200), (
+    _continuousSeekTimer = Timer.periodic(Duration(milliseconds: 200), (
       _,
     ) {
       if (!_isLongPressSeeking || _backend == null) return;
@@ -1474,7 +1484,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _gestureStartPosition = null;
     _cumulativeDeltaY = 0.0;
     _gestureIndicatorTimer?.cancel();
-    _gestureIndicatorTimer = Timer(const Duration(milliseconds: 500), () {
+    _gestureIndicatorTimer = Timer(Duration(milliseconds: 500), () {
       if (mounted) setState(() => _gestureIndicatorVisible = false);
     });
   }
@@ -1503,7 +1513,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _gestureStartPosition = null;
     _cumulativeDeltaX = 0.0;
     _gestureIndicatorTimer?.cancel();
-    _gestureIndicatorTimer = Timer(const Duration(milliseconds: 500), () {
+    _gestureIndicatorTimer = Timer(Duration(milliseconds: 500), () {
       if (mounted) setState(() => _gestureIndicatorVisible = false);
     });
   }
@@ -1687,8 +1697,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
+  /// 串行化（同一时间只允许一个保存任务）；未真正起播或进度无效时不落盘，
+  /// 进度越界时钳制在 [0, 总时长] 内，防止脏数据导致下次续播 seek 异常。
   Future<void> _savePlayRecordToLunaTV() async {
+    if (_recordSaveInFlight) return;
+    if (!_isPlaybackReadyForRecord()) return;
+    _recordSaveInFlight = true;
     try {
+      final totalSec = _duration.inSeconds;
+      final rawPos = _position.inSeconds;
+      final playSec = rawPos < 0 ? 0 : (rawPos > totalSec ? totalSec : rawPos);
       final record = PlayRecord(
         id: _currentVideoDetail.id,
         source: _currentVideoDetail.source,
@@ -1698,8 +1716,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         year: _currentVideoDetail.year,
         index: _currentEpisodeIndex + 1, // 1-based
         totalEpisodes: _currentVideoDetail.episodes.length,
-        playTime: _position.inSeconds,
-        totalTime: _duration.inSeconds,
+        playTime: playSec,
+        totalTime: totalSec,
         saveTime: DateTime.now().millisecondsSinceEpoch,
         searchTitle: _currentVideoDetail.title,
         doubanId: _currentVideoDetail.doubanId?.toString(),
@@ -1709,42 +1727,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       // 保存失败不阻塞退出
       debugPrint('保存播放记录失败: $e');
+    } finally {
+      _recordSaveInFlight = false;
     }
   }
 
   Widget _buildVideo() {
     // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
     if (_switchingSource) {
-      return const ColoredBox(color: Colors.black);
+      return ColoredBox(color: Colors.black);
     }
     if (!_initialized || _backend == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      return Center(
+        child: TechLoadingIndicator(),
       );
     }
     return Container(color: Colors.black, child: _backend!.buildVideoWidget());
   }
 
   Widget _buildError() {
-    if (_error == null) return const SizedBox.shrink();
+    if (_error == null) return SizedBox.shrink();
     return Container(
       color: Colors.black54,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: Text(_error!, style: const TextStyle(color: AppColors.error)),
+      padding: EdgeInsets.all(AppSpacing.md),
+      child: Text(_error!, style: TextStyle(color: AppColors.error)),
     );
   }
 
   Widget _buildSwitchingOverlay() {
-    if (!_switchingSource) return const SizedBox.shrink();
+    if (!_switchingSource) return SizedBox.shrink();
     return Container(
       color: Colors.black54,
-      child: const Center(
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: AppColors.primary),
+            TechLoadingIndicator(),
             SizedBox(height: AppSpacing.md),
-            Text('切换播放源中...', style: TextStyle(color: AppColors.textPrimary)),
+            Text('切换播放源中...', style: TextStyle(color: Color(0xFFF0F0F5))),
           ],
         ),
       ),
@@ -1752,25 +1772,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _buildGestureIndicator() {
-    if (!_gestureIndicatorVisible) return const SizedBox.shrink();
+    if (!_gestureIndicatorVisible) return SizedBox.shrink();
     return Center(
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
-          color: AppColors.bgOverlay,
+          color: Color(0xD90A0A0F),
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_gestureIndicatorIcon, color: AppColors.textPrimary, size: 32),
-            const SizedBox(height: AppSpacing.sm),
+            Icon(_gestureIndicatorIcon, color: Color(0xFFF0F0F5), size: 32),
+            SizedBox(height: AppSpacing.sm),
             Text(
               _gestureIndicatorText,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 14,
-                color: AppColors.textPrimary,
+                color: Color(0xFFF0F0F5),
               ),
             ),
           ],
@@ -1804,7 +1824,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildTopBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
         vertical: AppSpacing.md,
       ),
@@ -1812,7 +1832,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [AppColors.bgOverlay, Colors.transparent],
+          colors: [Color(0xD90A0A0F), Colors.transparent],
         ),
       ),
       child: Stack(
@@ -1821,12 +1841,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             children: [
               IconButton(
                 onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(
+                icon: Icon(
                   Icons.arrow_back,
-                  color: AppColors.textPrimary,
+                  color: Color(0xFFF0F0F5),
                 ),
               ),
-              const SizedBox(width: AppSpacing.md),
+              SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1836,19 +1856,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       _currentVideoDetail.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                        color: Color(0xFFF0F0F5),
                       ),
                     ),
                     Text(
                       _episodeTitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 14,
-                        color: AppColors.textSecondary,
+                        color: Color(0xFF9CA3AF),
                       ),
                     ),
                   ],
@@ -1860,11 +1880,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: Center(
               child: Text(
                 _formatClock(_currentTime),
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'NotoSansSC',
                   fontSize: 18,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
+                  color: Color(0xFFF0F0F5),
                   shadows: [
                     Shadow(
                       color: Colors.black54,
@@ -1885,12 +1905,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return FocusScope(
       node: _bottomControlsFocusNode,
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [AppColors.bgOverlay, Colors.transparent],
+            colors: [Color(0xD90A0A0F), Colors.transparent],
           ),
         ),
         child: Column(
@@ -1918,8 +1938,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             ? _buffered.inMilliseconds /
                                 _duration.inMilliseconds
                             : 0.0,
-                        backgroundColor: AppColors.border,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
+                        backgroundColor: Color(0x14FFFFFF),
+                        valueColor: AlwaysStoppedAnimation<Color>(
                           Colors.white24,
                         ),
                       ),
@@ -1929,7 +1949,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 _duration.inMilliseconds
                             : 0.0,
                         backgroundColor: Colors.transparent,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
+                        valueColor: AlwaysStoppedAnimation<Color>(
                           AppColors.primary,
                         ),
                       ),
@@ -1938,7 +1958,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            SizedBox(height: AppSpacing.md),
             Row(
               children: [
                 _buildControlIconButton(
@@ -1946,33 +1966,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   onTap: _togglePlay,
                   icon: _playing ? Icons.pause : Icons.play_arrow,
                 ),
-                const SizedBox(width: AppSpacing.sm),
+                SizedBox(width: AppSpacing.sm),
                 _buildControlIconButton(
                   onTap: _previousEpisode,
                   icon: Icons.skip_previous,
                 ),
-                const SizedBox(width: AppSpacing.sm),
+                SizedBox(width: AppSpacing.sm),
                 _buildControlIconButton(
                   onTap: _nextEpisode,
                   icon: Icons.skip_next,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 Text(
                   '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'NotoSansSC',
                     fontSize: 14,
-                    color: AppColors.textPrimary,
+                    color: Color(0xFFF0F0F5),
                   ),
                 ),
-                const Spacer(),
+                Spacer(),
                 if (_currentVideoDetail.source.isNotEmpty &&
                     _currentVideoDetail.id.isNotEmpty)
                   FocusableWidget(
                     focusNode: _skipFocusNode,
                     onTap: _showSkipConfigDialog,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
                         vertical: AppSpacing.xs,
                       ),
@@ -1981,20 +2001,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             _skipConfig != null &&
                                 _skipConfig!.segments.isNotEmpty
                             ? AppColors.primaryTint
-                            : AppColors.bgElevated,
+                            : Color(0xFF1C1C2E),
                         borderRadius: BorderRadius.circular(AppRadius.md),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(color: Color(0x14FFFFFF)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_skipConfigLoading)
-                            const SizedBox(
+                            SizedBox(
                               width: 16,
                               height: 16,
-                              child: CircularProgressIndicator(
+                              child: TechLoadingIndicator(
+                                size: 16,
                                 strokeWidth: 2,
-                                color: AppColors.primary,
                               ),
                             )
                           else
@@ -2004,10 +2024,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                   _skipConfig != null &&
                                       _skipConfig!.segments.isNotEmpty
                                   ? AppColors.primary
-                                  : AppColors.textPrimary,
+                                  : Color(0xFFF0F0F5),
                               size: 18,
                             ),
-                          const SizedBox(width: AppSpacing.xs),
+                          SizedBox(width: AppSpacing.xs),
                           Text(
                             '跳过',
                             style: TextStyle(
@@ -2017,135 +2037,135 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                   _skipConfig != null &&
                                       _skipConfig!.segments.isNotEmpty
                                   ? AppColors.primary
-                                  : AppColors.textPrimary,
+                                  : Color(0xFFF0F0F5),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 FocusableWidget(
                   onTap: _cycleVideoFit,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
                       vertical: AppSpacing.xs,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.bgElevated,
+                      color: Color(0xFF1C1C2E),
                       borderRadius: BorderRadius.circular(AppRadius.md),
-                      border: Border.all(color: AppColors.border),
+                      border: Border.all(color: Color(0x14FFFFFF)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.aspect_ratio,
-                          color: AppColors.textPrimary,
+                          color: Color(0xFFF0F0F5),
                           size: 18,
                         ),
-                        const SizedBox(width: AppSpacing.xs),
+                        SizedBox(width: AppSpacing.xs),
                         Text(
                           _videoFitLabel(_videoFit),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 13,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 FocusableWidget(
                   onTap: _showPlayerBackendSelectorDialog,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
                       vertical: AppSpacing.xs,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.bgElevated,
+                      color: Color(0xFF1C1C2E),
                       borderRadius: BorderRadius.circular(AppRadius.md),
-                      border: Border.all(color: AppColors.border),
+                      border: Border.all(color: Color(0x14FFFFFF)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.settings_applications,
-                          color: AppColors.textPrimary,
+                          color: Color(0xFFF0F0F5),
                           size: 18,
                         ),
-                        const SizedBox(width: AppSpacing.xs),
+                        SizedBox(width: AppSpacing.xs),
                         Text(
                           _playerBackendLabel(_currentPlayerBackend),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 13,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 FocusableWidget(
                   onTap: _cyclePlaybackSpeed,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
                       vertical: AppSpacing.xs,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.bgElevated,
+                      color: Color(0xFF1C1C2E),
                       borderRadius: BorderRadius.circular(AppRadius.md),
-                      border: Border.all(color: AppColors.border),
+                      border: Border.all(color: Color(0x14FFFFFF)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.speed,
-                          color: AppColors.textPrimary,
+                          color: Color(0xFFF0F0F5),
                           size: 18,
                         ),
-                        const SizedBox(width: AppSpacing.xs),
+                        SizedBox(width: AppSpacing.xs),
                         Text(
                           _playbackSpeedLabel(_playbackSpeed),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 13,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
+                SizedBox(width: AppSpacing.md),
                 if (_canSwitchSource)
                   FocusableWidget(
                     onTap: _showSourceSelectorDialog,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
                         vertical: AppSpacing.xs,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.bgElevated,
+                        color: Color(0xFF1C1C2E),
                         borderRadius: BorderRadius.circular(AppRadius.md),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(color: Color(0x14FFFFFF)),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.swap_horiz,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                             size: 18,
                           ),
                           SizedBox(width: AppSpacing.xs),
@@ -2154,33 +2174,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               fontSize: 13,
-                              color: AppColors.textPrimary,
+                              color: Color(0xFFF0F0F5),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                if (_canSwitchSource) const SizedBox(width: AppSpacing.md),
+                if (_canSwitchSource) SizedBox(width: AppSpacing.md),
                 if (_currentVideoDetail.episodes.length > 1)
                   FocusableWidget(
                     onTap: _showEpisodeSelectorDialog,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,
                         vertical: AppSpacing.xs,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.bgElevated,
+                        color: Color(0xFF1C1C2E),
                         borderRadius: BorderRadius.circular(AppRadius.md),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(color: Color(0x14FFFFFF)),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.list,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                             size: 18,
                           ),
                           SizedBox(width: AppSpacing.xs),
@@ -2189,7 +2209,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             style: TextStyle(
                               fontFamily: 'NotoSansSC',
                               fontSize: 13,
-                              color: AppColors.textPrimary,
+                              color: Color(0xFFF0F0F5),
                             ),
                           ),
                         ],
@@ -2197,7 +2217,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 if (_currentVideoDetail.episodes.length > 1)
-                  const SizedBox(width: AppSpacing.md),
+                  SizedBox(width: AppSpacing.md),
               ],
             ),
           ],
@@ -2217,7 +2237,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       focusNode: focusNode,
       autofocus: autofocus,
       onTap: onTap,
-      child: Icon(icon, color: AppColors.textPrimary, size: 28),
+      child: Icon(icon, color: Color(0xFFF0F0F5), size: 28),
     );
   }
 
@@ -2243,7 +2263,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             children: [
               // 最底层：纯黑背景，确保黑边区域由 Flutter 绘制，
               // 避免 PlatformView 在隐藏控制栏后仍残留影像。
-              const Positioned.fill(child: ColoredBox(color: Colors.black)),
+              Positioned.fill(child: ColoredBox(color: Colors.black)),
               // 视频层：只覆盖实际画面区域，黑边留给我 Flutter 背景。
               // IgnorePointer 避免 PlatformView 拦截触摸事件，确保手势层能正常工作。
               Positioned.fill(child: IgnorePointer(child: _buildVideo())),
@@ -2372,7 +2392,7 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
         Scrollable.ensureVisible(
           ctx,
           alignment: 0.5,
-          duration: const Duration(milliseconds: 200),
+          duration: Duration(milliseconds: 200),
         );
       }
     });
@@ -2381,12 +2401,12 @@ class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.bgSurface,
-      title: const Text(
+      backgroundColor: Color(0xFF14141F),
+      title: Text(
         '切换播放源',
         style: TextStyle(
           fontFamily: 'NotoSansSC',
-          color: AppColors.textPrimary,
+          color: Color(0xFFF0F0F5),
         ),
       ),
       content: FocusScope(
@@ -2481,18 +2501,18 @@ class _SourceSelectorCard extends StatelessWidget {
                   cacheManager: HainTvCacheManager(),
                   memCacheWidth: 300,
                   memCacheHeight: 450,
-                  placeholder: (_, __) => Container(color: AppColors.bgSurface),
+                  placeholder: (_, __) => Container(color: Color(0xFF14141F)),
                   errorWidget: (_, __, ___) => Container(
-                    color: AppColors.bgSurface,
+                    color: Color(0xFF14141F),
                     child: Center(
                       child: Text(
                         source.title.isNotEmpty
                             ? source.title.substring(0, 1)
                             : '',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'NotoSansSC',
                           fontSize: 24,
-                          color: AppColors.textMuted,
+                          color: Color(0xFF6B7280),
                         ),
                       ),
                     ),
@@ -2509,14 +2529,14 @@ class _SourceSelectorCard extends StatelessWidget {
                     bottom: Radius.circular(AppRadius.sm),
                   ),
                   child: Container(
-                    padding: const EdgeInsets.fromLTRB(
+                    padding: EdgeInsets.fromLTRB(
                       AppSpacing.sm,
                       AppSpacing.md,
                       AppSpacing.sm,
                       AppSpacing.sm,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.bgElevated.withValues(alpha: 0.95),
+                      color: Color(0xFF1C1C2E).withValues(alpha: 0.95),
                       border: Border(
                         top: BorderSide(
                           color: AppColors.primary.withValues(alpha: 0.6),
@@ -2532,20 +2552,20 @@ class _SourceSelectorCard extends StatelessWidget {
                           source.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
+                            color: Color(0xFFF0F0F5),
                             height: 1.2,
                           ),
                         ),
-                        const SizedBox(height: 2),
+                        SizedBox(height: 2),
                         Text(
                           source.sourceName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'NotoSansSC',
                             fontSize: 10,
                             fontWeight: FontWeight.w500,
@@ -2562,17 +2582,17 @@ class _SourceSelectorCard extends StatelessWidget {
                 top: 6,
                 left: 6,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.xs,
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.bgElevated.withValues(alpha: 0.9),
+                    color: Color(0xFF1C1C2E).withValues(alpha: 0.9),
                     borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
                   child: Text(
                     'No.$rank',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
@@ -2586,7 +2606,7 @@ class _SourceSelectorCard extends StatelessWidget {
                   top: 6,
                   right: 6,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.xs,
                       vertical: 2,
                     ),
@@ -2596,11 +2616,11 @@ class _SourceSelectorCard extends StatelessWidget {
                     ),
                     child: Text(
                       speedText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                        color: Color(0xFFF0F0F5),
                       ),
                     ),
                   ),
@@ -2610,7 +2630,7 @@ class _SourceSelectorCard extends StatelessWidget {
                   top: speedText.isNotEmpty ? 28 : 6,
                   right: 6,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.xs,
                       vertical: 2,
                     ),
@@ -2620,17 +2640,17 @@ class _SourceSelectorCard extends StatelessWidget {
                     ),
                     child: Text(
                       resolutionText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'NotoSansSC',
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textInverse,
+                        color: Color(0xFF0A0A0F),
                       ),
                     ),
                   ),
                 ),
               if (selected)
-                const Positioned(
+                Positioned(
                   top: 28,
                   left: 6,
                   child: Icon(
@@ -2677,7 +2697,7 @@ class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
         Scrollable.ensureVisible(
           ctx,
           alignment: 0.5,
-          duration: const Duration(milliseconds: 200),
+          duration: Duration(milliseconds: 200),
         );
       }
       _selectedFocusNode.requestFocus();
@@ -2694,12 +2714,12 @@ class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.bgSurface,
-      title: const Text(
+      backgroundColor: Color(0xFF14141F),
+      title: Text(
         '选集',
         style: TextStyle(
           fontFamily: 'NotoSansSC',
-          color: AppColors.textPrimary,
+          color: Color(0xFFF0F0F5),
         ),
       ),
       content: FocusScope(
@@ -2725,10 +2745,10 @@ class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
                   decoration: BoxDecoration(
                     color: selected
                         ? AppColors.primaryTint
-                        : AppColors.bgElevated,
+                        : Color(0xFF1C1C2E),
                     borderRadius: BorderRadius.circular(AppRadius.md),
                     border: Border.all(
-                      color: selected ? AppColors.primary : AppColors.border,
+                      color: selected ? AppColors.primary : Color(0x14FFFFFF),
                     ),
                   ),
                   child: Text(
@@ -2742,7 +2762,7 @@ class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
                       fontWeight: FontWeight.w600,
                       color: selected
                           ? AppColors.primary
-                          : AppColors.textPrimary,
+                          : Color(0xFFF0F0F5),
                     ),
                   ),
                 ),

@@ -145,16 +145,23 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     final lowerUrl = url.toLowerCase();
     String finalUrl = url;
 
-    // 直播流不应用点播源的代理、去广告等设置。
-    final proxyUrl = isLive ? '' : await UserDataService.getM3u8ProxyUrl();
+    // 点播：保持原逻辑（去广告/全局代理），不受本地代理总开关影响（点播本次未改动）。
+    // 直播：仅在「本地代理」开关打开且配置了 M3U8 代理时，才把直播 M3U8 经本地代理转发，
+    // 用于排查/兼容个别直播源（如神盾TV）。
+    final proxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = isLive ? false : await AdFilterService.isEnabled();
+    final localProxyEnabled = await UserDataService.getLocalProxyEnabled();
     final isLocalProxy = _isLocalProxyUrl(url);
     final isM3u8 = lowerUrl.contains('.m3u8') || lowerUrl.contains('/hls/');
-    // 统一逻辑：仅当源本身声明 proxyMode，或去广告开启且配置了全局 M3U8 代理且当前是 M3U8 时，
-    // 才走全局代理；去广告关闭时直接播放原始 URL，与 Selene 保持一致。
-    final needsProxy = !isLive &&
+    final vodNeedsProxy = !isLive &&
         !isLocalProxy &&
         (proxyMode || (adFilterEnabled && proxyUrl.isNotEmpty && isM3u8));
+    final liveNeedsProxy = isLive &&
+        !isLocalProxy &&
+        localProxyEnabled &&
+        proxyUrl.isNotEmpty &&
+        isM3u8;
+    final needsProxy = vodNeedsProxy || liveNeedsProxy;
     if (needsProxy) {
       finalUrl = '$proxyUrl${Uri.encodeComponent(url)}';
     }

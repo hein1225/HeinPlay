@@ -49,8 +49,8 @@ class PlayRecordService {
   }
 
   static Future<void> _uploadToLunaTV(models.PlayRecord record) async {
+    final key = '${record.source}+${record.id}';
     try {
-      final key = '${record.source}+${record.id}';
       final response = await LunaTVService.savePlayRecord(
         key: key,
         record: record,

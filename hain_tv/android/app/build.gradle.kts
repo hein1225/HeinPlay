@@ -218,6 +218,10 @@ dependencies {
     originalFlutterEmbeddingPom(
         "io.flutter:flutter_embedding_release:1.0.0-$flutterEngineVersion@pom"
     )
+    // 原生启动封面不再使用 androidx.core:core-splashscreen：该库在 Android 12+ 仅支持
+    // 居中图标，无法满屏铺满自定义封面。现改为 MainActivity 在 FlutterView 之上手动附加
+    // 全屏 ImageView（@drawable/splash，CENTER_CROP），实现真正的满屏启动封面。
+    // implementation("androidx.core:core-splashscreen:1.2.0")
 }
 
 /**

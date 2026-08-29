@@ -5,6 +5,7 @@ import '../../services/cache_service.dart';
 import '../../services/live_service.dart';
 import '../../services/live_source_storage.dart';
 import '../../theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// Mobile 直播源管理页。
 ///
@@ -52,7 +53,7 @@ class _MobileLiveSourceManagerScreenState
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text(
+            child: Text(
               '删除',
               style: TextStyle(color: AppColors.error),
             ),
@@ -124,7 +125,7 @@ class _MobileLiveSourceManagerScreenState
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primary),
+              child: TechLoadingIndicator(),
             )
           : _buildBody(),
       floatingActionButton: FloatingActionButton(
@@ -162,13 +163,13 @@ class _MobileLiveSourceManagerScreenState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.settings_input_antenna,
             size: 48,
             color: AppColors.textMuted,
           ),
           const SizedBox(height: AppSpacing.md),
-          const Text(
+          Text(
             '暂无本地直播源',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
@@ -208,7 +209,7 @@ class _MobileLiveSourceManagerScreenState
                   color: AppColors.primary.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                 ),
-                child: const Text(
+                child: Text(
                   '系统',
                   style: TextStyle(
                     fontFamily: 'NotoSansSC',
@@ -218,10 +219,10 @@ class _MobileLiveSourceManagerScreenState
                   ),
                 ),
               )
-            : const Icon(Icons.drag_handle, color: AppColors.textMuted),
+            : Icon(Icons.drag_handle, color: AppColors.textMuted),
         title: Text(
           config.name,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w600,
@@ -231,7 +232,7 @@ class _MobileLiveSourceManagerScreenState
           config.isBuiltin ? 'LunaTV 服务端直播源' : config.url,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: AppColors.textMuted,
             fontSize: 12,
@@ -248,12 +249,12 @@ class _MobileLiveSourceManagerScreenState
               ),
             TextButton.icon(
               onPressed: () => _clearSourceCache(config),
-              icon: const Icon(
+              icon: Icon(
                 Icons.delete_sweep,
                 color: AppColors.textSecondary,
                 size: 20,
               ),
-              label: const Text(
+              label: Text(
                 '清除缓存',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
@@ -264,12 +265,12 @@ class _MobileLiveSourceManagerScreenState
             ),
             if (!config.isBuiltin)
               IconButton(
-                icon: const Icon(Icons.edit, color: AppColors.textSecondary),
+                icon: Icon(Icons.edit, color: AppColors.textSecondary),
                 onPressed: () => _showEditDialog(config: config),
               ),
             if (!config.isBuiltin)
               IconButton(
-                icon: const Icon(Icons.delete, color: AppColors.error),
+                icon: Icon(Icons.delete, color: AppColors.error),
                 onPressed: () => _deleteConfig(config),
               ),
           ],
@@ -376,7 +377,7 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
         children: [
           Text(
             widget.config == null ? '添加直播源' : '编辑直播源',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -409,7 +410,7 @@ class _SourceEditSheetState extends State<_SourceEditSheet> {
           const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
-              const Text(
+              Text(
                 '启用',
                 style: TextStyle(
                   fontFamily: 'NotoSansSC',
