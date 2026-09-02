@@ -1,28 +1,12 @@
 group = "io.flutter.plugins.videoplayer"
 version = "1.0-SNAPSHOT"
 
-buildscript {
-    val kotlinVersion = "2.3.0"
-    repositories {
-        google()
-        mavenCentral()
-    }
-
-    dependencies {
-        classpath("com.android.tools.build:gradle:8.13.1")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
-    }
-}
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
 plugins {
     id("com.android.library")
+    // 复用根 settings.gradle.kts 以 apply false 管理的 2.2.20。必须显式在 plugins {} 中声明，
+    // 才能使 Kotlin DSL 生成 kotlin {} 类型安全访问器，并正确建立 src/main/kotlin 源集与
+    // compileReleaseKotlin 任务（否则 Java 编译找不到 Messages.kt 中的 Pigeon 类）。
+    id("org.jetbrains.kotlin.android")
 }
 
 kotlin {

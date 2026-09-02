@@ -4,6 +4,10 @@ import tvlegacy.FlutterEmbeddingPatcher
 
 plugins {
     id("com.android.application")
+    // Kotlin Gradle Plugin 必须显式声明，否则下文的 kotlin { compilerOptions { jvmTarget } }
+    // 顶层扩展块无法解析（报 Unresolved reference 'kotlin' / 'compilerOptions' / 'jvmTarget'）。
+    // 版本由根 settings.gradle.kts 以 apply false 形式统一管理（当前 2.2.20）。
+    id("org.jetbrains.kotlin.android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
