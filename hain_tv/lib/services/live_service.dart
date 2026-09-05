@@ -183,15 +183,17 @@ class LiveService {
       channels = cached
           .map((e) => LiveChannel.fromJson(e as Map<String, dynamic>))
           .toList();
-      // 旧缓存可能缺失 EPG/catchup 信息，若检测到缺失则尝试从原始订阅地址补全。
+      // 旧缓存可能缺失 catchup 信息，若检测到缺失则尝试从原始订阅地址补全。
+      // 注意：EPG 节目单（programs）不在此处作为“需要补全”的判据——它由直播播放页的
+      // 后台任务按独立的 12h 周期拉取；若把 programs.isEmpty 纳入判断，会使缓存命中后
+      // 仍每次联网下载 index.m3u（节目单本就常为空），违背“直播源缓存时间”保鲜初衷。
       // 直播首屏优先场景下 [fillCatchup] 为 false，跳过补全以尽快返回频道列表。
-      final needFill = fillCatchup &&
-          channels.any(
-            (c) =>
-                ((c.catchup == null || c.catchup!.isEmpty) &&
-                    (c.catchupSource == null || c.catchupSource!.isEmpty)) ||
-                c.programs.isEmpty,
-          );
+      final missingCatchup = channels.where((c) =>
+          (c.catchup == null || c.catchup!.isEmpty) &&
+          (c.catchupSource == null || c.catchupSource!.isEmpty)).length;
+      // 仅当“部分”频道缺失 catchup 时补全：全部缺失说明该源本就不提供 catchup，
+      // 不必每次缓存命中都重新下载；补全过一次后大部分频道已带 catchup，下次命中即跳过。
+      final needFill = fillCatchup && missingCatchup > 0 && missingCatchup < channels.length;
       if (needFill) {
         fillUrl = _extractSourceUrlFromChannels(channels) ?? url;
         if (fillUrl != null && fillUrl.isNotEmpty) {

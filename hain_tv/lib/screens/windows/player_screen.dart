@@ -1267,13 +1267,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     });
   }
 
-  // 播放记录节流保存（10秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
+  // 播放记录节流保存（30秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
   void _savePlayRecordThrottled() {
     if (_isRecordSaveThrottled) return;
     if (!_isPlaybackReadyForRecord()) return;
     _isRecordSaveThrottled = true;
     _savePlayRecordToLunaTV();
-    Timer(const Duration(seconds: 10), () {
+    Timer(const Duration(seconds: 30), () {
       _isRecordSaveThrottled = false;
     });
   }

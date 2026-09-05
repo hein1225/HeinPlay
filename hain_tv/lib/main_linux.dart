@@ -7,6 +7,12 @@ import 'package:window_manager/window_manager.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 提升内存图片缓存上限，确保各页面海报在切换页/返回时不重新解码或重新联网，
+  // 直到软件重启（配合 CachedNetworkImage 的磁盘缓存，切换页即瞬时显示，不再刷新）。
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 256 << 20
+    ..maximumSize = 2000;
+
   // 初始化桌面窗口管理，用于 Linux 全屏/取消全屏等控制。
   // 完整支持原生 Wayland：不强制 GDK_BACKEND，GTK 在 Wayland 会话下原生嵌入，
   // fvp/libmdk 通过 EGL/VA-API 在 Wayland 下正常渲染视频。
@@ -18,11 +24,12 @@ void main() async {
   // 关闭 FFmpeg TLS 严格验证，避免非标准端口/自签证书源被服务器拒绝。
   fvp.registerWith(options: {
     'platforms': ['linux'],
+    'lowLatency': 1,
     'global': {
       // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书源。
       // analyzeduration/probesize 调小：缩短组播直播流首次 initialize 的探测窗口，
       // 修复换台慢（默认 5s → <1s）。
-      'avformat': 'tls_verify=0,analyzeduration=500000,probesize=2097152',
+      'avformat': 'tls_verify=0:analyzeduration=500000:probesize=2097152',
       'ffmpeg.loglevel': 'info',
     },
   });

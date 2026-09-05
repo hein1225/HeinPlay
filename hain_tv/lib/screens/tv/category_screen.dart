@@ -579,6 +579,13 @@ class CategoryScreenState extends State<CategoryScreen> {
   }
 
   @override
+  void deactivate() {
+    // 页面被切到后台时静默关闭筛选下拉，避免隐藏页面仍拦截返回键。
+    _closeDimensionDropdownSilently();
+    super.deactivate();
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     for (final node in _categoryTagFocusNodes) {
@@ -1047,6 +1054,13 @@ class CategoryScreenState extends State<CategoryScreen> {
   void _closeDimensionDropdown() {
     _disposeDropdownOptionFocusNodes();
     setState(() => _activeDimension = null);
+  }
+
+  /// 静默关闭下拉（不触发 setState），用于页面切到后台时清理状态。
+  void _closeDimensionDropdownSilently() {
+    if (_activeDimension == null) return;
+    _disposeDropdownOptionFocusNodes();
+    _activeDimension = null;
   }
 
   void _disposeDropdownOptionFocusNodes() {

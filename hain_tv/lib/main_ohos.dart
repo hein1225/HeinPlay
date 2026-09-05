@@ -7,6 +7,11 @@ import 'package:hain_tv/platform/device_utils.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 提升内存图片缓存上限，确保各页面海报在切换页/返回时不重新解码或重新联网，
+  // 直到软件重启（配合 CachedNetworkImage 的磁盘缓存，切换页即瞬时显示，不再刷新）。
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 256 << 20
+    ..maximumSize = 2000;
   // 鸿蒙手机版显式标记为非 TV 模式，避免被误判为 TV。
   DeviceUtils.isTvOverride = false;
   // 鸿蒙（OHOS）没有 Android 运行时，ExoPlayer / VLC 均不可用，

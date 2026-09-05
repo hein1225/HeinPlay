@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -52,6 +54,12 @@ class _WindowsShellState extends State<WindowsShell> {
     _NavItem(label: '动漫', icon: Icons.animation_outlined),
   ];
 
+  // 切页淡入淡出期间保留的旧分页索引（仅用于过渡期绘制，结束后置空）。
+  int? _animatingFrom;
+  // 已构建的导航页缓存：每个分页只构建一次并复用同一实例，切走后仍保留
+  // Element/State（见 [_fadeTab] 的 Offstage 处理），实现“首次加载、后续缓存”。
+  final List<Widget?> _builtTabs = List<Widget?>.filled(8, null);
+
   @override
   void initState() {
     super.initState();
@@ -77,8 +85,8 @@ class _WindowsShellState extends State<WindowsShell> {
   }
 
   void _onNavTap(int index) {
-    setState(() => _selectedIndex = index);
-    // 切换到“我的”分页时刷新播放记录与收藏夹，避免 IndexedStack 保留旧数据。
+    _selectIndex(index);
+    // 切换到“我的”分页时刷新播放记录与收藏夹，避免切回时仍显示旧数据。
     if (index == 0) {
       _profileScreenKey.currentState?.refresh();
     }
@@ -92,8 +100,8 @@ class _WindowsShellState extends State<WindowsShell> {
     }
   }
 
-  /// 非首页标签按需挂载：仅当选中时才构建并挂载，切走即卸载释放内存。
-  /// 首页（index 3）由 _WindowsShellState 常驻，不在本方法内。
+  /// 构建对应索引的导航页；每个页面都带全局 Key，配合 AnimatedSwitcher 在
+  /// 切走后保留 Element/State，实现“首次加载、后续缓存”的效果。
   Widget _buildTab(int index) {
     switch (index) {
       case 0:
@@ -102,6 +110,8 @@ class _WindowsShellState extends State<WindowsShell> {
         return SearchScreen(key: _searchScreenKey);
       case 2:
         return WindowsLiveScreen(key: _liveScreenKey);
+      case 3:
+        return HomeScreen(key: _homeScreenKey);
       case 4:
         return CategoryScreen(
           key: _movieScreenKey,
@@ -125,6 +135,41 @@ class _WindowsShellState extends State<WindowsShell> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  /// 切换导航分页，并在切页期间保留旧页以实现淡入淡出；
+  /// 所有访问过的分页都带全局 Key 并被缓存（见 [_getTab]），切走后 Element/State
+  /// 仍在树中（仅离屏隐藏），实现“首次加载、后续缓存”，切换不再重新加载数据。
+  void _selectIndex(int index) {
+    if (_selectedIndex == index) return;
+    _animatingFrom = _selectedIndex;
+    _selectedIndex = index;
+    // 淡入淡出结束后停止保留旧页的绘制（旧页仍常驻缓存，仅不再绘制）。
+    Timer(const Duration(milliseconds: 260), () {
+      if (mounted && _animatingFrom != null) setState(() => _animatingFrom = null);
+    });
+    setState(() {});
+  }
+
+  /// 懒构建并缓存对应索引的导航页；每个页面只构建一次，之后复用同一实例以保留状态。
+  Widget _getTab(int index) => _builtTabs[index] ??= _buildTab(index);
+
+  /// 单个导航页的包装：选中页不透明可交互；切页过程中旧页短暂绘制以完成淡出；
+  /// 其余已缓存页离屏隐藏（保留状态、不绘制、不接收焦点），节省绘制开销。
+  Widget _fadeTab(int i) {
+    final selected = i == _selectedIndex;
+    final animating = i == _animatingFrom;
+    return Offstage(
+      offstage: !selected && !animating,
+      child: IgnorePointer(
+        ignoring: !selected,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 220),
+          opacity: selected ? 1.0 : 0.0,
+          child: _getTab(i),
+        ),
+      ),
+    );
   }
 
   void _handleBack() {
@@ -293,19 +338,18 @@ class _WindowsShellState extends State<WindowsShell> {
               ),
               Container(height: 1, color: AppColors.border),
               Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    // 首页常驻底层：切回首页零重建、瞬时响应；其余标签仅选中时挂载
-                    // （最多同时 2 个常驻），切走即卸载释放内存，规避 IndexedStack
-                    // 8 标签全常驻的内存压力。
-                    HomeScreen(key: _homeScreenKey),
-                    if (_selectedIndex != 3)
-                      Container(
-                        color: AppColors.bgApp,
-                        child: _buildTab(_selectedIndex),
-                      ),
-                  ],
+                // 导航分页切换使用淡入淡出（新分页渐变覆盖旧分页）；
+                // 每个访问过的分页都通过 [_getTab] 懒构建并缓存，切走后仅离屏隐藏
+                // （Element/State 仍保留，见 [_fadeTab]），实现“首次加载、后续缓存”。
+                child: Container(
+                  color: AppColors.bgApp,
+                  child: Stack(
+                    children: [
+                      for (int i = 0; i < _items.length; i++)
+                        if (_builtTabs[i] != null || i == _selectedIndex)
+                          _fadeTab(i),
+                    ],
+                  ),
                 ),
               ),
             ],

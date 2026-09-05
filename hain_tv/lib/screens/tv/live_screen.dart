@@ -14,6 +14,14 @@ import '../../widgets/tv/focusable.dart';
 import '../live_player_screen.dart';
 import 'live_source_manager_screen.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+import '../../services/user_data_service.dart';
+
+/// 频道预览缓存条目：保存某直播源已拉取的频道列表及其过期时间。
+class _PreviewCacheEntry {
+  final List<LiveChannel>? channels;
+  final DateTime expiry;
+  _PreviewCacheEntry({required this.channels, required this.expiry});
+}
 
 /// TV 直播首页：左侧直播源列表，右侧频道预览，顶部功能选项行。
 class TvLiveScreen extends StatefulWidget {
@@ -35,6 +43,8 @@ class TvLiveScreenState extends State<TvLiveScreen> {
   List<LiveChannel>? _previewChannels;
   bool _loadingPreview = false;
   int? _previewSourceIndex;
+  // 频道预览缓存：按“直播源缓存时间”保鲜，切换回已缓存源时不重新拉取。
+  final Map<int, _PreviewCacheEntry> _previewCache = {};
 
   // 焦点节点
   final List<FocusNode> _sourceFocusNodes = [];
@@ -114,6 +124,16 @@ class TvLiveScreenState extends State<TvLiveScreen> {
   Future<void> _loadPreview(int index) async {
     if (index < 0 || index >= _sources.length) return;
     if (_previewSourceIndex == index && _previewChannels != null) return;
+    // 命中有效缓存：直接复用，不再联网拉取。
+    final cached = _previewCache[index];
+    if (cached != null && cached.expiry.isAfter(DateTime.now())) {
+      if (mounted) setState(() {
+        _previewSourceIndex = index;
+        _previewChannels = cached.channels;
+        _loadingPreview = false;
+      });
+      return;
+    }
 
     setState(() {
       _loadingPreview = true;
@@ -124,9 +144,15 @@ class TvLiveScreenState extends State<TvLiveScreen> {
     final response = await LiveService.loadChannelsForSource(source);
     if (!mounted) return;
 
-    setState(() {
+    final channels = response.success ? (response.data ?? []) : null;
+    final hours = await UserDataService.getLiveSourceCacheHours();
+    _previewCache[index] = _PreviewCacheEntry(
+      channels: channels,
+      expiry: DateTime.now().add(Duration(hours: hours)),
+    );
+    if (mounted) setState(() {
       _loadingPreview = false;
-      _previewChannels = response.success ? (response.data ?? []) : null;
+      _previewChannels = channels;
     });
   }
 

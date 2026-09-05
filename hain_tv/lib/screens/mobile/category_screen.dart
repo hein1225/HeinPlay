@@ -45,6 +45,30 @@ class _CategoryConfig {
   });
 }
 
+/// 单个 kind（电影/电视剧/综艺/动漫）的缓存状态。
+/// 切换 kind 时保存当前状态，切回时直接恢复，避免重复联网加载海报。
+class _KindStateCache {
+  String kind;
+  List<DoubanMovie> movies = [];
+  bool hasMore = true;
+  String? error;
+  late String selectedPrimary;
+  late String selectedSecondary;
+  late DoubanRecommendsParams params;
+  int loadToken = 0;
+  List<BangumiCalendarItem> bangumiCalendarItems = [];
+  late String selectedWeekday;
+  bool loaded = false;
+
+  _KindStateCache({
+    required this.kind,
+    required this.selectedPrimary,
+    required this.selectedSecondary,
+    required this.params,
+    required this.selectedWeekday,
+  });
+}
+
 class MobileCategoryScreen extends StatefulWidget {
   final String? kind;
   final String? title;
@@ -74,6 +98,9 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   int _loadToken = 0;
 
   late String _currentKind;
+
+  // 各 kind 的状态缓存：电影/电视剧/综艺/动漫切换时保存，切回时恢复。
+  final Map<String, _KindStateCache> _kindCaches = {};
 
   static const _kindOptions = [
     _OptionItem('电影', 'movie'),
@@ -398,23 +425,56 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   void initState() {
     super.initState();
     _currentKind = widget.kind ?? 'movie';
-    _resetToKind(_currentKind);
-    _selectedWeekday = _currentWeekdayEn();
+    _kindCaches[_currentKind] = _createCache(_currentKind);
+    _applyCache(_currentKind);
     _scrollController.addListener(_onScroll);
     _loadData(refresh: true);
   }
 
-  void _resetToKind(String kind) {
+  _KindStateCache _createCache(String kind) {
     final config = _categoryConfigs[kind] ?? _categoryConfigs['movie']!;
-    _selectedPrimary = config.defaultPrimary;
-    _selectedSecondary = config.defaultSecondary;
-    _params = DoubanRecommendsParams(
-      kind: config.kind,
-      category: 'all',
-      format: config.defaultFormat,
-      sort: config.defaultSort,
-      pageLimit: 30,
+    return _KindStateCache(
+      kind: kind,
+      selectedPrimary: config.defaultPrimary,
+      selectedSecondary: config.defaultSecondary,
+      params: DoubanRecommendsParams(
+        kind: config.kind,
+        category: 'all',
+        format: config.defaultFormat,
+        sort: config.defaultSort,
+        pageLimit: 30,
+      ),
+      selectedWeekday: _currentWeekdayEn(),
     );
+  }
+
+  void _applyCache(String kind) {
+    final cache = _kindCaches[kind] ?? _createCache(kind);
+    _movies = cache.movies;
+    _hasMore = cache.hasMore;
+    _error = cache.error;
+    _selectedPrimary = cache.selectedPrimary;
+    _selectedSecondary = cache.selectedSecondary;
+    _params = cache.params;
+    _loadToken = cache.loadToken;
+    _bangumiCalendarItems = cache.bangumiCalendarItems;
+    _selectedWeekday = cache.selectedWeekday;
+    _loading = false;
+    _loadingMore = false;
+  }
+
+  void _saveCache(String kind) {
+    final cache = _kindCaches[kind] ?? _createCache(kind);
+    cache.movies = _movies;
+    cache.hasMore = _hasMore;
+    cache.error = _error;
+    cache.selectedPrimary = _selectedPrimary;
+    cache.selectedSecondary = _selectedSecondary;
+    cache.params = _params;
+    cache.loadToken = _loadToken;
+    cache.bangumiCalendarItems = _bangumiCalendarItems;
+    cache.selectedWeekday = _selectedWeekday;
+    _kindCaches[kind] = cache;
   }
 
   static String _currentWeekdayEn() {
@@ -550,6 +610,11 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
           });
         }
       }
+      // 缓存当前 kind 的加载结果，切回时直接复用。
+      if (mounted && token == _loadToken) {
+        _kindCaches[_currentKind]!.loaded = true;
+        _saveCache(_currentKind);
+      }
     } catch (e, stackTrace) {
       debugPrint('MobileCategoryScreen[${_currentKind}] 加载失败: $e');
       debugPrint('$stackTrace');
@@ -561,6 +626,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
           _error = '分类加载失败: $e';
         });
       }
+      _saveCache(_currentKind);
     }
   }
 
@@ -644,11 +710,19 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   void _onKindChanged(String kind) {
     if (kind == _currentKind) return;
     _loadToken++;
-    setState(() {
-      _currentKind = kind;
-      _resetToKind(kind);
-    });
-    _loadData(refresh: true);
+    _saveCache(_currentKind);
+    _currentKind = kind;
+    if (!_kindCaches.containsKey(kind)) {
+      _kindCaches[kind] = _createCache(kind);
+    }
+    _applyCache(kind);
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+    setState(() {});
+    if (!_kindCaches[kind]!.loaded) {
+      _loadData(refresh: true);
+    }
   }
 
   void _onPrimaryChanged(String value) {

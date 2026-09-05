@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
@@ -31,6 +33,11 @@ class TvShell extends StatefulWidget {
 
 class _TvShellState extends State<TvShell> {
   int _selectedIndex = 3;
+  // 焦点高亮随焦点立即移动；_selectedIndex 控制内容分页，延迟切换（见导航停留逻辑）。
+  int _focusedIndex = 3;
+  // 导航栏焦点停留计时器：焦点移动到某分类后停留 0.5 秒才切换内容分页，
+  // 避免遥控器快速横移时反复重建分类页造成的卡顿。
+  Timer? _navSwitchTimer;
   final List<FocusNode> _navFocusNodes = [];
   bool _exitDialogShowing = false;
   final _profileScreenKey = GlobalKey<ProfileScreenState>();
@@ -52,6 +59,13 @@ class _TvShellState extends State<TvShell> {
     _NavItem(label: '综艺', icon: Icons.emoji_emotions_outlined),
     _NavItem(label: '动漫', icon: Icons.animation_outlined),
   ];
+
+  // 切页淡入淡出期间保留的旧分页索引（仅用于过渡期绘制，结束后置空）。
+  int? _animatingFrom;
+  // 已构建的导航页缓存：每个分页只构建一次并复用同一实例，切走后仍保留
+  // Element/State（见 [_fadeTab] 的 Offstage 处理），实现“首次加载、后续缓存”，
+  // 切换分页不再重新加载海报/数据，除非重启软件。
+  final List<Widget?> _builtTabs = List<Widget?>.filled(8, null);
 
   @override
   void initState() {
@@ -87,15 +101,20 @@ class _TvShellState extends State<TvShell> {
   }
 
   void _onNavTap(int index) {
-    setState(() => _selectedIndex = index);
-    // 切换到“我的”分页时刷新播放记录与收藏夹，避免 IndexedStack 保留旧数据。
+    // 显式点击/确认：立即切换（不等待停留计时），并取消可能存在的延迟切换。
+    _navSwitchTimer?.cancel();
+    if (mounted) {
+      _focusedIndex = index;
+      _selectIndex(index);
+    }
+    // 切换到“我的”分页时刷新播放记录与收藏夹，避免切回时仍显示旧数据。
     if (index == 0) {
       _profileScreenKey.currentState?.refresh();
     }
   }
 
-  /// 非首页标签按需挂载：仅当选中时才构建并挂载，切走即卸载释放内存。
-  /// 首页（index 3）由 _TvShellState 常驻，不在本方法内。
+  /// 构建对应索引的导航页；每个页面都带全局 Key，配合 AnimatedSwitcher 在
+  /// 切走后保留 Element/State，实现“首次加载、后续缓存”的效果。
   Widget _buildTab(int index) {
     switch (index) {
       case 0:
@@ -109,6 +128,8 @@ class _TvShellState extends State<TvShell> {
             _navFocusNodes[2].requestFocus();
           },
         );
+      case 3:
+        return HomeScreen(key: _homeScreenKey);
       case 4:
         return CategoryScreen(
           key: _movieScreenKey,
@@ -134,10 +155,45 @@ class _TvShellState extends State<TvShell> {
     }
   }
 
+  /// 切换导航分页，并在切页期间保留旧页以实现淡入淡出；
+  /// 所有访问过的分页都带全局 Key 并被缓存（见 [_getTab]），切走后 Element/State
+  /// 仍在树中（仅离屏隐藏），实现“首次加载、后续缓存”，切换不再重新加载数据。
+  void _selectIndex(int index) {
+    if (_selectedIndex == index) return;
+    _animatingFrom = _selectedIndex;
+    _selectedIndex = index;
+    // 淡入淡出结束后停止保留旧页的绘制（旧页仍常驻缓存，仅不再绘制）。
+    Timer(const Duration(milliseconds: 260), () {
+      if (mounted && _animatingFrom != null) setState(() => _animatingFrom = null);
+    });
+    setState(() {});
+  }
+
+  /// 懒构建并缓存对应索引的导航页；每个页面只构建一次，之后复用同一实例以保留状态。
+  Widget _getTab(int index) => _builtTabs[index] ??= _buildTab(index);
+
+  /// 单个导航页的包装：选中页不透明可交互；切页过程中旧页短暂绘制以完成淡出；
+  /// 其余已缓存页离屏隐藏（保留状态、不绘制、不接收焦点），节省绘制开销。
+  Widget _fadeTab(int i) {
+    final selected = i == _selectedIndex;
+    final animating = i == _animatingFrom;
+    return Offstage(
+      offstage: !selected && !animating,
+      child: IgnorePointer(
+        ignoring: !selected,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 220),
+          opacity: selected ? 1.0 : 0.0,
+          child: _getTab(i),
+        ),
+      ),
+    );
+  }
+
   void _moveNavFocus(int direction) {
-    final newIndex = (_selectedIndex + direction).clamp(0, _items.length - 1);
-    if (newIndex != _selectedIndex) {
-      setState(() => _selectedIndex = newIndex);
+    final newIndex = (_focusedIndex + direction).clamp(0, _items.length - 1);
+    if (newIndex != _focusedIndex) {
+      // 仅移动焦点；内容分页切换交由 onFocusChange 的 0.5 秒停留计时器触发。
       _navFocusNodes[newIndex].requestFocus();
     }
   }
@@ -150,18 +206,26 @@ class _TvShellState extends State<TvShell> {
   }
 
   Widget _buildNavItem(_NavItem item, int index) {
-    final isActive = index == _selectedIndex;
+    final isActive = index == _focusedIndex;
 
     return Focus(
       focusNode: _navFocusNodes[index],
       autofocus: index == _selectedIndex,
       onFocusChange: (hasFocus) {
         if (hasFocus) {
-          setState(() => _selectedIndex = index);
-          // 焦点切到“我的”时也刷新一次，确保遥控/键盘切页后数据最新。
-          if (index == 0) {
-            _profileScreenKey.currentState?.refresh();
-          }
+          // 高亮立即跟随焦点移动。
+          if (mounted) setState(() => _focusedIndex = index);
+          // 内容分页延迟 0.5 秒切换：焦点停留满 0.5 秒才真正切到该分类页。
+          _navSwitchTimer?.cancel();
+          _navSwitchTimer = Timer(const Duration(milliseconds: 500), () {
+            if (mounted && _navFocusNodes[index].hasFocus) {
+              _selectIndex(index);
+              // 焦点切到“我的”时刷新一次，确保数据最新。
+              if (index == 0) _profileScreenKey.currentState?.refresh();
+            }
+          });
+        } else {
+          _navSwitchTimer?.cancel();
         }
       },
       onKeyEvent: (node, event) {
@@ -372,6 +436,7 @@ class _TvShellState extends State<TvShell> {
   void dispose() {
     ThemeModeService.instance.removeListener(_onThemeChanged);
     ConnectivityService.instance.stopMonitoring();
+    _navSwitchTimer?.cancel();
     for (var node in _navFocusNodes) {
       node.dispose();
     }
@@ -468,19 +533,19 @@ class _TvShellState extends State<TvShell> {
               ),
               Container(height: 1, color: AppColors.border),
               Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    // 首页常驻底层：切回首页零重建、瞬时响应，避免廉价安卓盒子
-                    // （常 1-2GB 内存）在重海报页重建时卡死/ANR。其余标签仅选中时
-                    // 挂载（最多同时 2 个标签常驻），切走即卸载释放内存。
-                    HomeScreen(key: _homeScreenKey),
-                    if (_selectedIndex != 3)
-                      Container(
-                        color: AppColors.bgApp,
-                        child: _buildTab(_selectedIndex),
-                      ),
-                  ],
+                // 导航分页切换使用淡入淡出（新分页渐变覆盖旧分页）；
+                // 每个访问过的分页都通过 [_getTab] 懒构建并缓存，切走后仅离屏隐藏
+                // （Element/State 仍保留，见 [_fadeTab]），实现“首次加载、后续缓存”，
+                // 切换分页不再重新加载海报/数据，除非重启软件。
+                child: Container(
+                  color: AppColors.bgApp,
+                  child: Stack(
+                    children: [
+                      for (int i = 0; i < _items.length; i++)
+                        if (_builtTabs[i] != null || i == _selectedIndex)
+                          _fadeTab(i),
+                    ],
+                  ),
                 ),
               ),
             ],

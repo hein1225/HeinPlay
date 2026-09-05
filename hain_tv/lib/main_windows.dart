@@ -12,6 +12,12 @@ import 'package:window_manager/window_manager.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 提升内存图片缓存上限，确保各页面海报在切换页/返回时不重新解码或重新联网，
+  // 直到软件重启（配合 CachedNetworkImage 的磁盘缓存，切换页即瞬时显示，不再刷新）。
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 256 << 20
+    ..maximumSize = 2000;
+
   // Windows 便携版：将用户数据重定向到软件 exe 同级目录的 data 文件夹。
   if (Platform.isWindows) {
     await PortableStorageWindows.initialize();
@@ -29,6 +35,7 @@ void main() async {
   // 兼容性最好。关闭 FFmpeg TLS 严格验证，避免非标准端口/自签证书源被服务器拒绝。
   fvp.registerWith(options: {
     'platforms': ['windows'],
+    'lowLatency': 1,
     'global': {
       // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书源。
       // analyzeduration=500000(0.5s)/probesize=2MB：缩短 FFmpeg 媒体探测窗口。
@@ -36,7 +43,7 @@ void main() async {
       // 导致换台约 5 秒；调小后首次 initialize 即走低延迟探测，换台降至 <1s，
       // 与 VLC 等播放器一致。直播低延迟的 +nobuffer 等选项仍由 setBufferRange 在
       // open 后补充（fvp 内部 _lowLatency 路径）。
-      'avformat': 'tls_verify=0,analyzeduration=500000,probesize=2097152',
+      'avformat': 'tls_verify=0:analyzeduration=500000:probesize=2097152',
       'ffmpeg.loglevel': 'info',
     },
   });

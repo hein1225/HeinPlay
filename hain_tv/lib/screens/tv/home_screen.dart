@@ -39,6 +39,10 @@ class HomeScreenState extends State<HomeScreen> {
   late final FocusNode _hotShowsFirstFocusNode;
   late final FocusNode _hotAnimesFirstFocusNode;
 
+  /// 导航栏按下进入首页内容时若首页仍在加载（内容节点尚未挂载），先挂起，
+  /// 待首页加载完成后再把焦点移入首个内容项。
+  bool _pendingFocusFirstContent = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,11 +91,30 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void focusFirstContent() {
+    if (_loading) {
+      // 首页仍在加载、内容节点尚未挂载，挂起待加载完成后聚焦。
+      _pendingFocusFirstContent = true;
+      return;
+    }
+    _applyFirstContentFocus();
+  }
+
+  void _applyFirstContentFocus() {
     if (_continueWatching.isNotEmpty) {
       _continueFirstFocusNode.requestFocus();
     } else {
       _hotMoviesFirstFocusNode.requestFocus();
     }
+  }
+
+  /// 首页加载完成后，若此前有“进入内容”的待处理请求，则把焦点移入首个内容项。
+  void _flushPendingFirstContentFocus() {
+    if (!_pendingFocusFirstContent) return;
+    _pendingFocusFirstContent = false;
+    // 等本帧构建完成、内容节点挂载后再聚焦。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _applyFirstContentFocus();
+    });
   }
 
   Future<void> _loadData() async {
@@ -125,6 +148,7 @@ class HomeScreenState extends State<HomeScreen> {
           _hotAnimes = results[3].success ? results[3].data ?? [] : [];
           _loading = false;
         });
+        _flushPendingFirstContentFocus();
       }
     } catch (e) {
       if (mounted) {
@@ -132,6 +156,7 @@ class HomeScreenState extends State<HomeScreen> {
           _error = '加载失败: $e';
           _loading = false;
         });
+        _flushPendingFirstContentFocus();
       }
     }
   }

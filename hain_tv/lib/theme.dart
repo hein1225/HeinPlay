@@ -80,6 +80,23 @@ class AppSpacing {
   static const double xxl = 48;
 }
 
+/// 全局页面切换使用纯淡入淡出，避免直接“跳进”页面的生硬感；
+/// 仅透明度动画，由 GPU 合成层处理，不触发布局/重绘，几乎零性能开销。
+class _FadePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _FadePageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T>? route,
+    BuildContext? context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget? child,
+  ) {
+    return FadeTransition(opacity: animation, child: child);
+  }
+}
+
 /// 根据当前主题模式构建 [ThemeData]。
 /// 由 [buildLightTheme] / [buildDarkTheme] 选择亮度，二者配合
 /// [MaterialApp.themeMode] 使用。
@@ -108,6 +125,16 @@ ThemeData _buildThemeData(Brightness brightness) {
     brightness: brightness,
     scaffoldBackgroundColor: AppColors.bgApp,
     colorScheme: colorScheme,
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: _FadePageTransitionsBuilder(),
+        TargetPlatform.iOS: _FadePageTransitionsBuilder(),
+        TargetPlatform.windows: _FadePageTransitionsBuilder(),
+        TargetPlatform.linux: _FadePageTransitionsBuilder(),
+        TargetPlatform.macOS: _FadePageTransitionsBuilder(),
+        TargetPlatform.fuchsia: _FadePageTransitionsBuilder(),
+      },
+    ),
     textTheme: TextTheme(
       bodyLarge: TextStyle(
         fontFamily: 'NotoSansSC',
