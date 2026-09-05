@@ -112,7 +112,7 @@
 
 | 平台               | 状态     | 系统要求                    | 说明                                                              |
 | ---------------- | ------ | ----------------------- | --------------------------------------------------------------- |
-| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。      |
+| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。如果发现播放卡顿也可换tvLegacy      |
 | Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
 | Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                    |
 | Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                               |
