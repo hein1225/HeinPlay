@@ -25,6 +25,13 @@
 
 - **版本号统一**：全项目版本号更新至 `1.3.4`（build `+22`）；Release 产物命名同步为 `heinplay-1.3.4-tv.apk`、`heinplay-1.3.4-tvLegacy.apk`、`heinplay-1.3.4-mobile.apk`、`heinplay-1.3.4-windows-portable.zip`；Windows EXE 资源版本号与 `AppInfoService` 兜底版本号同步更新至 1.3.4。
 
+#### 优化
+
+- **运行流畅性优化**
+  - 导航分页切换保留页面状态并以淡入淡出过渡，切换首页 / 电影 / 电视剧 / 综艺 / 动漫 / 直播不再重新加载数据与海报，翻页更顺滑。
+  - 直播源列表与频道预览按「直播源缓存时间」保鲜，切分类页只显示本地缓存、不再重复联网；仅真正播放时才重新连接服务器。
+  - Windows / Linux 的 fvp 注册启用低延迟模式并修正探测窗口参数，起播与换台延迟进一步降低。
+
 </details>
 
 <details>
