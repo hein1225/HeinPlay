@@ -12,68 +12,11 @@ on:
         required: true
         default: true
         type: boolean
-      with-ffmpeg-decoder:
-        description: 'TV/tvLegacy/Mobile APK 是否打入带 mp3 解码(覆盖 mp2)的 ffmpeg 软解 AAR（会先编译该 AAR，耗时 30-40 分钟）'
-        required: false
-        default: false
-        type: boolean
 
 env:
   RELEASE_TAG: ${{ inputs.version }}
 
 jobs:
-  # ======================================================================
-  # 编译带 mp3 解码(覆盖 IPTV mp2 音频)的 media3-ffmpeg decoder AAR。
-  # ffmpeg 交叉编译 4 ABI + gradle 打包，单次 30-40 分钟，故作为独立 job：
-  #  - 始终上传 decoder AAR artifact 供下载真机验证；
-  #  - 仅当 with-ffmpeg-decoder=true 时，TV/tvLegacy/Mobile 才 needs 它并把 AAR 打入 APK。
-  # 产物对应 tools/build_mp2_ffmpeg_decoder.sh（媒体库对齐 media3 1.9.2，mp2 由默认 mp3 解码器覆盖）。
-  # ======================================================================
-  build-ffmpeg-decoder:
-    name: Build FFmpeg decoder AAR
-    runs-on: ubuntu-latest
-    # 仅在显式勾选 with-ffmpeg-decoder 时编译（重活，避免拖慢常规发版）；
-    # 编译产物 decoder_ffmpeg-release.aar 上传 artifact，可下载真机验证；
-    # 验证通过后建议直接提交该 AAR 到 hain_tv/deps/video_player_android/android/libs/，
-    # 此后 TV/tvLegacy/Mobile 自动打包软解能力，无需再跑本 job。
-    if: ${{ inputs.with-ffmpeg-decoder == true }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java (JDK 17)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Install ffmpeg build deps (yasm/nasm)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y yasm nasm make gcc
-
-      - name: Install NDK 26.1.10909125 via sdkmanager
-        run: |
-          ls "$ANDROID_HOME"
-          echo y | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" || \
-          echo y | "$ANDROID_HOME/cmdline-tools/*/bin/sdkmanager" "ndk;26.1.10909125"
-
-      - name: Build FFmpeg decoder AAR
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          JAVA_HOME: ${{ env.JAVA_HOME }}
-          NDK_VER: 26.1.10909125
-        run: |
-          ls -la "$ANDROID_HOME/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" >/dev/null 2>&1 && echo "NDK26 就绪" || echo "!! NDK26 工具链缺失"
-          bash tools/build_mp2_ffmpeg_decoder.sh
-
-      - name: Upload decoder AAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: heinplay-ffmpeg-decoder-aar
-          path: hain_tv/deps/video_player_android/android/libs/decoder_ffmpeg-release.aar
-          if-no-files-found: error
-
   build-tv:
     name: Build TV APK
     runs-on: ubuntu-latest
