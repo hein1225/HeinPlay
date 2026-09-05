@@ -15,10 +15,12 @@ class LiveSettingsPage extends StatefulWidget {
 }
 
 class _LiveSettingsPageState extends State<LiveSettingsPage> {
-  PlayerBackendType _livePlayerBackend = PlayerBackendType.fvp;
+  PlayerBackendType _livePlayerBackend = PlayerBackendType.exo;
   bool _lunaTvLiveEnabled = true;
   bool _epgLoadEnabled = true;
   bool _localProxyEnabled = false;
+  bool _seamlessSwitchEnabled = false;
+  bool _fccFastSwitchEnabled = false;
   int _liveSourceCacheHours = 24;
 
   @override
@@ -34,12 +36,16 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
     final liveSourceCacheHours =
         await UserDataService.getLiveSourceCacheHours();
     final localProxyEnabled = await UserDataService.getLocalProxyEnabled();
+    final seamlessSwitch = await UserDataService.getSeamlessChannelSwitch();
+    final fccFastSwitch = await UserDataService.getFccFastSwitch();
     if (!mounted) return;
     setState(() {
       _livePlayerBackend = liveBackend;
       _lunaTvLiveEnabled = lunaTvLiveEnabled;
       _epgLoadEnabled = epgLoadEnabled;
       _localProxyEnabled = localProxyEnabled;
+      _seamlessSwitchEnabled = seamlessSwitch;
+      _fccFastSwitchEnabled = fccFastSwitch;
       _liveSourceCacheHours = liveSourceCacheHours;
     });
   }
@@ -72,6 +78,24 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
     showSettingsSnackBar(
       context,
       value ? '已开启本地 M3U8 代理' : '已关闭本地 M3U8 代理',
+    );
+  }
+
+  Future<void> _setSeamlessSwitchEnabled(bool value) async {
+    await UserDataService.saveSeamlessChannelSwitch(value);
+    setState(() => _seamlessSwitchEnabled = value);
+    showSettingsSnackBar(
+      context,
+      value ? '已开启无缝换台' : '已关闭无缝换台',
+    );
+  }
+
+  Future<void> _setFccFastSwitchEnabled(bool value) async {
+    await UserDataService.saveFccFastSwitch(value);
+    setState(() => _fccFastSwitchEnabled = value);
+    showSettingsSnackBar(
+      context,
+      value ? '已开启 FCC 快速换台' : '已关闭 FCC 快速换台',
     );
   }
 
@@ -109,6 +133,27 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
       ),
       body: buildSettingsScrollView(
         children: [
+          buildSectionTitle('换台优化'),
+          buildSwitchTile(
+            context: context,
+            title: '无缝换台',
+            subtitle: '开启后换台时当前画面继续播放，目标频道在后台预载，'
+                '就绪后再切换（最多等待 ${UserDataService.seamlessSwitchTimeoutMs ~/ 1000} 秒，'
+                '超时直接切换）。预载期间同时解码两路直播流，'
+                '会消耗更多流量与设备性能。默认关闭',
+            value: _seamlessSwitchEnabled,
+            onChanged: _setSeamlessSwitchEnabled,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          buildSwitchTile(
+            context: context,
+            title: 'FCC 快速换台',
+            subtitle: '开启后优先使用直播源提供的 FCC 地址拉流，缩短换台等待；'
+                '源未提供 FCC 地址的频道自动使用普通地址。默认关闭',
+            value: _fccFastSwitchEnabled,
+            onChanged: _setFccFastSwitchEnabled,
+          ),
+          const SizedBox(height: AppSpacing.md),
           buildSectionTitle('直播设置'),
           buildSwitchTile(
             context: context,

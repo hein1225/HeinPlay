@@ -18,6 +18,7 @@ import io.flutter.plugins.videoplayer.platformview.PlatformVideoViewFactory;
 import io.flutter.plugins.videoplayer.platformview.PlatformViewVideoPlayer;
 import io.flutter.plugins.videoplayer.texture.TextureVideoPlayer;
 import io.flutter.view.TextureRegistry;
+import java.util.Map;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
 
@@ -101,6 +102,7 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     final String streamInstance = Long.toString(id);
     VideoPlayerOptions playerOptions = new VideoPlayerOptions(sharedOptions);
     playerOptions.backBufferDurationMs = options.getBackBufferDurationMs();
+    playerOptions.enableFfmpegAudioSoftDecode = softAudioDecodeRequested(options);
 
     VideoPlayer videoPlayer =
         PlatformViewVideoPlayer.create(
@@ -123,6 +125,7 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     TextureRegistry.SurfaceProducer handle = flutterState.textureRegistry.createSurfaceProducer();
     VideoPlayerOptions playerOptions = new VideoPlayerOptions(sharedOptions);
     playerOptions.backBufferDurationMs = options.getBackBufferDurationMs();
+    playerOptions.enableFfmpegAudioSoftDecode = softAudioDecodeRequested(options);
 
     VideoPlayer videoPlayer =
         TextureVideoPlayer.create(
@@ -161,6 +164,21 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
       return VideoAsset.fromRemoteUrl(
           uri, streamingFormat, options.getHttpHeaders(), options.getUserAgent());
     }
+  }
+
+  /**
+   * Dart 直播请求（仅 Android ExoPlayer 路径）会在 httpHeaders 里带上内部标记头
+   * `x-heinplay-soft-audio: 1`，指示 ExoPlayer 直播时启用 ffmpeg 音频软解。
+   * 点播/其它路径不带该头 → 返回 false，维持纯硬解。
+   */
+  private static boolean softAudioDecodeRequested(@NonNull CreationOptions options) {
+    if (options.getHttpHeaders() == null) return false;
+    for (Map.Entry<String, String> e : options.getHttpHeaders().entrySet()) {
+      if ("x-heinplay-soft-audio".equalsIgnoreCase(e.getKey())) {
+        return "1".equals(e.getValue()) || "true".equalsIgnoreCase(e.getValue());
+      }
+    }
+    return false;
   }
 
   private void registerPlayerInstance(VideoPlayer player, long id) {

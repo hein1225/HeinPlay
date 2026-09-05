@@ -56,6 +56,41 @@ class CacheService {
     await _prefs!.setString(key, json.encode(entry));
   }
 
+  /// 更新缓存数据但【保持原有过期时间】，不重置 TTL。
+  ///
+  /// 用于只补充 catchup / EPG 等 enrichment 元数据、但不应影响数据主体（如直播源频道列表
+  /// 及其播放地址）刷新周期的场景。若缓存条目尚不存在，则退回到 [fallbackTtl]。
+  ///
+  /// 关键用途：直播源频道列表的刷新周期由"直播源缓存时间"配置（默认 24h）控制，必须按该周期
+  /// 回源重新拉取，才能拿到服务端已变更的播放地址（如 rtp→rtsp）。若 enrichment 写入用普通
+  /// [set] 重置 TTL，App 频繁打开会令频道列表缓存永不过期，导致新地址永远不生效。
+  Future<void> setPreservingTtl(
+    String key,
+    dynamic data, {
+    Duration? fallbackTtl,
+  }) async {
+    await init();
+    int? existingExpiresAt;
+    final raw = _prefs!.getString(key);
+    if (raw != null) {
+      try {
+        final decoded = json.decode(raw) as Map<String, dynamic>;
+        existingExpiresAt = decoded['expiresAt'] as int?;
+      } catch (_) {
+        existingExpiresAt = null;
+      }
+    }
+    final expiresAt = existingExpiresAt ??
+        DateTime.now()
+            .add(fallbackTtl ?? const Duration(hours: 24))
+            .millisecondsSinceEpoch;
+    final entry = {
+      'data': data,
+      'expiresAt': expiresAt,
+    };
+    await _prefs!.setString(key, json.encode(entry));
+  }
+
   Future<void> delete(String key) async {
     await init();
     await _prefs!.remove(key);

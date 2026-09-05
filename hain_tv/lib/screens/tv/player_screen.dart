@@ -12,6 +12,7 @@ import 'package:hain_tv/models/skip_segment.dart';
 import 'package:hain_tv/models/video_detail.dart';
 import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/player/video_player_backend.dart';
+import 'package:hain_tv/player/switch_gate.dart';
 import 'package:hain_tv/services/ad_filter_engine.dart';
 import 'package:hain_tv/services/hain_tv_cache_manager.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
@@ -54,6 +55,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // 导致播放源被重置到列表首位。
   String? _initialSourceKey;
   VideoPlayerBackend? _backend;
+  final PlayerSwitchGate _switchGate = PlayerSwitchGate();
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
   bool _playing = true;
@@ -318,7 +320,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }),
       );
 
-    await _openEpisode(_currentEpisodeIndex);
+    await _openEpisodeImpl(_currentEpisodeIndex);
   }
 
   void _safeSeekToSeconds(double targetSeconds) {
@@ -452,7 +454,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return _duration.inMilliseconds > 0;
   }
 
-  Future<void> _openEpisode(int index) async {
+  Future<void> _openEpisode(int index) =>
+      _switchGate.run(() => _openEpisodeImpl(index));
+
+  Future<void> _openEpisodeImpl(int index) async {
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
 
@@ -605,10 +610,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       _autoSwitchTimer = Timer(Duration(seconds: timeoutSeconds), () async {
         if (!mounted) return;
-        final switched = await _tryAutoSwitchSource(
-          index,
-          timeoutSeconds: timeoutSeconds,
-        );
+        bool? _switchedResult;
+        await _switchGate.run(() async {
+          _switchedResult = await _tryAutoSwitchSource(
+            index,
+            timeoutSeconds: timeoutSeconds,
+          );
+        });
+        final switched = _switchedResult ?? false;
         if (mounted && !switched) {
           setState(() {
             if (_error == null || _error!.isEmpty) {
@@ -762,7 +771,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return false;
   }
 
-  Future<void> _switchSource(int index) async {
+  Future<void> _switchSource(int index) =>
+      _switchGate.run(() => _switchSourceImpl(index));
+
+  Future<void> _switchSourceImpl(int index) async {
     if (index < 0 || index >= _sources.length) return;
     if (index == _currentSourceIndex) return;
 

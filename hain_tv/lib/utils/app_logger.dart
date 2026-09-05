@@ -97,6 +97,29 @@ class AppLogger {
         // 直接使用 PortableStorageWindows 已经确定好的数据目录，
         // 它已处理可写性检查与 APPDATA 回退，避免二次回退导致路径不一致。
         _logDir = p.join(PortableStorageWindows.dataDir, 'app_logs');
+      } else if (Platform.isAndroid) {
+        // Android：写到应用专属外部目录 Android/data/<包名>/files（type 省略时
+        // path_provider 映射到 Context.getExternalFilesDirs(null)，即该根目录）。
+        // 该路径对用户可见（系统文件管理器 / USB / MTP 均可访问），便于用户自己
+        // 导出日志排查，而非沙盒 /data/user/0/...（普通用户取不到）。
+        try {
+          final extDirs = await getExternalStorageDirectories();
+          final base = (extDirs != null && extDirs.isNotEmpty)
+              ? extDirs.first.path
+              : null;
+          _logDir = base != null ? p.join(base, 'app_logs') : null;
+          if (_logDir != null) {
+            debugPrint('AppLogger: 使用 Android 外部目录: $_logDir');
+          }
+        } catch (e) {
+          debugPrint('AppLogger: 获取 Android 外部目录失败: $e');
+          _logDir = null;
+        }
+        if (_logDir == null) {
+          // 外部目录不可用时回退到应用私有目录，保证日志仍能写入。
+          final dir = await getApplicationDocumentsDirectory();
+          _logDir = p.join(dir.path, 'app_logs');
+        }
       } else {
         final dir = await getApplicationDocumentsDirectory();
         _logDir = p.join(dir.path, 'app_logs');

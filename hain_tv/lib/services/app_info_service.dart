@@ -10,7 +10,7 @@ import 'package:win32/win32.dart';
 class AppInfoService {
   /// 兜底版本号，与 pubspec.yaml 的 version 主版本保持一致。
   /// 当 package_info_plus 与 Windows EXE 均读取失败时，至少保证 UI 能显示版本。
-  static const String _fallbackVersion = '1.3.3';
+  static const String _fallbackVersion = '1.3.4';
 
   static String _version = '';
   static String _rawVersion = '';
@@ -31,6 +31,7 @@ class AppInfoService {
   static String get platform {
     if (_platform.isNotEmpty) return _platform;
     if (Platform.isWindows) return 'windows';
+    if (Platform.isLinux) return 'linux';
     return 'tv';
   }
 
@@ -67,7 +68,7 @@ class AppInfoService {
     } catch (e) {
       debugPrint('AppInfoService 初始化失败: $e');
       _version = _fallbackVersion;
-      _platform = Platform.isWindows ? 'windows' : 'tv';
+      _platform = Platform.isWindows ? 'windows' : (Platform.isLinux ? 'linux' : 'tv');
       _userAgent = 'HainTV/$_version Flutter';
     }
   }
@@ -75,6 +76,7 @@ class AppInfoService {
   /// 根据原始版本名后缀解析平台标识。
   static String _resolvePlatform(String rawVersion) {
     if (Platform.isWindows) return 'windows';
+    if (Platform.isLinux) return 'linux';
     final lower = rawVersion.toLowerCase();
     if (lower.contains('-tvlegacy')) return 'tvLegacy';
     if (lower.contains('-mobile')) return 'mobile';

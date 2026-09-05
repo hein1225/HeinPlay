@@ -48,7 +48,14 @@ class HomeScreenState extends State<HomeScreen> {
     _hotShowsFirstFocusNode = FocusNode(debugLabel: 'homeHotShowsFirst');
     _hotAnimesFirstFocusNode = FocusNode(debugLabel: 'homeHotAnimesFirst');
     _consumePreloadedData();
-    _loadData();
+    // SplashScreen 已成功预加载首页数据时（_consumePreloadedData 已消费并把
+    // _loading 置 false），首页直接用该快照渲染，不再重复请求服务器 —— 既避免
+    // 冷启动拉两遍热门，也避免弱网下再次同步/拉取造成卡顿。本地“继续播放/收藏”
+    // 的实时增量由 PlayRecordRefreshNotifier 等通知机制刷新，不依赖重启。
+    // 仅当预加载失败（首页无缓存数据）时才自行加载兜底。
+    if (_loading) {
+      _loadData();
+    }
     PlayRecordRefreshNotifier.instance.addListener(_onPlayRecordRefresh);
   }
 

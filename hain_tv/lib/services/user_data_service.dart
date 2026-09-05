@@ -65,6 +65,10 @@ class UserDataService {
   // 本地 M3U8 代理总开关：开启时点播 M3U8 经由本地代理（统一请求头/去广告），
   // 关闭时直接播放原始地址。直播默认直连，不受此开关影响。
   static const String _localProxyEnabledKey = 'local_proxy_enabled';
+  // 无缝换台：换台时先在后台预载目标频道，就绪（或超时）后再切换画面。
+  static const String _seamlessChannelSwitchKey = 'seamless_channel_switch';
+  // FCC 快速换台：读取直播源中的 FCC 地址进行快速换台。
+  static const String _fccFastSwitchKey = 'fcc_fast_switch';
 
   // Bangumi 代理设置
   static const String _bangumiApiProxyTypeKey = 'bangumi_api_proxy_type';
@@ -456,15 +460,19 @@ class UserDataService {
   }
 
   static PlayerBackendType get _platformDefaultBackend {
-    if (Platform.isWindows) return PlayerBackendType.fvp;
+    if (Platform.isWindows || Platform.isLinux) return PlayerBackendType.fvp;
     return PlayerBackendType.exo;
   }
 
-  /// 直播默认后端：Windows 与 Android 均使用 fvp（libmdk/ffmpeg 网络栈）。
-  /// 部分设备（如 Shield TV）上 ExoPlayer 的 OkHttp 网络栈连外部 IPTV 域名
-  /// 会读响应超时，而 ffmpeg 网络栈可达，故直播统一默认 fvp 以提升兼容性。
+  /// 直播默认后端：Android / TV / Windows 默认 ExoPlayer（与点播同款，兼容性最佳）；
+  /// HarmonyOS / Linux 无 ExoPlayer 运行时，回退 fvp。
+  /// 注：历史上曾因 Shield TV 等设备的 ExoPlayer OkHttp 网络栈连外部 IPTV 域名
+  /// 超时而默认 fvp，现改回 ExoPlayer；个别设备若连源超时可在直播设置里切回 fvp。
   static PlayerBackendType get _platformDefaultLiveBackend {
-    return PlayerBackendType.fvp;
+    if (Platform.operatingSystem == 'ohos' || Platform.isLinux) {
+      return PlayerBackendType.fvp;
+    }
+    return PlayerBackendType.exo;
   }
 
   static Future<PlayerBackendType> getPlayerBackend() async {
@@ -492,20 +500,18 @@ class UserDataService {
     );
   }
 
-  /// 直播默认后端历史迁移：Android 上旧的默认后端为 ExoPlayer，
-  /// 现统一改为 fvp（libmdk/ffmpeg 网络栈）。仅迁移一次，之后尊重用户手动选择。
+  /// 直播默认后端历史迁移：曾把 Android 默认从 ExoPlayer 迁到 fvp，
+  /// 现又改回 ExoPlayer（见 [_platformDefaultLiveBackend]）。本迁移仅保证只执行一次，
+  /// 不再强制改动用户的已保存选择——无保存项的用户会自然落到新的 ExoPlayer 默认，
+  /// 曾手动选 fvp 的用户保持不变（尊重其选择）。
   static const String _livePlayerBackendMigratedKey =
       'live_player_backend_migrated_to_fvp';
 
   static Future<void> migrateLivePlayerBackendDefault() async {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_livePlayerBackendMigratedKey) ?? false) return;
-    if (Platform.isAndroid) {
-      final saved = prefs.getString(_livePlayerBackendKey);
-      if (saved == 'exo') {
-        await prefs.remove(_livePlayerBackendKey);
-      }
-    }
+    // 不强制清除任何已保存值：新默认由 [_platformDefaultLiveBackend] 提供，
+    // 仅记录迁移已完成避免重复执行。
     await prefs.setBool(_livePlayerBackendMigratedKey, true);
   }
 
@@ -683,6 +689,39 @@ class UserDataService {
   static Future<void> saveLocalProxyEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_localProxyEnabledKey, enabled);
+  }
+
+  /// 无缝换台总开关，默认关闭。
+  ///
+  /// 开启后换台不会立即黑屏：当前频道画面保持播放，目标频道在后台预载，
+  /// 首帧就绪（或达到 [seamlessSwitchTimeoutMs] 超时）后再切换画面。
+  /// 注意：预载期间会同时解码两路直播流，消耗更多流量与设备性能。
+  /// 关闭时恢复传统换台（立即切换、期间黑屏加载）。
+  static Future<bool> getSeamlessChannelSwitch() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_seamlessChannelSwitchKey) ?? false;
+  }
+
+  static Future<void> saveSeamlessChannelSwitch(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_seamlessChannelSwitchKey, enabled);
+  }
+
+  /// 无缝换台预载超时（毫秒）。超时后无论是否就绪都立即切换，避免久等。
+  static const int seamlessSwitchTimeoutMs = 3000;
+
+  /// FCC 快速换台开关，默认关闭。
+  ///
+  /// 开启后如果直播源（M3U 属性）提供了 FCC 地址，换台时优先使用 FCC 地址
+  /// 拉流以缩短首帧时间；未提供 FCC 地址的频道自动回退到普通地址。
+  static Future<bool> getFccFastSwitch() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_fccFastSwitchKey) ?? false;
+  }
+
+  static Future<void> saveFccFastSwitch(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_fccFastSwitchKey, enabled);
   }
 
   static String _perVideoBackendKey(String source, String id) {

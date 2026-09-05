@@ -30,7 +30,7 @@ class BufferProfileConfig {
     exoBufferForPlaybackAfterRebufferMs: 3000,
     exoBackBufferMs: 30000,
     fvpMinMs: 1000,
-    fvpMaxMs: 4000,
+    fvpMaxMs: 2000,
     fvpDrop: false,
   );
 

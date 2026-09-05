@@ -1,10 +1,12 @@
 name: hain_tv
 description: "海因影视 TV 版"
 publish_to: 'none'
-version: 1.3.3+21
+version: 1.3.4+22
 
 environment:
-  sdk: ^3.12.0
+  # 鸿蒙移植方案B：兼容 flutter_flutter 3.41.10-ohos (Dart 3.11.5)。
+  # 同时仍满足 Android/Windows 基线 (官方 Flutter 3.47.2, Dart >=3.12)。
+  sdk: ^3.11.0
 
 dependencies:
   flutter:
@@ -12,8 +14,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.5.0
   shared_preferences: ^2.5.3
-  cached_network_image: ^4.0.0
-  video_player: ^2.14.0
+  cached_network_image: ^3.4.1
+  video_player: ^2.11.0
   video_player_android: ^2.11.0
   path_provider: ^2.1.5
   path_provider_platform_interface: ^2.1.2
@@ -27,7 +29,7 @@ dependencies:
   xml: ^7.0.1
   wakelock_plus: ^1.7.0
   screen_brightness: ^2.1.1
-  volume_controller: ^3.6.1
+  volume_controller: ^3.5.0
   flutter_js: ^0.8.2
   window_manager: ^0.5.2
   package_info_plus: ^10.1.2
@@ -48,6 +50,21 @@ dependency_overrides:
   # audio_video_progress_bar 0.11.0 仍使用 Flutter 3.x 已移除的 textTheme.bodyText1，
   # 强制覆盖到 2.0.3 以兼容 Flutter 3.44.6 的新 TextTheme API。
   audio_video_progress_bar: ^2.0.3
+  # shared_preferences 官方 pub.dev 版未声明 platforms.ohos，联邦插件机制要求
+  # 主包在自身 pubspec 里写 `ohos: default_package: shared_preferences_ohos` 才会
+  # 把鸿蒙实现接进 dart_plugin_registrant，否则 ohos 构建启动即抛
+  # MissingPluginException(getAll on plugins.flutter.io/shared_preferences)。
+  # 因此主包也必须指向 OpenHarmony TPC 的 git 版（其 pubspec 含 ohos 段）。
+  shared_preferences:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences
+      ref: master
+  shared_preferences_ohos:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences_ohos
+      ref: master
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.3

@@ -10,9 +10,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/live_channel.dart';
 import '../models/live_source_config.dart';
 import '../platform/device_utils.dart';
-import '../platform/windows_fullscreen_mixin.dart';
+import '../platform/desktop_fullscreen_mixin.dart';
 import '../platform/windows_window_utils.dart';
-import '../services/ad_filter_engine.dart';
 import '../services/live_service.dart';
 import '../services/live_source_storage.dart';
 import '../services/user_data_service.dart';
@@ -55,7 +54,7 @@ class LivePlayerScreen extends StatefulWidget {
 }
 
 class _LivePlayerScreenState extends State<LivePlayerScreen>
-    with WindowsFullscreenMixin<LivePlayerScreen> {
+    with DesktopFullscreenMixin<LivePlayerScreen>, WidgetsBindingObserver {
   bool _loading = true;
   String? _error;
   List<LiveChannel> _channels = [];
@@ -98,8 +97,40 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   String _replayGestureKind = 'seek';
   /// 回放手势标识自动隐藏定时器。
   Timer? _replayGestureTimer;
+  /// 回放按住快进/快退的起始时刻（用于按按住时长递增步长）。
+  DateTime? _replayHoldStartAt;
+  /// 回放快进/快退“真实重建流”节流时间戳：两次重建之间至少间隔
+  /// [_replaySeekRebuildInterval]，避免长按/遥控器连发每 250ms 全量重建播放器
+  /// 导致 fvp/libmdk 反复 open() 卡死。
+  DateTime? _replayLastRebuildAt;
   /// 直播播放器控制器（用于回放流内实时定位画面）。
   final LivePlayerController _livePlayerController = LivePlayerController();
+
+  /// 用于强制重挂 LivePlayer 的计数：后台关闭播放后，用户点击/确认键恢复时自增，
+  /// 触发一个全新的 LivePlayer 实例（等同于首开），可靠地避开“在同一 State 内重建
+  /// 后端”在 Android/Linux fvp 上引起的直播“一直加载/黑屏”脆弱性问题。
+  int _livePlayerNonce = 0;
+
+  /// 是否因进入后台（最小化/待机）而处于“已停止”状态。此时 LivePlayer 已被卸载，
+  /// 回到前台后停留在“已停止”浮层，由用户点击屏幕/确认键重挂全新实例继续播放。
+  bool _liveStopped = false;
+
+  // ===== 无缝换台 / FCC 快速换台 =====
+
+  /// 无缝换台开关（软件设置→直播设置），默认关闭。
+  bool _seamlessSwitchEnabled = false;
+
+  /// FCC 快速换台开关（软件设置→直播设置），默认关闭。
+  bool _fccFastSwitchEnabled = false;
+
+  /// 无缝换台期间暂时保留在最上层继续播放的“旧画面”。
+  ///
+  /// 换台时新频道的播放器立刻在下层静音预载，旧频道画面与声音留在上层，
+  /// 直到新频道首帧就绪（或预载超时/失败）才移除，从而避免换台黑屏。
+  _HoldoverPlayerSpec? _holdoverPlayer;
+
+  /// 无缝换台预载超时定时器：超时后无论是否就绪都立即切换画面。
+  Timer? _seamlessTimeoutTimer;
 
   // TV 版确认键长按检测
   DateTime? _selectKeyDownAt;
@@ -110,6 +141,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   final _categoryFocusNode = FocusNode();
   final _channelListFocusNode = FocusNode();
   final _rootFocusNode = FocusNode();
+
 
   // 分组数据（按源文件中首次出现顺序）
   List<String> _groups = [];
@@ -168,7 +200,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (DeviceUtils.isMobile) {
       return MediaQuery.sizeOf(context).width - _kMobileChannelListMargin * 2;
     }
-    final showEpgBanner = !DeviceUtils.isTv || DeviceUtils.isWindows;
+    final showEpgBanner = !DeviceUtils.isTv || DeviceUtils.isDesktop;
     return _kChannelListWidth +
         (showEpgBanner ? _kEpgBannerWidth : 0.0) +
         (showEpgBanner && _showEpgList ? _kEpgListWidth : 0.0);
@@ -179,10 +211,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     super.initState();
     _loadChannels();
     _channelListScrollController.addListener(_syncEpgBannerScroll);
-    if (DeviceUtils.isTv || DeviceUtils.isWindows) {
+    if (DeviceUtils.isTv || DeviceUtils.isDesktop) {
       HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
     }
-    if (DeviceUtils.isWindows) {
+    if (DeviceUtils.isDesktop) {
       initWindowsFullscreen();
       _initWindowsWindowState();
       _resetMouseTimer();
@@ -191,6 +223,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _enterFullscreenLandscape();
     }
     _initWakelock();
+    _loadSwitchPreferences();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// 读取无缝换台 / FCC 快速换台开关。
+  Future<void> _loadSwitchPreferences() async {
+    final seamless = await UserDataService.getSeamlessChannelSwitch();
+    final fcc = await UserDataService.getFccFastSwitch();
+    if (!mounted) return;
+    setState(() {
+      _seamlessSwitchEnabled = seamless;
+      _fccFastSwitchEnabled = fcc;
+    });
   }
 
   /// 直播 / 回拨模式播放期间保持屏幕常亮，避免手机自动休眠。
@@ -406,10 +451,55 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
   }
 
+  /// 无缝换台：在切换播放地址前，把“当前正在播放的画面”冻结到最上层保留。
+  ///
+  /// 调用方需保证本次操作确实会改变播放地址（否则新播放器不会重建，
+  /// 就绪回调也不会触发，只能等预载超时）。
+  void _beginSeamlessHandoff() {
+    if (!_seamlessSwitchEnabled) return;
+    // 回放模式、后台已停止、尚未开播时不做无缝处理。
+    if (_isReplayMode || _liveStopped || _loading || _error != null) return;
+    if (_currentChannel == null) return;
+
+    // 连续换台时保留最早那一份旧画面，避免叠加出多路播放器；
+    // 中间被跳过的频道播放器会随 key 变化被正常释放。
+    if (_holdoverPlayer == null) {
+      final spec = _computeActivePlayerSpec();
+      if (spec == null) return;
+      _holdoverPlayer = spec;
+    }
+
+    _seamlessTimeoutTimer?.cancel();
+    _seamlessTimeoutTimer = Timer(
+      Duration(milliseconds: UserDataService.seamlessSwitchTimeoutMs),
+      () => _commitSeamlessSwitch('timeout'),
+    );
+  }
+
+  /// 结束无缝换台：移除保留的旧画面，让新频道接管画面与声音。
+  ///
+  /// [reason] 仅用于日志：ready 首帧就绪 / timeout 预载超时 / failed 预载失败
+  /// / cancel 主动取消（进入回放、退出页面等）。
+  void _commitSeamlessSwitch(String reason) {
+    _seamlessTimeoutTimer?.cancel();
+    _seamlessTimeoutTimer = null;
+    if (_holdoverPlayer == null) return;
+    debugPrint('[SeamlessSwitch] 切换画面（$reason）');
+    if (!mounted) {
+      _holdoverPlayer = null;
+      return;
+    }
+    setState(() => _holdoverPlayer = null);
+  }
+
   void _playChannel(int index, {bool showInfo = true}) {
     if (index < 0 || index >= _channels.length) return;
     // 记住该直播源当前观看的频道；每次切换即持久化，退出直播模式后下次进入可自动续播。
     unawaited(_saveCurrentChannel());
+    // 无缝换台：仅在确实换到别的频道（播放地址会变）时才冻结旧画面。
+    if (index != _currentIndex) {
+      _beginSeamlessHandoff();
+    }
     setState(() {
       _currentIndex = index;
       _currentChannel = _channels[index];
@@ -655,6 +745,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final channel = _currentChannel;
     if (channel == null || !channel.hasMultipleUrls) return;
     final nextIndex = (channel.currentBackupIndex + 1) % channel.allUrls.length;
+    _beginSeamlessHandoff();
     setState(() {
       channel.currentBackupIndex = nextIndex;
     });
@@ -668,6 +759,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final prevIndex = channel.currentBackupIndex <= 0
         ? channel.allUrls.length - 1
         : channel.currentBackupIndex - 1;
+    _beginSeamlessHandoff();
     setState(() {
       channel.currentBackupIndex = prevIndex;
     });
@@ -677,6 +769,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _showChannelInfoBriefly() {
     _channelInfoTimer?.cancel();
     setState(() => _showChannelInfo = true);
+    // 直播播放页不再提供「切换播放器」入口（播放器后端在设置页统一配置），
+    // 信息卡（换台台标）浮层保持轻量，仅展示频道信息。
     _channelInfoTimer = Timer(Duration(seconds: 5), () {
       if (mounted) setState(() => _showChannelInfo = false);
     });
@@ -719,19 +813,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   void _showControls() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     _controlsTimer?.cancel();
     setState(() => _controlsVisible = true);
   }
 
   void _hideControls() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     _controlsTimer?.cancel();
     if (mounted) setState(() => _controlsVisible = false);
   }
 
   void _toggleControls() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     if (_controlsVisible) {
       _hideControls();
     } else {
@@ -746,7 +840,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (_isMiniPlayer) return;
     setState(() {
       _showChannelList = true;
-      if (DeviceUtils.isWindows) _controlsVisible = true;
+      if (DeviceUtils.isDesktop) _controlsVisible = true;
       _syncSelectionToCurrentChannel();
       _focusOnCategories = false;
     });
@@ -758,7 +852,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   void _hideChannelListAndControls() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     _controlsTimer?.cancel();
     setState(() {
       _showChannelList = false;
@@ -770,22 +864,43 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Future<void> _toggleMiniPlayer() async {
-    if (!DeviceUtils.isWindows || _togglingMiniPlayer) return;
+    if (!DeviceUtils.isDesktop || _togglingMiniPlayer) return;
     _togglingMiniPlayer = true;
     try {
       if (_isMiniPlayer) {
         // 恢复窗口
-        await windowManager.setMinimumSize(_kNormalMinSize);
-        await windowManager.setMaximumSize(_kUnboundedSize);
-        await windowManager.setResizable(true);
-        await windowManager.setTitleBarStyle(_previousTitleBarStyle);
-        await WindowsWindowUtils.ensureNormalWindowFrame();
-        final saved = _previousWindowBounds;
-        if (saved != null && _isValidNormalBounds(saved)) {
-          await windowManager.setBounds(saved);
+        if (DeviceUtils.isLinux) {
+          // Linux/Wayland 下窗口管理器对 setFullScreen/setSize 限制较多，且
+          // setTitleBarStyle.hidden 为 no-op；先强制退出全屏并恢复可移动/可调整，
+          // 再用 setBounds 还原尺寸，避免停留在全屏/最大化状态“变不回来”。
+          await windowManager.setFullScreen(false);
+          await Future.delayed(const Duration(milliseconds: 150));
+          await windowManager.setMinimumSize(_kNormalMinSize);
+          await windowManager.setMaximumSize(_kUnboundedSize);
+          await windowManager.setResizable(true);
+          await windowManager.setMovable(true);
+          await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+          final saved = _previousWindowBounds;
+          if (saved != null && _isValidNormalBounds(saved)) {
+            await windowManager.setBounds(saved);
+          } else {
+            await windowManager.setSize(const Size(900, 600));
+            await windowManager.center();
+          }
+          await windowManager.setAlwaysOnTop(false);
         } else {
-          await windowManager.setSize(Size(900, 600));
-          await windowManager.center();
+          await windowManager.setMinimumSize(_kNormalMinSize);
+          await windowManager.setMaximumSize(_kUnboundedSize);
+          await windowManager.setResizable(true);
+          await windowManager.setTitleBarStyle(_previousTitleBarStyle);
+          await WindowsWindowUtils.ensureNormalWindowFrame();
+          final saved = _previousWindowBounds;
+          if (saved != null && _isValidNormalBounds(saved)) {
+            await windowManager.setBounds(saved);
+          } else {
+            await windowManager.setSize(Size(900, 600));
+            await windowManager.center();
+          }
         }
         if (_wasFullScreenBeforeMini) {
           await Future.delayed(Duration(milliseconds: 100));
@@ -799,6 +914,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           await toggleWindowsFullscreen();
           await Future.delayed(Duration(milliseconds: 100));
         }
+        if (DeviceUtils.isLinux) {
+          // 先确保真正退出全屏（Wayland 下 setFullScreen 可能延迟生效），
+          // 否则后续 setSize 会被窗口管理器忽略，表现为“小窗变成全屏”。
+          await windowManager.setFullScreen(false);
+          await Future.delayed(const Duration(milliseconds: 150));
+        }
         final bounds = await windowManager.getBounds();
         if (_isValidNormalBounds(bounds)) {
           _previousWindowBounds = bounds;
@@ -807,9 +928,17 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         await windowManager.setMinimumSize(_kMiniMinSize);
         await windowManager.setMaximumSize(_kUnboundedSize);
         await windowManager.setResizable(true);
-        await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
-        await WindowsWindowUtils.ensureNormalWindowFrame();
-        await windowManager.setSize(Size(400, 225));
+        await windowManager.setMovable(true);
+        if (DeviceUtils.isLinux) {
+          // Linux 下 setTitleBarStyle.hidden 为 no-op，保留 normal 标题栏，避免 WM
+          // 将无边框窗口当作全屏处理；直接 setSize 缩小并置顶。
+          await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+          await windowManager.setSize(const Size(400, 225));
+        } else {
+          await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+          await WindowsWindowUtils.ensureNormalWindowFrame();
+          await windowManager.setSize(Size(400, 225));
+        }
         await windowManager.setAlwaysOnTop(true);
         _isMiniPlayer = true;
         _isAlwaysOnTop = true;
@@ -827,7 +956,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Future<void> _toggleAlwaysOnTop() async {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     try {
       final next = !_isAlwaysOnTop;
       await windowManager.setAlwaysOnTop(next);
@@ -839,7 +968,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Future<void> _onWindowsBack() async {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     if (isWindowsFullScreen) {
       await toggleWindowsFullscreen();
     } else if (_isMiniPlayer) {
@@ -855,7 +984,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 纹理与窗口资源，偶发死锁导致软件卡死闪退（日志表现为 pop 前页面未销毁）。
   /// 先暂停停止推帧，等渲染线程空闲后再 pop 可规避该竞态。
   void _exitWindowsPlayback() {
-    if (!DeviceUtils.isWindows || _exitingWindowsPlayback) return;
+    if (!DeviceUtils.isDesktop || _exitingWindowsPlayback) return;
     _exitingWindowsPlayback = true;
     WindowsLogger.log('LivePlayerScreen', 'Windows 退出播放：暂停渲染后 pop');
     unawaited(_livePlayerController.pause());
@@ -958,7 +1087,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           return true;
         }
         if (_showChannelList) {
-          if (DeviceUtils.isWindows) {
+          if (DeviceUtils.isDesktop) {
             // Windows：频道列表显示时返回键直接退出播放（返回直播管理页），
             // 返回 false 交给全局 handler（app_windows._handleEscKey）执行 pop。
             return false;
@@ -971,7 +1100,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           _exitReplayMode();
           return true;
         }
-        if (DeviceUtils.isWindows) {
+        if (DeviceUtils.isDesktop) {
           // Windows：ESC 统一交给全局 handler（app_windows._handleEscKey）执行
           // maybePop，由本页 PopScope 决定：全屏先退出全屏、否则返回直播管理页。
           // HardwareKeyboard 会调用所有注册的 handler，若这里也处理 ESC 会与全局
@@ -990,6 +1119,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// - 短按：直播模式显示台标与播放信息；回放模式切换播放/暂停或恢复播放。
   /// - 长按（≥600ms）或菜单键：显示频道列表。
   bool _handleSelectKeyEvent(KeyEvent event) {
+    // 后台关闭播放后，确认键/OK 键直接继续播放。
+    if (_liveStopped) {
+      // 重挂 LivePlayer（全新实例）重新开播，规避同 State 内重建后端的脆弱性。
+      setState(() {
+        _liveStopped = false;
+        _livePlayerNonce++;
+      });
+      return true;
+    }
     if (event is KeyDownEvent) {
       _selectKeyDownAt = DateTime.now();
       _selectLongPressTimer?.cancel();
@@ -1023,7 +1161,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         final indices = _groupedChannelIndices[_groups[_selectedGroupIndex]] ?? [];
         final globalIndex = indices.isNotEmpty ? indices[_selectedChannelIndexInGroup] : _currentIndex;
         _playChannel(globalIndex);
-        if (DeviceUtils.isWindows) {
+        if (DeviceUtils.isDesktop) {
           _hideChannelListAndControls();
         } else {
           _toggleChannelList();
@@ -1121,6 +1259,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _showReplayHint('该节目不支持回放');
       return;
     }
+    // 进入回放会整体切换播放地址，不适合保留直播旧画面。
+    _commitSeamlessSwitch('cancel');
     setState(() {
       // 若回放的是节目单中选中的其他频道，先切换到该频道。
       if (_epgListChannel != null &&
@@ -1139,6 +1279,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _replayBaseOffset = Duration.zero;
       _isReplayPaused = false;
       _isReplaySeeking = false;
+      _replayLastRebuildAt = null;
+      _replayHoldStartAt = null;
       _showEpgList = false;
       _showChannelList = false;
       _epgListChannel = null;
@@ -1150,6 +1292,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _exitReplayMode() {
     _replayHoldTimer?.cancel();
     _replayHoldTimer = null;
+    _commitSeamlessSwitch('cancel');
     setState(() {
       _isReplayMode = false;
       _currentReplayProgram = null;
@@ -1157,29 +1300,66 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _replayBaseOffset = Duration.zero;
       _isReplayPaused = false;
       _isReplaySeeking = false;
+      _replayLastRebuildAt = null;
+      _replayHoldStartAt = null;
     });
     _showChannelInfoBriefly();
   }
 
   /// 回放时快进/快退指定偏移。
   ///
-  /// 直接更新回放起始位置并继续播放，无需再按确认键。
+  /// 逻辑位置 [_replayOffset] 立即更新（驱动进度条），但“真实重建流”按
+  /// [_replaySeekRebuildInterval] 节流，避免遥控器连发/长按每 250ms 全量重建播放器。
   void _seekReplay(Duration delta) {
+    if (!_isReplayMode || _currentReplayProgram == null || _currentChannel == null) return;
+    _applyReplayOffset(delta);
+    // 按键快进/快退即视为恢复播放（与原行为一致）。
+    if (_isReplayPaused) {
+      setState(() => _isReplayPaused = false);
+    }
+    _showReplayGestureIndicator(delta >= Duration.zero);
+    _showChannelInfoBriefly();
+  }
+
+  /// 回放快进/快退重建节流间隔：长按/连发时两次真实重建流的最小间隔。
+  ///
+  /// 低于该间隔的连续 seek 只更新逻辑位置（进度条），不重建播放器，
+  /// 从而消除 fvp/libmdk 反复 open() 引发的卡死。
+  static const Duration _replaySeekRebuildInterval = Duration(milliseconds: 800);
+
+  /// 根据按住时长返回本次快进/快退步长（秒）：按住越久步长越大。
+  ///
+  /// 既让长按时快进/快退更快，也减少需要重建流的总次数，缓解卡死。
+  int _replaySeekStepSeconds(Duration held) {
+    final s = held.inSeconds;
+    if (s < 1) return 5;
+    if (s < 2) return 10;
+    if (s < 3) return 20;
+    if (s < 4) return 30;
+    if (s < 6) return 60;
+    if (s < 10) return 120;
+    return 300;
+  }
+
+  /// 计算并应用回放偏移：更新逻辑位置 [_replayOffset]（驱动进度条），
+  /// 仅在距离上次重建达到 [_replaySeekRebuildInterval] 时才更新 [_replayBaseOffset]
+  /// 触发真实重建流，从而节流连发/长按的重建风暴。
+  void _applyReplayOffset(Duration delta) {
     if (!_isReplayMode || _currentReplayProgram == null || _currentChannel == null) return;
     final maxOffset = _currentChannel!.channelNow
         .difference(_currentChannel!.toChannelTimezone(_currentReplayProgram!.start));
     var newOffset = _replayOffset + delta;
     if (newOffset < Duration.zero) newOffset = Duration.zero;
     if (newOffset > maxOffset) newOffset = maxOffset;
+    final now = DateTime.now();
+    final needRebuild = _replayLastRebuildAt == null ||
+        now.difference(_replayLastRebuildAt!) >= _replaySeekRebuildInterval;
     setState(() {
       _replayOffset = newOffset;
-      // 重建回放流后，流起点即新偏移。
-      _replayBaseOffset = newOffset;
-      _isReplaySeeking = false;
-      _isReplayPaused = false;
+      // 仅节流到达时才重建流（流起点即新偏移），否则仅更新进度条显示。
+      if (needRebuild) _replayBaseOffset = newOffset;
     });
-    _showReplayGestureIndicator(delta >= Duration.zero);
-    _showChannelInfoBriefly();
+    if (needRebuild) _replayLastRebuildAt = now;
   }
 
   /// 显示回放快进/快退手势标识。
@@ -1234,6 +1414,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _replayHoldForward = forward;
     _replayHoldTimer?.cancel();
     _replayHoldTimer = null;
+    // 记录按住起点并清空重建节流，确保本次长按的步长从最小开始、重建不被上次残留节流。
+    _replayHoldStartAt = DateTime.now();
+    _replayLastRebuildAt = null;
     // 快进快退期间保持信息卡（含进度条）一直显示，取消自动隐藏。
     _channelInfoTimer?.cancel();
     _channelInfoTimer = null;
@@ -1257,19 +1440,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     // 防御检查：松手/退出回放后即使定时器有残余触发也直接忽略，避免继续快进快退。
     if (!_isReplaySeeking || !_isReplayMode) return;
     if (_currentReplayProgram == null || _currentChannel == null) return;
-    final maxOffset = _currentChannel!.channelNow
-        .difference(_currentChannel!.toChannelTimezone(_currentReplayProgram!.start));
-    var newOffset =
-        _replayOffset + Duration(seconds: _replayHoldForward ? 5 : -5);
-    if (newOffset < Duration.zero) newOffset = Duration.zero;
-    if (newOffset > maxOffset) newOffset = maxOffset;
-    setState(() {
-      _replayOffset = newOffset;
-      // 与 TV/Windows 版按键逻辑一致：重建回放流，流起点即新偏移。
-      // 部分播放器后端（如 fvp/libmdk）对 catchup 流的相对 seek 无效，
-      // 会导致画面持续快进无法定位，因此手机版长按同样采用重建流方式。
-      _replayBaseOffset = newOffset;
-    });
+    final now = DateTime.now();
+    final held =
+        _replayHoldStartAt != null ? now.difference(_replayHoldStartAt!) : Duration.zero;
+    // 步长随按住时长递增：刚开始每 tick ±5s，按住越久步长越大（最高 ±300s），
+    // 既让长按时快进更快，也减少需要重建流的总次数。
+    final step = _replaySeekStepSeconds(held);
+    _applyReplayOffset(Duration(seconds: _replayHoldForward ? step : -step));
     // 长按期间持续显示快进/快退手势标识（每次 tick 重置，保持常显）。
     _showReplayGestureIndicator(_replayHoldForward, persistent: true);
   }
@@ -1283,7 +1460,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     setState(() {
       _isReplaySeeking = false;
       // 长按期间保持播放状态，松手后无需恢复播放，直接继续自动播放。
+      // 松手时把流起点对齐到最终逻辑位置：仅当与当前起点不同才重建（单次，安全），
+      // 让画面精确停到快进/快退的目标位置。
+      if (_replayBaseOffset != _replayOffset) {
+        _replayBaseOffset = _replayOffset;
+      }
     });
+    _replayHoldStartAt = null;
     // 松手结束长按，隐藏手势标识，并重新启动信息卡自动隐藏。
     _hideReplayGestureIndicator();
     _channelInfoTimer?.cancel();
@@ -1428,6 +1611,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     WindowsLogger.log('LivePlayerScreen', 'dispose 开始');
     // 退出直播播放页时持久化当前观看的频道（覆盖“退出直播模式”的语义）；
     // 与每次切台的保存共同保证各直播源的最后观看频道不丢失。
@@ -1436,18 +1620,18 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _controlsTimer?.cancel();
     _replayGestureTimer?.cancel();
     _replayHoldTimer?.cancel();
-    if (DeviceUtils.isTv || DeviceUtils.isWindows) {
+    _seamlessTimeoutTimer?.cancel();
+    _seamlessTimeoutTimer = null;
+    if (DeviceUtils.isTv || DeviceUtils.isDesktop) {
       HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     }
-    if (DeviceUtils.isWindows) {
+    if (DeviceUtils.isDesktop) {
       disposeWindowsFullscreen();
       _mouseInactivityTimer?.cancel();
       _mouseInactivityTimer = null;
       // 页面销毁时确保光标恢复可见，避免鼠标隐藏状态泄漏到其它页面。
       WindowsWindowUtils.setCursorVisible(true);
     }
-    // 释放可能存在的本地代理，避免 Windows 退出时资源未释放导致闪退。
-    AdFilterEngine.dispose();
     if (DeviceUtils.isMobile) {
       unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
       unawaited(_restoreOrientation());
@@ -1470,6 +1654,34 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 全安卓平台（手机 / Android TV / tvLegacy）需要：最小化/待机时直接关闭直播播放。
+    // 桌面端（Windows / Linux）无此生命周期，跳过。
+    if (!DeviceUtils.isAndroid) return;
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // 直播流无法暂停。进入后台时卸载 LivePlayer 组件（而非在组件仍挂载时手动
+        // dispose 后端），由 Flutter 走正常的平台视图拆除流程：先释放 fvp 视频纹理
+        // 与 SurfaceView，再延迟释放后端，规避“原生 surface 回调打在已释放后端上
+        // 导致的 nativeSetSurface SIGSEGV 闪退”。回到前台后停留在“已停止”浮层，
+        // 由用户手动点击屏幕/确认键重挂全新实例继续播放。
+        if (mounted && !_liveStopped) {
+          setState(() => _liveStopped = true);
+        }
+        break;
+      case AppLifecycleState.inactive:
+        // 瞬时失焦（如来电、下拉通知栏）不关闭播放，避免误停。
+        break;
+      case AppLifecycleState.resumed:
+      case AppLifecycleState.detached:
+        // 不自动续播：停留于“已停止”浮层，等待用户手动继续。
+        break;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     // 仅在直播模式且列表/节目单均隐藏时返回键退出播放页；
     // 回放模式先退出回放，节目单显示时先关闭节目单，全屏时先退出全屏。
@@ -1481,7 +1693,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         !isTogglingWindowsFullscreen &&
         !_isReplayMode &&
         !_showEpgList &&
-        (DeviceUtils.isWindows ? false : !_showChannelList);
+        (DeviceUtils.isDesktop ? false : !_showChannelList);
     return PopScope(
       canPop: canPop,
       onPopInvokedWithResult: (didPop, result) {
@@ -1493,13 +1705,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         } else if (_showEpgList) {
           _closeEpgList();
         } else if (_showChannelList) {
-          if (DeviceUtils.isWindows) {
+          if (DeviceUtils.isDesktop) {
             // Windows：频道列表显示时返回键直接退出播放。
             _exitWindowsPlayback();
           } else {
             _toggleChannelList();
           }
-        } else if (DeviceUtils.isWindows) {
+        } else if (DeviceUtils.isDesktop) {
           _exitWindowsPlayback();
         }
       },
@@ -1511,15 +1723,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           body: Stack(
             fit: StackFit.expand,
             children: [
-              _buildPlayer(),
+              _buildPlayerLayer(),
               _buildGestureLayer(),
               // 回放快进/快退手势标识（居中显示）。
               _buildReplayGestureIndicator(),
               if (_showChannelInfo) _buildChannelInfoOverlay(),
               if (_showChannelList && !_isMiniPlayer) _buildChannelListOverlay(),
             // TV 版使用独立浮层面板；Windows 版使用频道列表内嵌面板。
-            if (_showEpgList && DeviceUtils.isTv && !DeviceUtils.isWindows) _buildEpgListOverlay(),
-            if (DeviceUtils.isWindows && _controlsVisible && !_showChannelList) _buildWindowsControls(),
+            if (_showEpgList && DeviceUtils.isTv && !DeviceUtils.isDesktop) _buildEpgListOverlay(),
+            if (DeviceUtils.isDesktop && _controlsVisible && !_showChannelList) _buildWindowsControls(),
             ],
           ),
         ),
@@ -1527,7 +1739,60 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     );
   }
 
+  /// 播放器层：始终为固定结构的 Stack。
+  ///
+  /// 子项 0 恒为主播放器，子项 1 为无缝换台期间保留的旧频道画面（带 key）。
+  /// 外层结构保持不变是关键——旧画面在 Stack 中从子项 0 迁移到子项 1 时，
+  /// Flutter 的带 key 复用会保留其 Element/State，底层解码器与视频纹理不会重建。
+  Widget _buildPlayerLayer() {
+    final holdover = _holdoverPlayer;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildPlayer(),
+        if (holdover != null)
+          LivePlayer(
+            key: ValueKey(holdover.playerKey),
+            url: holdover.url,
+            formatHint: holdover.formatHint,
+            controller: _livePlayerController,
+            headers: holdover.headers,
+          ),
+      ],
+    );
+  }
+
   Widget _buildPlayer() {
+    // 进入后台后已卸载 LivePlayer，停留在“已停止”浮层，等待用户手动点击继续。
+    if (_liveStopped) {
+      return Container(
+        color: Colors.black,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.play_circle_outline,
+                color: AppColors.primary,
+                size: 48,
+              ),
+              SizedBox(height: AppSpacing.md),
+              Text(
+                DeviceUtils.isTv
+                    ? '已停止播放，按确认键继续'
+                    : '已停止播放，点击屏幕继续',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  color: Color(0xFFF0F0F5),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_loading) {
       return Center(
         child: TechLoadingIndicator(),
@@ -1573,33 +1838,60 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       );
     }
 
-    // 回放模式下播放生成的 catchup URL。
+    final spec = _computeActivePlayerSpec();
+    if (spec == null) {
+      return Center(
+        child: Text(
+          '无法生成回放地址',
+          style: TextStyle(
+            fontFamily: 'NotoSansSC',
+            color: Colors.white,
+          ),
+        ),
+      );
+    }
+
+    // 无缝换台预载期间：新频道在下层静音解码，且不显示自身加载/错误遮罩，
+    // 由上层保留的旧画面继续呈现，直到就绪/超时才接管画面与声音。
+    final preloading = _holdoverPlayer != null;
+
+    return LivePlayer(
+      key: ValueKey(spec.playerKey),
+      url: spec.url,
+      formatHint: spec.formatHint,
+      paused: _isReplayMode && _isReplayPaused,
+      controller: _livePlayerController,
+      headers: spec.headers,
+      muted: preloading,
+      showOverlay: !preloading,
+      onReady: preloading ? () => _commitSeamlessSwitch('ready') : null,
+      onFailed: preloading ? (_) => _commitSeamlessSwitch('failed') : null,
+    );
+  }
+
+  /// 计算当前状态下主播放器应使用的播放参数。
+  ///
+  /// 返回 null 表示回放模式下无法生成回放地址。
+  _HoldoverPlayerSpec? _computeActivePlayerSpec() {
+    final channel = _currentChannel;
+    if (channel == null) return null;
+
     String playUrl;
     VideoFormat formatHint;
     if (_isReplayMode && _currentReplayProgram != null) {
-      final catchupUrl = _buildCatchupUrl(
-        _currentChannel!,
-        _currentReplayProgram!,
-      );
-      if (catchupUrl == null || catchupUrl.isEmpty) {
-        return Center(
-          child: Text(
-            '无法生成回放地址',
-            style: TextStyle(
-              fontFamily: 'NotoSansSC',
-              color: Colors.white,
-            ),
-          ),
-        );
-      }
+      final catchupUrl = _buildCatchupUrl(channel, _currentReplayProgram!);
+      if (catchupUrl == null || catchupUrl.isEmpty) return null;
       playUrl = catchupUrl;
       formatHint = _formatHintFor(playUrl);
     } else {
+      // FCC 快速换台：开关开启且源提供了 FCC 地址时优先用 FCC 地址拉流。
+      playUrl = channel.livePlaybackUrl(preferFcc: _fccFastSwitchEnabled);
       // 根据原始频道 URL 判断直播流格式，代理后的 URL 可能丢失格式后缀。
       // IPTV 列表中的频道地址通常为 HLS/M3U8，无明确后缀时默认按 HLS 处理。
-      formatHint = _formatHintFor(_currentChannel!.url);
-      // LunaTV 与本地直播源均直接播放原始 URL，与 TVBox 行为保持一致。
-      playUrl = _currentChannel!.currentUrl;
+      // 走 FCC 地址时按 FCC 地址本身判断，两者协议/后缀可能不同。
+      formatHint = _formatHintFor(
+        playUrl == channel.currentUrl ? channel.url : playUrl,
+      );
     }
 
     // 若当前直播源配置了播放代理，通过特殊请求头传递给播放器底层。
@@ -1609,12 +1901,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         ? <String, String>{'x-heinplay-proxy-url': sourceProxy}
         : null;
 
-    return LivePlayer(
-      key: ValueKey('${_currentChannel!.name}_$playUrl'),
+    return _HoldoverPlayerSpec(
+      playerKey: '${channel.name}_$playUrl#$_livePlayerNonce',
       url: playUrl,
       formatHint: formatHint,
-      paused: _isReplayMode && _isReplayPaused,
-      controller: _livePlayerController,
       headers: extraHeaders,
     );
   }
@@ -1629,9 +1919,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     // udpxy 等 RTP over HTTP 代理以及原始 RTP/UDP 组播通常传输 MPEG-TS，
     // 需要按普通媒体源播放，而不是 HLS playlist。
     if (lower.contains('/rtp/') ||
+        lower.contains('/rtsp/') ||
         lower.startsWith('rtp://') ||
         lower.startsWith('udp://') ||
         lower.startsWith('rtsp://')) {
+      return VideoFormat.other;
+    }
+    if (lower.contains('.smil')) {
+      // LunaTV 等运营商代理把 RTSP/组播流包装成 http://.../rtsp/...xxx.smil?fcc=...
+      // 实际返回 MPEG-TS 流，不能按 HLS/Smooth 解析，需让 ExoPlayer 自动探测。
       return VideoFormat.other;
     }
     if (lower.contains('.m3u8') || lower.contains('/hls/')) {
@@ -1658,7 +1954,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 显示，再重新启动 [._kMouseHideDelay] 后的自动隐藏。非全屏时仅确保光标
   /// 可见并取消定时器，不启用自动隐藏。
   void _resetMouseTimer() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     _mouseInactivityTimer?.cancel();
     _mouseInactivityTimer = null;
     if (!isWindowsFullScreen) {
@@ -1677,7 +1973,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 隐藏鼠标光标（仅 Windows 全屏时生效）。
   void _hideCursor() {
-    if (!DeviceUtils.isWindows || !isWindowsFullScreen) return;
+    if (!DeviceUtils.isDesktop || !isWindowsFullScreen) return;
     if (!mounted || _isCursorHidden) return;
     WindowsWindowUtils.setCursorVisible(false);
     _isCursorHidden = true;
@@ -1686,7 +1982,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 显示鼠标光标。
   void _showCursor() {
-    if (!DeviceUtils.isWindows || !mounted) return;
+    if (!DeviceUtils.isDesktop || !mounted) return;
     if (!_isCursorHidden) return;
     WindowsWindowUtils.setCursorVisible(true);
     _isCursorHidden = false;
@@ -1707,7 +2003,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Widget _buildGestureLayer() {
-    if (DeviceUtils.isWindows && _isMiniPlayer) {
+    if (DeviceUtils.isDesktop && _isMiniPlayer) {
       return _buildMiniGestureOverlay();
     }
     return Positioned.fill(
@@ -1724,7 +2020,18 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTap: () {
-          if (DeviceUtils.isWindows) {
+          // 后台关闭播放后，任意点击屏幕即继续播放。
+          if (_liveStopped) {
+            // 重挂 LivePlayer（全新实例）重新开播。fvp 原生 surface 闪退问题已通过
+            // “进入后台即卸载 LivePlayer 组件（由 Flutter 走正常平台视图拆除流程释放
+            // 视频纹理），而非在组件仍挂载时手动 dispose 后端”解决。
+            setState(() {
+              _liveStopped = false;
+              _livePlayerNonce++;
+            });
+            return;
+          }
+          if (DeviceUtils.isDesktop) {
             _toggleControlsAndChannelList();
           } else if (DeviceUtils.isMobile) {
             // 手机点击屏幕：列表显示时隐藏列表（点击列表外），否则显示信息。
@@ -1749,7 +2056,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             : null,
         onLongPressEnd: DeviceUtils.isMobile ? (_) => _stopReplayHoldSeek() : null,
         onLongPressCancel: DeviceUtils.isMobile ? _stopReplayHoldSeek : null,
-        onDoubleTap: DeviceUtils.isWindows
+        onDoubleTap: DeviceUtils.isDesktop
             ? () => onWindowsDoubleTap()
             : (DeviceUtils.isMobile && _isReplayMode)
                 ? () => _toggleReplayPause()
@@ -2236,9 +2543,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final isMobile = DeviceUtils.isMobile;
     // Windows 版也显示右侧节目单条幅（支持鼠标点击），TV 版使用右键展开。
     // 手机版显示完整节目单时隐藏“节目单”条幅，由完整节目单替换其位置。
-    final showEpgBanner = (!DeviceUtils.isTv || DeviceUtils.isWindows) &&
+    final showEpgBanner = (!DeviceUtils.isTv || DeviceUtils.isDesktop) &&
         !(isMobile && _showEpgList);
-    final showEpgPanel = _showEpgList && (!DeviceUtils.isTv || DeviceUtils.isWindows);
+    final showEpgPanel = _showEpgList && (!DeviceUtils.isTv || DeviceUtils.isDesktop);
     final panelWidth = _channelListWidth(context);
     final left = isMobile ? _kMobileChannelListMargin : 0.0;
     // 手机端字体自适应：以 360 逻辑宽度为基准，叠加系统字体缩放，随屏幕大小与字体设置自动调整。
@@ -2262,8 +2569,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Windows 版顶部返回与频道信息栏，与频道列表同层级。
-            if (DeviceUtils.isWindows) _buildWindowsChannelListHeader(),
-            if (!DeviceUtils.isWindows)
+            if (DeviceUtils.isDesktop) _buildWindowsChannelListHeader(),
+            if (!DeviceUtils.isDesktop)
               Container(
                 height: 56,
                 padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -2351,7 +2658,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
               alignment: Alignment.centerLeft,
               child: Text(
-                DeviceUtils.isTv && !DeviceUtils.isWindows
+                DeviceUtils.isTv && !DeviceUtils.isDesktop
                     ? '按右键显示完整节目单，确认键换台'
                     : isMobile
                         ? '点击“节目单”查看完整节目单'
@@ -2364,7 +2671,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ),
             ),
             // Windows 版底部控制栏，与频道列表同层级同时显示/隐藏。
-            if (DeviceUtils.isWindows) _buildWindowsChannelListControls(),
+            if (DeviceUtils.isDesktop) _buildWindowsChannelListControls(),
           ],
         ),
         ),
@@ -2842,7 +3149,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     return GestureDetector(
       onTap: () {
         _playChannel(index);
-        if (DeviceUtils.isWindows) {
+        if (DeviceUtils.isDesktop) {
           _hideChannelListAndControls();
         } else {
           _toggleChannelList();
@@ -2928,9 +3235,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         ? Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // 第一列：频道名
+                              // 第一列：频道名（手机端适当加宽，避免 CCTV 等频道名被截断）
                               SizedBox(
-                                width: 76,
+                                width: isMobile ? 120 : 76,
                                 child: Text(
                                   channel.name,
                                   maxLines: 1,
@@ -3448,4 +3755,24 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       ),
     );
   }
+}
+
+/// 一路直播播放器的构建参数。
+///
+/// 既用于描述当前主播放器，也用于在无缝换台期间“冻结”旧频道播放器的参数，
+/// 让它在新频道预载完成前继续以完全相同的配置留在画面最上层播放。
+class _HoldoverPlayerSpec {
+  /// 播放器 widget 的稳定 key。无缝换台依赖它在 Stack 中做带 key 的位置迁移，
+  /// 从而保留播放器 State（底层解码器与视频纹理不重建）。
+  final String playerKey;
+  final String url;
+  final VideoFormat formatHint;
+  final Map<String, String>? headers;
+
+  const _HoldoverPlayerSpec({
+    required this.playerKey,
+    required this.url,
+    required this.formatHint,
+    this.headers,
+  });
 }

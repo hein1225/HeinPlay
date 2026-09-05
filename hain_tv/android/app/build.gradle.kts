@@ -33,6 +33,10 @@ if (tvlegacyKeystorePropertiesFile.exists()) {
 android {
     namespace = "com.heinplay.hain_tv"
     compileSdk = 36
+    // 显式钉 build-tools 版本。本机 Windows SDK 的 build-tools/35.0.0 已被 WSL 侧误装成
+    // Linux 二进制而损坏；这里改用已安装且完好的 36.1.0，避免构建报
+    // "Installed Build Tools revision 35.0.0 is corrupted"。
+    buildToolsVersion = "36.1.0"
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

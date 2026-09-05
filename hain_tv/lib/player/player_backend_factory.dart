@@ -27,8 +27,32 @@ class PlayerBackendFactory {
     if (Platform.isAndroid) {
       fvp.registerWith(options: {
         'platforms': ['android'],
+        'lowLatency': 1,
+        // MDK 全局选项。avformat 值语法为 key1=val1:key2=val2...（冒号分隔），
+        // 之前误用逗号导致选项未生效。lowLatency=1 已由 fvp 内部自动设置
+        // avformat.fflags=+nobuffer、fpsprobesize=0、analyzeduration=100000，
+        // 这里只保留 TLS 校验关闭（兼容自签/非标准端口 IPTV 源）。
         'global': {
-          // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书的 IPTV 源。
+          'avformat': 'tls_verify=0',
+          'ffmpeg.loglevel': 'info',
+        },
+      });
+    }
+  }
+
+  /// 在 HarmonyOS 上注册 fvp（libmdk/ffmpeg 网络栈），作为唯一播放后端。
+  ///
+  /// 鸿蒙（OHOS）没有 Android 运行时，ExoPlayer/VLC 均不可用，视频层只用 fvp。
+  /// fvp 官方支持 HarmonyOS 5.0+，经 OpenGL 渲染。
+  static void _restoreOhosFvp() {
+    if (Platform.operatingSystem == 'ohos') {
+      fvp.registerWith(options: {
+        'platforms': ['ohos'],
+        'lowLatency': 1,
+        // MDK 全局选项。avformat 值语法为 key1=val1:key2=val2...（冒号分隔），
+        // 之前误用逗号导致选项未生效。lowLatency=1 已由 fvp 内部自动设置
+        // avformat.fflags=+nobuffer、fpsprobesize=0、analyzeduration=100000。
+        'global': {
           'avformat': 'tls_verify=0',
           'ffmpeg.loglevel': 'info',
         },
@@ -43,6 +67,7 @@ class PlayerBackendFactory {
         return ExoPlayerBackend();
       case PlayerBackendType.fvp:
         _restoreAndroidFvp();
+        _restoreOhosFvp();
         return FvpBackend();
       case PlayerBackendType.vlc:
         return VlcBackend();
@@ -51,22 +76,34 @@ class PlayerBackendFactory {
 
   /// 各平台默认后端：
   /// - Android / TV：ExoPlayer
-  /// - Windows：fvp
+  /// - Windows / Linux / HarmonyOS：fvp
   static PlayerBackendType get platformDefault {
-    if (Platform.isWindows) return PlayerBackendType.fvp;
+    if (Platform.isWindows || Platform.isLinux || Platform.operatingSystem == 'ohos') {
+      return PlayerBackendType.fvp;
+    }
     return PlayerBackendType.exo;
   }
 
-  /// 直播默认后端：Windows 与 Android 均使用 fvp。
+  /// 直播默认后端：Android / TV 与 Windows 默认 ExoPlayer（Android/TV 点播同款，
+  /// 兼容性最佳）；HarmonyOS / Linux 无 ExoPlayer 运行时，仍用 fvp。
   /// 见 [UserDataService.getLivePlayerBackend] 的默认值说明。
-  static PlayerBackendType get platformLiveDefault => PlayerBackendType.fvp;
+  static PlayerBackendType get platformLiveDefault {
+    if (Platform.operatingSystem == 'ohos' || Platform.isLinux) {
+      return PlayerBackendType.fvp;
+    }
+    return PlayerBackendType.exo;
+  }
 
   /// 当前平台可供用户切换的播放器后端列表。
   /// - Android / TV：ExoPlayer、fvp
   /// - Windows：fvp、vlc
+  /// - Linux / HarmonyOS：仅 fvp（鸿蒙无 ExoPlayer/VLC 运行时）
   static List<PlayerBackendType> get availableBackends {
     if (Platform.isWindows) {
       return [PlayerBackendType.fvp, PlayerBackendType.vlc];
+    }
+    if (Platform.isLinux || Platform.operatingSystem == 'ohos') {
+      return [PlayerBackendType.fvp];
     }
     return [PlayerBackendType.exo, PlayerBackendType.fvp];
   }

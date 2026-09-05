@@ -1,10 +1,10 @@
 # 海因影视
 
-基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端，另有 **Linux（重点服务 Steam Deck 等掌机）与 HarmonyOS NEXT 版本正在开发中**。
 
 | TV / Windows 版界面预览 | 手机版界面预览 |
 | :--- | :--- |
-| ![海因影视 TV / Windows 版界面预览](docs/screenshots/tv_windows.png) | ![海因影视手机版界面预览](docs/screenshots/mobile.png) |
+| ![海因影视 TV / Windows 版界面预览](docs/screenshots/tv_windows.png) | ![海因影视手机版界面预览](docs/screenshots/mobile.jpg) |
 
 ## 功能特性
 
@@ -104,33 +104,63 @@
 - **M3U8 代理设置**：支持配置代理地址，改善部分网络环境播放体验。
 - **M3U8 本地去广告**：参考 TVBox 思路在客户端本地过滤 M3U8 广告，默认关闭，可在播放器设置中开启。
 - **数据缓存**：海报、影视数据本地缓存，离线也能浏览已加载内容。
-- **Leanback 适配**：AndroidManifest 配置 LEANBACK\_LAUNCHER、banner、TV 特性声明。
+- **Leanback 适配**：AndroidManifest 配置 LEANBACK_LAUNCHER、banner、TV 特性声明。
 - **Release 签名**：使用专用密钥库签名，支持应用内增量更新。
+
 
 ## 支持平台
 
-| 平台            | 状态     | 系统要求                  | 说明                                           |
-| ------------- | ------ | --------------------- | -------------------------------------------- |
-| Android TV    | 主要目标平台 | Android 7.0+（API 24+） | 支持 LEANBACK\_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。 |
-| Android tvLegacy | 已发布    | Android 5.0+（API 21+） | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
-| Android       | 已发布    | Android 7.0+（API 24+） | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载 |
-| Web           | 支持     | 现代浏览器                 | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载            |
-| Windows       | 已发布    | Windows 10 1809+      | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`            |
-| Linux         | 计划中    | —                     | 桌面端版本后续支持                                    |
-| iOS           | 计划中    | —                     | 移动端版本后续支持                                    |
+| 平台               | 状态     | 系统要求                    | 说明                                                              |
+| ---------------- | ------ | ----------------------- | --------------------------------------------------------------- |
+| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。      |
+| Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
+| Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                    |
+| Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                               |
+| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`                               |
+| Linux            | 测试期    | 桌面 Linux（x86_64）        | 桌面端版本开发中，**重点服务于 Steam Deck 等掌机 / 手持设备**，使用 `fvp` 播放后端。         |
+| HarmonyOS NEXT   | 测试期    | HarmonyOS NEXT（手机 / 平板） | 鸿蒙版开发中，仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链。      |
+| iOS              | 计划中    | —                       | 移动端版本后续支持                                                       |
+
+### Linux / HarmonyOS NEXT 版开发进展
+
+这两个平台目前处于**开发测试阶段**，尚未进入正式发布与自动构建（CI）：
+
+- **Linux 版**：面向桌面 Linux 发行版（x86_64），**重点服务于 Steam Deck 等掌机 / 手持设备**，也适用于普通 Linux 桌面；播放后端复用桌面端的 `fvp`（libmdk），延续桌面端的播放与交互逻辑。
+- **HarmonyOS NEXT 版**：面向 HarmonyOS NEXT（手机 / 平板），仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链构建；主流程已打通，仍在持续完善中。
+
+两者均可在本地手动构建，但尚未提供 Release 安装包；正式版发布后会补充到上方「Release 文件说明」。
 
 ### Release 文件说明
 
-| 文件名                                   | 适用设备              | 系统要求                  | 说明                               |
-| ------------------------------------- | ----------------- | --------------------- | -------------------------------- |
-| `heinplay-1.3.3-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
-| `heinplay-1.3.3-tvLegacy.apk`            | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。 |
-| `heinplay-1.3.3-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。               |
-| `heinplay-1.3.3-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                       |
+| 文件名                                   | 适用设备              | 系统要求                  | 说明                                               |
+| ------------------------------------- | ----------------- | --------------------- | ------------------------------------------------ |
+| `heinplay-1.3.4-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，请尝试 tvLegacy。 |
+| `heinplay-1.3.4-tvLegacy.apk`         | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。    |
+| `heinplay-1.3.4-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                               |
+| `heinplay-1.3.4-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                       |
 
 ## 更新日志
 
 <details open>
+
+<summary><strong>1.3.4</strong></summary>
+
+### 1.3.4
+
+- **直播换台优化**：直播设置新增「无缝换台」（双路预载换台，默认关闭）与「FCC 快速换台」（优先 FCC 地址拉流，默认关闭）两个开关，换台更顺滑。
+- **直播源 EXO 音频软解增强**：Android 直播路径接入 ffmpeg 音频软解（FFmpegAudioRenderer），可解码 MediaCodec 硬解不支持的音频编码（如 mp2 / AC3 / EAC3 / AAC 等），此前因音频编码不支持而黑屏、卡顿或无声音的直播源现已可正常播放。
+- **修复 rtsp 直播源无法播放**：新增 rtsp 协议源识别，ExoPlayer 下可正常播放此前失败的 rtsp 源。
+- **修复直播源缓存未按设置时间自动更新**：缓存写入不再重置过期时间，到期才回源刷新，确保按设置周期更新。
+- **修复首页「继续播放」与「我的」播放记录重复同步**：全平台两者现已共用同一份本地播放记录。
+- **直播回放拖动 / 长按快进快退优化**：定位节流，长时间按住不再卡死、定位更跟手。
+- **直播网络源加载失败自动重试**：进入频道初始化失败时自动重试最多 3 次（间隔约 400ms），缓解源站调度到异常节点导致的播放失败。
+- **直播默认播放器后端调整**：Android / TV 与 Windows 直播默认改回 ExoPlayer（兼容性最佳），Linux / HarmonyOS 仍使用 fvp；个别设备连源超时可在「直播设置 → 直播默认播放器」切回 fvp。
+- **版本号统一**：全项目更新至 1.3.4（build +22），Release 产物命名同步为 `heinplay-1.3.4-tv.apk`、`heinplay-1.3.4-tvLegacy.apk`、`heinplay-1.3.4-mobile.apk`、`heinplay-1.3.4-windows-portable.zip`。
+
+</details>
+
+<details>
+
 <summary><strong>1.3.3</strong></summary>
 
 ### 1.3.3
@@ -146,6 +176,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.3.2</strong></summary>
 
 ### 1.3.2
@@ -157,6 +188,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.3.1</strong></summary>
 
 ### 1.3.1
@@ -174,6 +206,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.3.0</strong></summary>
 
 ### 1.3.0
@@ -188,6 +221,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.2.0</strong></summary>
 
 ### 1.2.5
@@ -246,6 +280,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.1.0</strong></summary>
 
 ### 1.1.6
@@ -308,6 +343,7 @@
 </details>
 
 <details>
+
 <summary><strong>1.0.0</strong></summary>
 
 ### 1.0.3
@@ -370,15 +406,16 @@
 - **主题色选择**：在设置中提供多套主题色方案，允许用户自定义应用强调色。
 - **TVBox 订阅源支持**：尝试解析 TVBox 标准订阅源（如 JSON、TXT 格式），将其作为影视播放源导入与切换。
 - **Windows 版本优化**：持续优化桌面端焦点、快捷键与播放体验。
-- **Linux / iOS 版本**：后续计划支持 Linux 桌面端与 iOS 移动端。
+- **iOS 版本**：后续计划支持 iOS 移动端。
+- **Linux / HarmonyOS NEXT 版**：已进入开发测试阶段，后续将持续完善播放、焦点交互与发布流程（见上方「Linux / HarmonyOS NEXT 版开发进展」）。
 
 ## 支持我们
 
 如果这个软件对你有帮助，欢迎请我们喝杯奶茶！你的支持是我们持续开发的动力。
 
-| 支付宝 | 微信 |
-| :---: | :---: |
-| ![支付宝赞赏码](docs/alipay_qr.jpg) | ![微信赞赏码](docs/wechat_qr.png) |
+|   支付宝  |   微信  |
+| :----: | :---: |
+| 支付宝赞赏码 | 微信赞赏码 |
 
 ## 注意事项
 

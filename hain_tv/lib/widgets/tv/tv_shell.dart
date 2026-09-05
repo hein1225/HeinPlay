@@ -94,6 +94,46 @@ class _TvShellState extends State<TvShell> {
     }
   }
 
+  /// 非首页标签按需挂载：仅当选中时才构建并挂载，切走即卸载释放内存。
+  /// 首页（index 3）由 _TvShellState 常驻，不在本方法内。
+  Widget _buildTab(int index) {
+    switch (index) {
+      case 0:
+        return ProfileScreen(key: _profileScreenKey);
+      case 1:
+        return SearchScreen(key: _searchScreenKey);
+      case 2:
+        return TvLiveScreen(
+          key: _liveScreenKey,
+          onRequestNavFocus: () {
+            _navFocusNodes[2].requestFocus();
+          },
+        );
+      case 4:
+        return CategoryScreen(
+          key: _movieScreenKey,
+          kind: 'movie',
+          title: '电影',
+        );
+      case 5:
+        return CategoryScreen(key: _tvScreenKey, kind: 'tv', title: '电视剧');
+      case 6:
+        return CategoryScreen(
+          key: _showScreenKey,
+          kind: 'show',
+          title: '综艺',
+        );
+      case 7:
+        return CategoryScreen(
+          key: _animeScreenKey,
+          kind: 'anime',
+          title: '动漫',
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
   void _moveNavFocus(int direction) {
     final newIndex = (_selectedIndex + direction).clamp(0, _items.length - 1);
     if (newIndex != _selectedIndex) {
@@ -428,34 +468,18 @@ class _TvShellState extends State<TvShell> {
               ),
               Container(height: 1, color: AppColors.border),
               Expanded(
-                child: IndexedStack(
-                  index: _selectedIndex,
-                  children: [
-                    ProfileScreen(key: _profileScreenKey),
-                    SearchScreen(key: _searchScreenKey),
-                    TvLiveScreen(
-                    key: _liveScreenKey,
-                    onRequestNavFocus: () {
-                      _navFocusNodes[2].requestFocus();
-                    },
-                  ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    // 首页常驻底层：切回首页零重建、瞬时响应，避免廉价安卓盒子
+                    // （常 1-2GB 内存）在重海报页重建时卡死/ANR。其余标签仅选中时
+                    // 挂载（最多同时 2 个标签常驻），切走即卸载释放内存。
                     HomeScreen(key: _homeScreenKey),
-                    CategoryScreen(
-                      key: _movieScreenKey,
-                      kind: 'movie',
-                      title: '电影',
-                    ),
-                    CategoryScreen(key: _tvScreenKey, kind: 'tv', title: '电视剧'),
-                    CategoryScreen(
-                      key: _showScreenKey,
-                      kind: 'show',
-                      title: '综艺',
-                    ),
-                    CategoryScreen(
-                      key: _animeScreenKey,
-                      kind: 'anime',
-                      title: '动漫',
-                    ),
+                    if (_selectedIndex != 3)
+                      Container(
+                        color: AppColors.bgApp,
+                        child: _buildTab(_selectedIndex),
+                      ),
                   ],
                 ),
               ),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/models/account_info.dart';
+import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -127,6 +128,9 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
   }
 
   Future<void> _refreshHomeAfterAccountSwitch() async {
+    // 清除残留的预加载快照，避免新账号首页消费旧账号缓存数据；标记已重置，
+    // 首页重建时会以当前账号为准重新同步/拉取。
+    HomeDataPreload.clear();
     await UserDataService.resetHomeFirstEntryCompleted();
     if (mounted) {
       Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);

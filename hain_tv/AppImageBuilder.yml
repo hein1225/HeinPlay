@@ -1,0 +1,27 @@
+version: 1
+AppDir:
+  path: ./build/linux/x64/release/bundle
+  app_info:
+    id: com.heinplay.hain_tv
+    name: 海因影视
+    # 注意：icon 必须是「图标名」（不带路径/扩展名），appimage-builder 的 IconBundler
+    # 只在 AppDir 的 usr/share/icons、usr/share/pixmaps 等标准目录按名搜索，
+    # 不会把此值当作相对/绝对路径去解析。真正的图标文件由构建脚本在打包前
+    # 拷贝到 bundle 的 usr/share/icons/hicolor/256x256/apps/mo_ico.png。
+    icon: mo_ico
+    version: ${APP_VERSION}
+    exec: hain_tv
+    exec_args: $@
+  # 说明：不使用 AppDir.apt（apt 打包运行时库需要 Docker + apt-key；新版 Ubuntu/WSL
+  # 默认无 apt-key，会直接报 CommandNotFoundError）。当前改由 flutter bundle 自带库 +
+  # 宿主机系统库（GTK 等回退到系统路径），本机/同发行版机器可直接运行。
+  # 若日后要出"完全可移植"的 AppImage，需在具备 Docker 与 apt-key 的环境（如 CI）再加回此段。
+  files:
+    exclude:
+      - usr/share/man
+      - usr/share/doc/*/README.*
+AppImage:
+  arch: x86_64
+  # 更新信息：发布后可由软件内更新检测复用（与 GitHub Releases 对应）。
+  # 注意：输出文件名由 appimage-builder 自动生成，构建脚本会将其重命名为固定名称。
+  update-information: gh-releases-zsync:heinplay/hain_tv/${APP_VERSION}/heinplay-linux-x86_64.AppImage.zsync

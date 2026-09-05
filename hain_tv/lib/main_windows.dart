@@ -30,7 +30,13 @@ void main() async {
   fvp.registerWith(options: {
     'platforms': ['windows'],
     'global': {
-      'avformat': 'tls_verify=0',
+      // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书源。
+      // analyzeduration=500000(0.5s)/probesize=2MB：缩短 FFmpeg 媒体探测窗口。
+      // 直播组播(RTP over HTTP)流默认要等满 5s analyzeduration 才“分析完成”就绪，
+      // 导致换台约 5 秒；调小后首次 initialize 即走低延迟探测，换台降至 <1s，
+      // 与 VLC 等播放器一致。直播低延迟的 +nobuffer 等选项仍由 setBufferRange 在
+      // open 后补充（fvp 内部 _lowLatency 路径）。
+      'avformat': 'tls_verify=0,analyzeduration=500000,probesize=2097152',
       'ffmpeg.loglevel': 'info',
     },
   });

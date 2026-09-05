@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:fvp/fvp.dart';
 import 'package:video_player/video_player.dart';
 
 import '../services/user_data_service.dart';
@@ -36,6 +35,11 @@ class FvpBackend implements VideoPlayerBackend {
   }) async {
     debugPrint('FvpBackend open: $url isLive=$isLive');
     WindowsLogger.log('FvpBackend', 'open url=$url proxyMode=$proxyMode isLive=$isLive');
+    // 在 initialize() 之前就确定低延迟缓冲配置，传入 _impl.open 于 prepare 前应用，
+    // 避免首开沿用 libmdk 默认缓冲窗口而加载慢（与 exo 差距明显的主因）。
+    final preInitBufferConfig = isLive
+        ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
+        : (bufferConfig ?? await BufferProfileConfig.current());
     try {
       await _impl.open(
         url,
@@ -46,30 +50,15 @@ class FvpBackend implements VideoPlayerBackend {
         bufferConfig: bufferConfig,
         isLive: isLive,
         formatHint: formatHint,
+        preInitBufferConfig: preInitBufferConfig,
       );
-      final effectiveConfig = isLive
-          ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
-          : (bufferConfig ?? await BufferProfileConfig.current());
-      final controller = _impl.controller;
-      if (controller != null) {
-        try {
-          controller.setBufferRange(
-            min: effectiveConfig.fvpMinMs,
-            max: effectiveConfig.fvpMaxMs,
-            drop: effectiveConfig.fvpDrop,
-          );
-          debugPrint(
-            'FvpBackend 已应用缓冲配置: min=${effectiveConfig.fvpMinMs}ms max=${effectiveConfig.fvpMaxMs}ms drop=${effectiveConfig.fvpDrop}',
-          );
-          WindowsLogger.log(
-            'FvpBackend',
-            '缓冲配置已应用: min=${effectiveConfig.fvpMinMs}ms max=${effectiveConfig.fvpMaxMs}ms',
-          );
-        } catch (e) {
-          debugPrint('FvpBackend setBufferRange 失败: $e');
-          WindowsLogger.log('FvpBackend', 'setBufferRange 失败: $e');
-        }
-      }
+      debugPrint(
+        'FvpBackend 已预置缓冲配置(pre-init): min=${preInitBufferConfig.fvpMinMs}ms max=${preInitBufferConfig.fvpMaxMs}ms drop=${preInitBufferConfig.fvpDrop}',
+      );
+      WindowsLogger.log(
+        'FvpBackend',
+        '缓冲配置已预置(pre-init): min=${preInitBufferConfig.fvpMinMs}ms max=${preInitBufferConfig.fvpMaxMs}ms',
+      );
       WindowsLogger.log('FvpBackend', 'open 成功: $url');
     } catch (e, stack) {
       debugPrint('FvpBackend open error: $e');

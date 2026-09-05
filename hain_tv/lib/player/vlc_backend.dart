@@ -199,33 +199,53 @@ class VlcBackend implements VideoPlayerBackend {
     }
   }
 
+  /// 安全调用 VLC controller 方法。
+  ///
+  /// open() 后立即调用 play/pause 时，VlcPlayer widget 可能尚未 attach，
+  /// controller 会抛出 StateError('The controller is not attached to a VlcPlayer.')。
+  /// 该状态是 transient 的：setMedia(autoPlay: true) 已让底层 VLC 开始工作，
+  /// 等 widget attach 后画面会自动同步，因此忽略该错误，避免上层把正常播放误判为失败。
+  Future<void> _safeVlcCall(Future<void> Function(VlcPlayerController c) call) async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await call(controller);
+    } on StateError catch (e) {
+      if (e.message.contains('not attached to a VlcPlayer')) {
+        WindowsLogger.log('VlcBackend', '忽略 controller 未 attach 的 transient 调用');
+        return;
+      }
+      rethrow;
+    }
+  }
+
   @override
   Future<void> play() async {
-    await _controller?.play();
+    await _safeVlcCall((c) => c.play());
     _playingController.add(true);
   }
 
   @override
   Future<void> pause() async {
-    await _controller?.pause();
+    await _safeVlcCall((c) => c.pause());
     _playingController.add(false);
   }
 
   @override
   Future<void> seek(Duration position) async {
-    await _controller?.seekTo(position);
+    await _safeVlcCall((c) => c.seekTo(position));
     _positionController.add(position);
   }
 
   @override
   Future<void> setSpeed(double speed) async {
-    await _controller?.setPlaybackSpeed(speed);
+    await _safeVlcCall((c) => c.setPlaybackSpeed(speed));
   }
 
   @override
   Future<void> setVolume(double volume) async {
     // VLC 音量范围 0..200，100 为正常音量。
-    await _controller?.setVolume((volume * 100).round().clamp(0, 200));
+    await _safeVlcCall((c) => c.setVolume((volume * 100).round().clamp(0, 200)));
   }
 
   @override

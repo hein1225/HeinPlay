@@ -92,6 +92,41 @@ class _WindowsShellState extends State<WindowsShell> {
     }
   }
 
+  /// 非首页标签按需挂载：仅当选中时才构建并挂载，切走即卸载释放内存。
+  /// 首页（index 3）由 _WindowsShellState 常驻，不在本方法内。
+  Widget _buildTab(int index) {
+    switch (index) {
+      case 0:
+        return ProfileScreen(key: _profileScreenKey);
+      case 1:
+        return SearchScreen(key: _searchScreenKey);
+      case 2:
+        return WindowsLiveScreen(key: _liveScreenKey);
+      case 4:
+        return CategoryScreen(
+          key: _movieScreenKey,
+          kind: 'movie',
+          title: '电影',
+        );
+      case 5:
+        return CategoryScreen(key: _tvScreenKey, kind: 'tv', title: '电视剧');
+      case 6:
+        return CategoryScreen(
+          key: _showScreenKey,
+          kind: 'show',
+          title: '综艺',
+        );
+      case 7:
+        return CategoryScreen(
+          key: _animeScreenKey,
+          kind: 'anime',
+          title: '动漫',
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
   void _handleBack() {
     // 先让已注册的页面拦截器处理（如分类页关闭筛选面板）
     if (BackInterceptor.intercept()) return;
@@ -258,29 +293,18 @@ class _WindowsShellState extends State<WindowsShell> {
               ),
               Container(height: 1, color: AppColors.border),
               Expanded(
-                child: IndexedStack(
-                  index: _selectedIndex,
-                  children: [
-                    ProfileScreen(key: _profileScreenKey),
-                    SearchScreen(key: _searchScreenKey),
-                    WindowsLiveScreen(key: _liveScreenKey),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    // 首页常驻底层：切回首页零重建、瞬时响应；其余标签仅选中时挂载
+                    // （最多同时 2 个常驻），切走即卸载释放内存，规避 IndexedStack
+                    // 8 标签全常驻的内存压力。
                     HomeScreen(key: _homeScreenKey),
-                    CategoryScreen(
-                      key: _movieScreenKey,
-                      kind: 'movie',
-                      title: '电影',
-                    ),
-                    CategoryScreen(key: _tvScreenKey, kind: 'tv', title: '电视剧'),
-                    CategoryScreen(
-                      key: _showScreenKey,
-                      kind: 'show',
-                      title: '综艺',
-                    ),
-                    CategoryScreen(
-                      key: _animeScreenKey,
-                      kind: 'anime',
-                      title: '动漫',
-                    ),
+                    if (_selectedIndex != 3)
+                      Container(
+                        color: AppColors.bgApp,
+                        child: _buildTab(_selectedIndex),
+                      ),
                   ],
                 ),
               ),

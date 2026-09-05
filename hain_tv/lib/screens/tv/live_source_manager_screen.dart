@@ -321,7 +321,7 @@ class _TvLiveSourceManagerScreenState
     return ReorderableListView.builder(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       itemCount: _allConfigs.length,
-      onReorderItem: _reorderConfigs,
+      onReorder: _reorderConfigs,
       itemBuilder: (context, index) {
         final config = _allConfigs[index];
         return _buildConfigCard(config, index);
@@ -374,13 +374,30 @@ class _TvLiveSourceManagerScreenState
     );
   }
 
+  // 焦点进入列表项时，把该项滚入可视区，避免直播源多时焦点移出屏幕外不可见。
+  void _ensureVisibleOnFocus(BuildContext context, bool focused) {
+    if (focused) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) {
+          Scrollable.ensureVisible(
+            context,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: 0.5,
+          );
+        }
+      });
+    }
+  }
+
   Widget _buildConfigCard(LiveSourceConfig config, int index) {
-    return Container(
+    return Builder(
       key: ValueKey(config.id),
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.xs,
-      ),
+      builder: (itemContext) => Container(
+        margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
@@ -396,6 +413,7 @@ class _TvLiveSourceManagerScreenState
               onTap: config.isBuiltin
                   ? null
                   : () => _showEditDialog(config: config),
+              onFocusChange: (focused) => _ensureVisibleOnFocus(itemContext, focused),
               padding: EdgeInsets.zero,
               child: Row(
                 children: [
@@ -472,6 +490,7 @@ class _TvLiveSourceManagerScreenState
           ),
           FocusableWidget(
             onTap: () => _clearSourceCache(config),
+            onFocusChange: (focused) => _ensureVisibleOnFocus(itemContext, focused),
             padding: const EdgeInsets.all(AppSpacing.xs),
             child: Container(
               padding: const EdgeInsets.symmetric(
@@ -501,7 +520,8 @@ class _TvLiveSourceManagerScreenState
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 }
 

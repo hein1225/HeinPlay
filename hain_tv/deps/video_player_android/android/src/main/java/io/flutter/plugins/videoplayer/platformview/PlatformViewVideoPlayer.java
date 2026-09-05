@@ -13,6 +13,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import java.util.Map;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
@@ -129,6 +130,16 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
           // 在尝试获取 WakeLock 时会直接调用该方法导致 NoSuchMethodError 闪退。
           if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             builder.setWakeMode(C.WAKE_MODE_NONE);
+          }
+          // 直播专用：请求带 x-heinplay-soft-audio 时，允许 ffmpeg 扩展音频渲染器
+          // (EXTENSION_RENDERER_MODE_ON，排在 MediaCodec 后，仅硬解不了 mp2 等时才回退软解)。
+          // 点播不带该标志 → 默认 EXTENSION_RENDERER_MODE_OFF，纯硬解、不装 ffmpeg。
+          if (options.enableFfmpegAudioSoftDecode) {
+            DefaultRenderersFactory renderersFactory =
+                new DefaultRenderersFactory(context);
+            renderersFactory.setExtensionRendererMode(
+                DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+            builder.setRenderersFactory(renderersFactory);
           }
           builder
               .setTrackSelector(trackSelector)

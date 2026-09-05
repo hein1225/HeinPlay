@@ -19,6 +19,13 @@ class LiveChannel {
   /// 回放保留天数。
   final int? catchupDays;
 
+  /// FCC（Fast Channel Change）快速换台地址。
+  ///
+  /// 部分 IPTV 直播源会在 `#EXTINF` 属性中提供 FCC/单播加速地址
+  /// （常见属性名 `fcc`、`fcc-url`、`fcc-src`、`fcc-server` 等），
+  /// 用它拉流可显著缩短换台首帧时间。为空表示该频道不支持 FCC。
+  final String? fccUrl;
+
   /// 当前 EPG 节目对象（运行时，不参与序列化）。
   EpgProgram? currentProgram;
 
@@ -57,6 +64,7 @@ class LiveChannel {
     this.catchup,
     this.catchupSource,
     this.catchupDays,
+    this.fccUrl,
     this.currentProgram,
     this.programs = const [],
     this.currentBackupIndex = 0,
@@ -151,6 +159,7 @@ class LiveChannel {
       catchupDays: json['catchupDays'] is int
           ? json['catchupDays'] as int
           : int.tryParse(json['catchupDays']?.toString() ?? ''),
+      fccUrl: json['fccUrl']?.toString() ?? json['fcc_url']?.toString(),
       programs: (json['programs'] as List<dynamic>?)
               ?.map((e) => EpgProgram.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -171,6 +180,7 @@ class LiveChannel {
       'catchup': catchup,
       'catchupSource': catchupSource,
       'catchupDays': catchupDays,
+      'fccUrl': fccUrl,
       // 缓存完整节目单，退出重进后可立即恢复显示，无需再次拉取 EPG。
       'programs': programs.map((p) => p.toJson()).toList(),
     };
@@ -188,6 +198,7 @@ class LiveChannel {
     String? catchup,
     String? catchupSource,
     int? catchupDays,
+    String? fccUrl,
     EpgProgram? currentProgram,
     List<EpgProgram>? programs,
     int? currentBackupIndex,
@@ -204,6 +215,7 @@ class LiveChannel {
       catchup: catchup ?? this.catchup,
       catchupSource: catchupSource ?? this.catchupSource,
       catchupDays: catchupDays ?? this.catchupDays,
+      fccUrl: fccUrl ?? this.fccUrl,
       currentProgram: currentProgram ?? this.currentProgram,
       programs: programs ?? this.programs,
       currentBackupIndex: currentBackupIndex ?? this.currentBackupIndex,
@@ -222,6 +234,25 @@ class LiveChannel {
 
   /// 是否存在多个播放地址。
   bool get hasMultipleUrls => backupUrls.isNotEmpty;
+
+  /// 该频道是否提供了可用的 FCC 快速换台地址。
+  bool get hasFcc {
+    final fcc = fccUrl?.trim();
+    return fcc != null && fcc.isNotEmpty;
+  }
+
+  /// 直播实际播放地址。
+  ///
+  /// [preferFcc] 为 true（FCC 快速换台开关开启）且频道提供了 FCC 地址时，
+  /// 返回 FCC 地址；否则回退到 [currentUrl]。
+  /// 仅在使用主 URL（未切换到备选源）时才启用 FCC——用户手动切源说明主源
+  /// 有问题，此时应老老实实用备选地址。
+  String livePlaybackUrl({bool preferFcc = false}) {
+    if (preferFcc && hasFcc && currentBackupIndex <= 0) {
+      return fccUrl!.trim();
+    }
+    return currentUrl;
+  }
 }
 
 /// EPG 节目单条目。

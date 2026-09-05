@@ -1,7 +1,11 @@
 ﻿#Requires -Version 5.1
 # HeinPlay 全平台构建脚本
 # 功能：菜单选择 flutter doctor、依赖检查、Windows 插件检查、Android 签名完整性检查
-#       构建 TV / tvLegacy / 手机 / Windows / 全部版本，汇总结果、日志路径与产物路径
+#       构建 TV / tvLegacy / 手机 / Windows / Linux(AppImage) / 鸿蒙(HAP) / 全部版本，汇总结果、日志路径与产物路径
+# 说明：Linux 版为 AppImage，需在 Linux 环境或 WSL2 中构建（Flutter 不支持 Windows 交叉编译 Linux）。
+#       在 Windows 上运行时会自动尝试通过 WSL2 执行 build_linux_appimage.sh；未安装 WSL 则跳过并提示。
+#       鸿蒙版走 scripts/build_hap.sh（Git Bash + DevEco SDK），需要 DevEco 命令行工具链与本机签名材料；
+#       【默认不参与「1.构建全部」】，需通过菜单 11/12 或 -IncludeHap 显式启用。
 
 [CmdletBinding()]
 param(
@@ -10,6 +14,8 @@ param(
     [switch]$SkipTv,
     [switch]$SkipTvlegacy,
     [switch]$SkipWindows,
+    [switch]$SkipLinux,
+    [switch]$IncludeHap,
     [switch]$Clean
 )
 
@@ -34,6 +40,15 @@ function Write-Warn($msg) {
 
 function Write-Err($msg) {
     Write-Host "[ERR] $msg" -ForegroundColor Red
+}
+
+function Write-LocalLink($label, $path) {
+    # 输出可点击的 file:// 超链接：点击由资源管理器直接打开目录/文件，
+    # 在用户终端中原即可点击、且不会残留无法关闭的 cmd 窗口。
+    # 注意：此前为“规避浏览器拦截”引入的 OSC 8 超链接反而在点击时残留关不掉的 cmd，
+    # 已弃用；还原为最初的 file:// 写法。
+    $uri = [System.Uri]::new((Resolve-Path $path).Path).AbsoluteUri
+    Write-Host "$label $uri" -ForegroundColor Cyan
 }
 
 function Invoke-FlutterDoctor {
@@ -281,7 +296,7 @@ function Invoke-BuildScript($name, $scriptPath) {
     Write-Section "$name 构建"
     if (-not (Test-Path $scriptPath)) {
         Write-Err "构建脚本不存在: $scriptPath"
-        return @{ Success = $false; LogPath = $null }
+        return @{ Success = $false; Skipped = $false; LogPath = $null }
     }
 
     New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
@@ -297,13 +312,90 @@ function Invoke-BuildScript($name, $scriptPath) {
         $utf8Bom = New-Object System.Text.UTF8Encoding $true
         [System.IO.File]::AppendAllText($logPath, "`n=== $name 构建开始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`n", $utf8Bom)
 
-        & $scriptPath 2>&1 | ForEach-Object {
-            $line = $_
-            Write-Host $line
-            [System.IO.File]::AppendAllText($logPath, "$line`n", $utf8Bom)
+        # 判断是否为 shell 脚本（Linux/macOS 构建，如 build_linux_appimage.sh）。
+        # PowerShell 脚本（.ps1）直接调用；shell 脚本在 Windows 上优先走 WSL2，
+        # 在原生 Linux 主机上走 bash。
+        $isShell = $scriptPath -match '\.sh$'
+        $runBlock = $null
+        $ok = $true
+        $skipped = $false
+        $wslRan = $false
+
+        if ($isShell) {
+            if ($IsWindows -or ($env:OS -match 'Windows')) {
+                $wsl = Get-Command wsl -ErrorAction SilentlyContinue
+                if (-not $wsl) {
+                    Write-Warn "$name 跳过：当前为 Windows 环境且未检测到 WSL，无法交叉编译 Linux 版。请在 Linux 主机 / CI 构建，或使用 -SkipLinux 跳过。"
+                    $ok = $false
+                    $skipped = $true
+                }
+                else {
+                    # 探测 WSL 是否已配置可用的 Linux 发行版。仅安装 WSL 但未装发行版时，
+                    # `wsl -e` 会打印安装指引并以非 0 退出，不能用于构建。
+                    wsl -e true 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warn "$name 跳过：WSL 已安装但未配置可用的 Linux 发行版。请先 `wsl --install -d Ubuntu` 安装发行版，并在其中安装 Flutter / appimage-builder；或使用 -SkipLinux 跳过。CI 也会产出 Linux AppImage。"
+                        $ok = $false
+                        $skipped = $true
+                    }
+                    else {
+                        # 将 Windows 绝对路径转换为 WSL 路径。
+                        # 关键点：WSL 默认把 Windows 盘挂载为小写（/mnt/e），而 Linux 文件系统区分大小写，
+                        # 因此盘符必须转为小写，否则会报 "No such file or directory"。
+                        # 优先用 wslpath -u（把 Windows 路径转成 WSL 路径，并遵循 WSL 实际挂载配置）；
+                        # 失败再手动映射并强制小写盘符。路径统一用正斜杠，避免反斜杠在 WSL 中被转义。
+                        $winPathFs = $scriptPath -replace '\\', '/'
+                        $wslScript = (wsl -e wslpath -u "$winPathFs" 2>$null)
+                        if (-not $wslScript) {
+                            $wslScript = ($winPathFs -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() })
+                        }
+                        # 校验转换后的脚本在 WSL 中确实存在，提前给出可诊断的错误，避免神秘失败。
+                        $wslFileOk = (wsl -e bash -c "test -f '$wslScript' && echo yes || echo no" 2>$null)
+                        if ($wslFileOk -ne 'yes') {
+                            Write-Err "$name 构建失败：WSL 中找不到构建脚本 $wslScript（原 Windows 路径 $scriptPath）。请确认该磁盘已在 WSL 中挂载（默认位于 /mnt/<小写盘符>）。"
+                            $ok = $false
+                            $wslRan = $true
+                        }
+                        else {
+                            # 用 Start-Process 重定向原生输出到日志，避免 PowerShell 编解码产生乱码/空字节；
+                            # 同时实时回显到控制台。
+                            $tmpOut = Join-Path $env:TEMP ("hein_linux_out_$(Get-Random).txt")
+                            $tmpErr = Join-Path $env:TEMP ("hein_linux_err_$(Get-Random).txt")
+                            $proc = Start-Process -FilePath 'wsl' -ArgumentList '-e', 'bash', $wslScript -NoNewWindow -Wait -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr -PassThru
+                            if (Test-Path $tmpOut) { [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpOut, [System.Text.Encoding]::UTF8), $utf8Bom) }
+                            if (Test-Path $tmpErr) { [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpErr, [System.Text.Encoding]::UTF8), $utf8Bom) }
+                            Get-Content -Path $tmpOut -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+                            Get-Content -Path $tmpErr -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+                            Remove-Item $tmpOut, $tmpErr -Force -ErrorAction SilentlyContinue
+                            $ok = ($proc.ExitCode -eq 0)
+                            $wslRan = $true
+                        }
+                    }
+                }
+            }
+            else {
+                $bashCmd = Get-Command bash -ErrorAction SilentlyContinue
+                if (-not $bashCmd) {
+                    Write-Err "$name 构建失败：未检测到 bash，无法执行 Linux 构建脚本。"
+                    $ok = $false
+                }
+                else {
+                    $runBlock = { & bash "$scriptPath" }
+                }
+            }
+        }
+        else {
+            $runBlock = { & $scriptPath }
         }
 
-        $ok = ($LASTEXITCODE -eq 0)
+        if (-not $wslRan -and $runBlock) {
+            & $runBlock 2>&1 | ForEach-Object {
+                $line = $_
+                Write-Host $line
+                [System.IO.File]::AppendAllText($logPath, "$line`n", $utf8Bom)
+            }
+            $ok = ($LASTEXITCODE -eq 0)
+        }
     }
     catch {
         $errLine = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') EXCEPTION: $_"
@@ -327,7 +419,141 @@ function Invoke-BuildScript($name, $scriptPath) {
             Write-Host '--- 日志结束 ---' -ForegroundColor Yellow
         }
     }
-    return @{ Success = $ok; LogPath = $logPath }
+                        return @{ Success = $ok; Skipped = $skipped; LogPath = $logPath }
+                    }
+
+function Invoke-BuildHap {
+    # 鸿蒙(HarmonyOS NEXT) HAP 构建。
+    # 说明：
+    #   1) 只能在本机 Windows 上经 Git Bash 执行 scripts/build_hap.sh（脚本内会导出
+    #      DevEco node/ohpm/flutter 等环境并调用 `flutter build hap`）；
+    #      绝不能走 WSL（Linux 无 DevEco 工具链）。
+    #   2) flutter 工具链硬编码查找 <工程>/ohos。鸿蒙工程实体已统一为 harmony_haintv/，
+    #      故调用前若缺 ohos 会自动创建临时 junction（ohos -> harmony_haintv），
+    #      构建结束后删除（仅删链接，不影响 harmony_haintv 实体与产物）。
+    #   3) 鸿蒙为 opt-in 构建（测试期），不会因任何「构建全部」自动触发。
+
+    $name = '鸿蒙版'
+    Write-Section "$name 构建"
+    New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+    $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $logPath = Join-Path $logsDir "build_HarmonyOS_${timestamp}.log"
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::AppendAllText($logPath, "`n=== $name 构建开始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`n", $utf8Bom)
+
+    $hapProject = Join-Path $hainDir 'harmony_haintv'
+    $buildScript = Join-Path $hainDir 'scripts\build_hap.sh'
+    if (-not (Test-Path $hapProject)) {
+        Write-Err "鸿蒙工程目录不存在: $hapProject（应包含 AppScope/entry/oh-package.json5）"
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
+    if (-not (Test-Path $buildScript)) {
+        Write-Err "构建脚本不存在: $buildScript"
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
+
+    # 定位 Git Bash
+    $bashExe = $null
+    $cmdBash = Get-Command bash -ErrorAction SilentlyContinue
+    if ($cmdBash) { $bashExe = $cmdBash.Source }
+    if (-not $bashExe) {
+        foreach ($p in @("$env:ProgramFiles\Git\bin\bash.exe", "${env:ProgramFiles(x86)}\Git\bin\bash.exe")) {
+            if (Test-Path $p) { $bashExe = $p; break }
+        }
+    }
+    if (-not $bashExe) {
+        Write-Err '未找到 Git Bash（bash.exe）。鸿蒙构建需在 Windows Git Bash 中执行 build_hap.sh。'
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
+
+    # 临时 ohos junction（仅当缺失时创建）
+    $ohosLink = Join-Path $hainDir 'ohos'
+    $createdJunction = $false
+    if (-not (Test-Path $ohosLink)) {
+        Write-Host '创建临时 junction: ohos -> harmony_haintv（构建后自动删除）...' -ForegroundColor Cyan
+        try {
+            cmd /c mklink /J "$ohosLink" "$hapProject" | Out-Null
+            if (-not (Test-Path $ohosLink)) { throw 'mklink 失败' }
+            $createdJunction = $true
+        }
+        catch {
+            Write-Err "创建 ohos junction 失败: $_。可手动执行: mklink /J `"$ohosLink`" `"$hapProject`""
+            return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+        }
+    }
+
+    try {
+        # PowerShell 5.1 Start-Process 用大小写不敏感字典收集环境变量，
+        # 若同时存在小写 http_proxy/https_proxy 与大写 HTTP_PROXY/HTTPS_PROXY 会抛
+        # "Item has already been added"。构建走本机环路，无需代理，先移除小写副本。
+        foreach ($dup in 'http_proxy', 'https_proxy') {
+            if (Get-Item "Env:$dup" -ErrorAction SilentlyContinue) {
+                Remove-Item "Env:$dup" -ErrorAction SilentlyContinue
+                Write-Host "已移除环境变量 $dup（避免与大写版冲突）" -ForegroundColor DarkGray
+            }
+        }
+        # 用 Start-Process 重定向输出到临时文件再落盘/回显，规避 PowerShell 管道编码问题
+        $tmpOut = Join-Path $env:TEMP ("hein_hap_out_$(Get-Random).txt")
+        $tmpErr = Join-Path $env:TEMP ("hein_hap_err_$(Get-Random).txt")
+        # 转 POSIX 路径传给 Git Bash（Windows 反斜杠路径会被转成 E:codeHeinPlay... 而 127）
+        $drive = $buildScript.Substring(0, 1).ToLower()
+        $posixScript = '/' + $drive + $buildScript.Substring(2).Replace('\', '/')
+        # 注意：不要用 -Wait！PS 5.1 的 -Wait 在子进程树持有重定向句柄时会无限挂起
+        #（实测：hvigor 12s 失败后外层仍卡 25min）。改用 WaitForExit(ms) 带超时，
+        # 超时则强杀整棵进程树并报错，避免构建卡死拖住整个 build_all。
+        $hapTimeoutMs = 60 * 60 * 1000   # 冷构建可能很久（含 native 编译），给 60 分钟
+        $proc = Start-Process -FilePath $bashExe -ArgumentList '-c', $posixScript -NoNewWindow -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr -PassThru
+        if (-not $proc.WaitForExit($hapTimeoutMs)) {
+            Write-Err "build_hap.sh 执行超过 60 分钟，判定超时，强制终止进程树 (PID $($proc.Id))..."
+            cmd /c "taskkill /PID $($proc.Id) /T /F" | Out-Null
+            throw "build_hap.sh 执行超时"
+        }
+        if (Test-Path $tmpOut) {
+            [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpOut, [System.Text.Encoding]::UTF8), $utf8Bom)
+            Get-Content -Path $tmpOut -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        }
+        if (Test-Path $tmpErr) {
+            [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpErr, [System.Text.Encoding]::UTF8), $utf8Bom)
+            Get-Content -Path $tmpErr -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        }
+        Remove-Item $tmpOut, $tmpErr -Force -ErrorAction SilentlyContinue
+
+        if ($proc.ExitCode -ne 0) {
+            throw "build_hap.sh 退出码 $($proc.ExitCode)"
+        }
+
+        # 产物：flutter build hap 输出到 ohos/entry/build/...（junction 指向 harmony_haintv）
+        $hapOut = Join-Path $hainDir "harmony_haintv\entry\build\default\outputs\default\entry-default-signed.hap"
+        if (-not (Test-Path $hapOut)) {
+            throw "未找到产物: $hapOut"
+        }
+        $version = Get-ProjectVersion
+        $distName = "heinplay-${version}-harmonyos.hap"
+        $distPath = Join-Path $distDir $distName
+        New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+        Copy-Item -Path $hapOut -Destination $distPath -Force
+        Write-Ok "$name 构建成功"
+        Write-LocalLink "$name 产物:" $distPath
+        return @{ Success = $true; Skipped = $false; LogPath = $logPath }
+    }
+    catch {
+        $errLine = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') EXCEPTION: $_"
+        [System.IO.File]::AppendAllText($logPath, "$errLine`n", $utf8Bom)
+        Write-Err "$name 构建失败: $_"
+        if (Test-Path $logPath) {
+            Write-Host "`n--- 最近 30 行日志 ---" -ForegroundColor Yellow
+            Get-Content -Path $logPath -Tail 30 | ForEach-Object { Write-Host $_ }
+            Write-Host '--- 日志结束 ---' -ForegroundColor Yellow
+        }
+        return @{ Success = $false; Skipped = $false; LogPath = $logPath }
+    }
+    finally {
+        # 仅删除本次创建的 junction 链接（不会触碰 harmony_haintv 实体内容）
+        if ($createdJunction -and (Test-Path $ohosLink)) {
+            cmd /c rmdir "$ohosLink" | Out-Null
+            Write-Host '已删除临时 ohos junction（harmony_haintv 实体与产物不受影响）' -ForegroundColor DarkGray
+        }
+    }
 }
 
 function Invoke-SelectedBuilds {
@@ -337,12 +563,27 @@ function Invoke-SelectedBuilds {
         [switch]$SkipTv,
         [switch]$SkipTvlegacy,
         [switch]$SkipWindows,
+        [switch]$SkipLinux,
+        [switch]$IncludeHap,
         [switch]$Clean
     )
 
     Write-Host "`nHeinPlay 全平台构建脚本" -ForegroundColor Cyan
     Write-Host "项目根目录: $rootDir" -ForegroundColor Cyan
     Write-Host "Flutter 项目目录: $hainDir" -ForegroundColor Cyan
+    # 依赖/构建缓存一律落在项目目录：强制 PUB_CACHE = <工程>/.pub-cache，
+    # 杜绝回退 C 盘默认缓存（%LOCALAPPDATA%\Pub\Cache）。
+    # 原因：① 鸿蒙 ohpm 要求插件源依赖与工程同盘（否则 00618008 跨盘符）；
+    #       ② 默认缓存曾导致 flutter 向 build-profile.json5 注入 C: 绝对 srcPath
+    #          使 hvigor schema 校验失败（00303038）；③ 工程级缓存便于整体迁移/清理。
+    $pubCache = Join-Path $hainDir '.pub-cache'
+    if ($env:PUB_CACHE -ne $pubCache) {
+        $env:PUB_CACHE = $pubCache
+        Write-Host "PUB_CACHE 已强制指向工程缓存: $pubCache" -ForegroundColor DarkGray
+    }
+    if ($IncludeHap) {
+        Write-Host '包含鸿蒙(HAP)构建' -ForegroundColor Yellow
+    }
     if ($Clean) { Write-Host '本次构建将执行 flutter clean' -ForegroundColor Yellow }
 
     if (-not $SkipDoctor) {
@@ -437,6 +678,30 @@ function Invoke-SelectedBuilds {
         }
     }
 
+    if (-not $SkipLinux) {
+        $r = Invoke-BuildScript 'Linux 版' (Join-Path $hainDir 'scripts\build_linux_appimage.sh')
+        $artifactAppImage = Join-Path $distDir "heinplay-${version}-linux-x86_64.AppImage"
+        $linuxStatus = if ($r.Skipped) { '跳过' } elseif ($r.Success) { '成功' } else { '失败' }
+        $results += [PSCustomObject]@{
+            Platform     = 'Linux 版'
+            Status       = $linuxStatus
+            ArtifactPath = if ($r.Success -and (Test-Path $artifactAppImage)) { $artifactAppImage } else { 'N/A' }
+            LogPath      = $r.LogPath
+        }
+    }
+
+    if ($IncludeHap) {
+        $r = Invoke-BuildHap
+        $hapOut = Join-Path $distDir "heinplay-${version}-harmonyos.hap"
+        $hapStatus = if ($r.Skipped) { '跳过' } elseif ($r.Success) { '成功' } else { '失败' }
+        $results += [PSCustomObject]@{
+            Platform     = '鸿蒙版'
+            Status       = $hapStatus
+            ArtifactPath = if ($r.Success -and (Test-Path $hapOut)) { $hapOut } else { 'N/A' }
+            LogPath      = $r.LogPath
+        }
+    }
+
     $allSuccess = $true
     if ($results) {
         Write-Section '构建结果汇总'
@@ -448,13 +713,11 @@ function Invoke-SelectedBuilds {
     $successCount = ($results | Where-Object { $_.Status -eq '成功' }).Count
 
     New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-    $distUri = [System.Uri]::new((Resolve-Path $distDir).Path).AbsoluteUri
-    Write-Host "产物输出目录: $distUri" -ForegroundColor Cyan
+    Write-LocalLink '产物输出目录:' (Resolve-Path $distDir).Path
 
     foreach ($r in $results) {
         if ($r.Status -eq '成功' -and $r.ArtifactPath -ne 'N/A' -and (Test-Path $r.ArtifactPath)) {
-            $artifactUri = [System.Uri]::new((Resolve-Path $r.ArtifactPath).Path).AbsoluteUri
-            Write-Host "$($r.Platform) 产物: $artifactUri" -ForegroundColor Green
+            Write-LocalLink "$($r.Platform) 产物:" (Resolve-Path $r.ArtifactPath).Path
         }
     }
 
@@ -477,19 +740,25 @@ function Show-MainMenu {
     Clear-Host
     Write-Host "`nHeinPlay 全平台构建菜单" -ForegroundColor Cyan
     Write-Host '========================' -ForegroundColor Cyan
-    Write-Host '1. 构建全部版本'
+    Write-Host '1. 构建全部版本 (手机 / TV / tvLegacy / Windows)'
     Write-Host '2. 仅构建手机版'
     Write-Host '3. 仅构建 TV 版'
     Write-Host '4. 仅构建 tvLegacy 版'
     Write-Host '5. 仅构建 Windows 版'
-    Write-Host '6. 运行 flutter doctor'
-    Write-Host '7. 运行 flutter pub get'
-    Write-Host '8. 清理构建缓存 (flutter clean)'
+    Write-Host '6. 仅构建 Linux 版 (AppImage)'
+    Write-Host '10. 仅构建安卓版 (手机 / TV / tvLegacy)'
+    Write-Host '11. 除 Linux 外构建全部（含鸿蒙 HAP）'
+    Write-Host '12. 仅构建鸿蒙版 (HAP)'
+    Write-Host '7. 运行 flutter doctor'
+    Write-Host '8. 运行 flutter pub get'
+    Write-Host '9. 清理构建缓存 (flutter clean)'
     Write-Host '0. 退出'
     Write-Host ''
     Write-Host '命令行参数示例:' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -SkipWindows          跳过 Windows 构建' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipTvlegacy            跳过 tvLegacy 构建' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipLinux            跳过 Linux 构建（Windows 上默认尝试 WSL2，无 WSL 则跳过）' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -IncludeHap           额外构建鸿蒙 HAP（默认不参与「构建全部」）' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux -IncludeHap   仅构建鸿蒙 HAP' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -Clean                构建前执行 flutter clean' -ForegroundColor DarkGray
     Write-Host ''
     return Read-Host '请输入选项编号'
@@ -504,10 +773,10 @@ function Exit-Script($code = 0) {
     [Environment]::Exit($code)
 }
 
-$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipTvlegacy -or $SkipWindows -or $Clean
+$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipTvlegacy -or $SkipWindows -or $SkipLinux -or $IncludeHap -or $Clean
 
 if ($nonInteractive) {
-    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipTvlegacy:$SkipTvlegacy -SkipWindows:$SkipWindows -Clean:$Clean
+    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipTvlegacy:$SkipTvlegacy -SkipWindows:$SkipWindows -SkipLinux:$SkipLinux -IncludeHap:$IncludeHap -Clean:$Clean
     if ($buildResult.Success) { Exit-Script 0 } else { Exit-Script 1 }
 }
 
@@ -515,14 +784,18 @@ do {
     $choice = Show-MainMenu
     $continueMenu = $true
     switch ($choice) {
-        '1' { Invoke-SelectedBuilds | Out-Null }
-        '2' { Invoke-SelectedBuilds -SkipDoctor -SkipTv -SkipTvlegacy -SkipWindows | Out-Null }
-        '3' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTvlegacy -SkipWindows | Out-Null }
-        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipWindows | Out-Null }
-        '5' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy | Out-Null }
-        '6' { Invoke-FlutterDoctor | Out-Null }
-        '7' { Invoke-FlutterPubGet | Out-Null }
-        '8' { Invoke-FlutterPubGet -Clean | Out-Null }
+        '1' { Invoke-SelectedBuilds -SkipLinux | Out-Null }
+        '2' { Invoke-SelectedBuilds -SkipDoctor -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux | Out-Null }
+        '3' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTvlegacy -SkipWindows -SkipLinux | Out-Null }
+        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux | Out-Null }
+        '5' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipLinux | Out-Null }
+        '6' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows | Out-Null }
+        '10' { Invoke-SelectedBuilds -SkipDoctor -SkipWindows -SkipLinux | Out-Null }
+        '11' { Invoke-SelectedBuilds -SkipDoctor -SkipLinux -IncludeHap | Out-Null }
+        '12' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux -IncludeHap | Out-Null }
+        '7' { Invoke-FlutterDoctor | Out-Null }
+        '8' { Invoke-FlutterPubGet | Out-Null }
+        '9' { Invoke-FlutterPubGet -Clean | Out-Null }
         '0' { $continueMenu = $false; Exit-Script 0 }
         default { Write-Warn "无效选项: $choice" }
     }

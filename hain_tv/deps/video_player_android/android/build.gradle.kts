@@ -18,6 +18,8 @@ kotlin {
 android {
     namespace = "io.flutter.plugins.videoplayer"
     compileSdk = flutter.compileSdkVersion
+    // 与 app 模块一致：显式钉 build-tools 为完好的 36.1.0，绕开损坏的 35.0.0。
+    buildToolsVersion = "36.1.0"
 
     defaultConfig {
         minSdk = 21
@@ -45,6 +47,15 @@ android {
         implementation("androidx.media3:media3-exoplayer-dash:${exoplayerVersion}")
         implementation("androidx.media3:media3-exoplayer-rtsp:${exoplayerVersion}")
         implementation("androidx.media3:media3-exoplayer-smoothstreaming:${exoplayerVersion}")
+        // FFmpeg 软解音频渲染器（androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer）。
+        // Media3 的 DefaultRenderersFactory 默认 extensionRendererMode=OFF，需显式 ON 才反射加载
+        // 该 class。当前由 VideoPlayerOptions.enableFfmpegAudioSoftDecode 在**直播**路径置 ON
+        // （见 TextureVideoPlayer/PlatformViewVideoPlayer），点播保持 OFF 纯硬解。
+        // 国内 IPTV 组播流音频常为 MPEG-1 Layer II（mp2），Android MediaCodec 不能解 mp2；
+        // FFmpeg 的 mp3 解码器本就解 MPEG 音频 Layer 1/2/3，故 mp2 由标准 mp3 解码器覆盖，
+        // 无需单独 --enable-decoder=mp2。AAR 只要 ffmpeg 含 mp3 解码器即可（mediax 默认已含）。
+        // 产物放置于本模块 libs/，与 Jellyfin Maven 依赖二选一，**不可并存**（否则类冲突）。
+        implementation(files("libs/decoder_ffmpeg-release.aar"))
         implementation("androidx.media3:media3-datasource-okhttp:${exoplayerVersion}")
         implementation("com.squareup.okhttp3:okhttp:4.12.0")
         testImplementation("junit:junit:4.13.2")

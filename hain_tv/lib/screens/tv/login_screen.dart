@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/platform/device_utils.dart';
+import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -234,6 +235,18 @@ class _LoginScreenState extends State<LoginScreen> {
         password: password,
         cookies: response.data ?? '',
       );
+      // 登录页入口不经过 SplashScreen，首页“首次进入”标记不会被重置；
+      // 此处主动从服务器同步播放记录与收藏夹到本地缓存，并据此处理标记，
+      // 确保登录后首页能加载“继续观看/播放记录/收藏夹”。
+      final synced = await HomeDataPreload.syncAllUserData();
+      // 清除可能残留的上一次预加载数据，避免首页直接消费旧账号/旧会话快照；
+      // 无残留时首页会走自身 _loadData 兜底，用当前账号的本地缓存渲染。
+      HomeDataPreload.clear();
+      if (synced) {
+        await UserDataService.markHomeFirstEntryCompleted();
+      } else {
+        await UserDataService.resetHomeFirstEntryCompleted();
+      }
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/home');
       }
@@ -415,7 +428,7 @@ class _LoginScreenState extends State<LoginScreen> {
           controller: _usernameController,
           focusNode: _usernameFocusNode,
           label: '用户名',
-          hint: '选填（数据库模式需填写）',
+          hint: 'LunaTV 登录用户名',
           icon: Icons.person_outline,
         ),
         const SizedBox(height: AppSpacing.md),

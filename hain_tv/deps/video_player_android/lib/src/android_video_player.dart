@@ -55,9 +55,23 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<void> dispose(int playerId) async {
-    final _PlayerInstance? player = _players.remove(playerId);
-    await player?.dispose();
-    await _api.dispose(playerId);
+    final _PlayerInstance? player = _players[playerId];
+    if (player == null) {
+      // 已释放（如重复 dispose 调用）：避免再次向原生发 dispose 触发
+      // "No player found with playerId" 异常。
+      return;
+    }
+    // 先取消 Dart 侧定时器与事件订阅，并标记 _isDisposed，再原生销毁，
+    // 最后才从 _players 移除。这样在 pub VideoPlayerController.dispose 的
+    // 异步窗口内（其 _isDisposed 在 await 之后才置位），本实例仍可被查到且
+    // 原生播放器尚在，避免轮询/缓冲查询命中已移除的播放器抛出未捕获异常。
+    await player.dispose();
+    try {
+      await _api.dispose(playerId);
+    } catch (_) {
+      // 原生播放器可能已被先行释放，忽略。
+    }
+    _players.remove(playerId);
   }
 
   @override
@@ -150,44 +164,49 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<void> setLooping(int playerId, bool looping) {
-    return _playerWith(id: playerId).setLooping(looping);
+    return _playerWith(id: playerId)?.setLooping(looping) ?? Future.value();
   }
 
   @override
   Future<void> play(int playerId) {
-    return _playerWith(id: playerId).play();
+    return _playerWith(id: playerId)?.play() ?? Future.value();
   }
 
   @override
   Future<void> pause(int playerId) {
-    return _playerWith(id: playerId).pause();
+    return _playerWith(id: playerId)?.pause() ?? Future.value();
   }
 
   @override
   Future<void> setVolume(int playerId, double volume) {
-    return _playerWith(id: playerId).setVolume(volume);
+    return _playerWith(id: playerId)?.setVolume(volume) ?? Future.value();
   }
 
   @override
   Future<void> setPlaybackSpeed(int playerId, double speed) {
     assert(speed > 0);
 
-    return _playerWith(id: playerId).setPlaybackSpeed(speed);
+    return _playerWith(id: playerId)?.setPlaybackSpeed(speed) ?? Future.value();
   }
 
   @override
   Future<void> seekTo(int playerId, Duration position) {
-    return _playerWith(id: playerId).seekTo(position);
+    return _playerWith(id: playerId)?.seekTo(position) ?? Future.value();
   }
 
   @override
   Future<Duration> getPosition(int playerId) async {
-    return _playerWith(id: playerId).getPosition();
+    final _PlayerInstance? player = _playerWith(id: playerId);
+    // 播放器已释放：返回零时长，避免 pub video_player 的 100ms 轮询定时器
+    // 在 dispose 竞态窗口内抛 "No active player with ID" 未捕获异常。
+    if (player == null) return Duration.zero;
+    return player.getPosition();
   }
 
   @override
   Stream<VideoEvent> videoEventsFor(int playerId) {
-    return _playerWith(id: playerId).videoEvents();
+    return _playerWith(id: playerId)?.videoEvents() ??
+        Stream<VideoEvent>.empty();
   }
 
   @override
@@ -198,7 +217,8 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
   @override
   Widget buildViewWithOptions(VideoViewOptions options) {
     final int playerId = options.playerId;
-    final VideoPlayerViewState viewState = _playerWith(id: playerId).viewState;
+    final VideoPlayerViewState? viewState = _playerWith(id: playerId)?.viewState;
+    if (viewState == null) return const SizedBox.shrink();
 
     return switch (viewState) {
       VideoPlayerTextureViewState(:final int textureId) => Texture(textureId: textureId),
@@ -213,7 +233,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<List<VideoAudioTrack>> getAudioTracks(int playerId) async {
-    final NativeAudioTrackData nativeData = await _playerWith(id: playerId).getAudioTracks();
+    final _PlayerInstance? player = _playerWith(id: playerId);
+    if (player == null) return <VideoAudioTrack>[];
+    final NativeAudioTrackData nativeData = await player.getAudioTracks();
     final tracks = <VideoAudioTrack>[];
 
     // Convert ExoPlayer tracks to VideoAudioTrack
@@ -241,7 +263,8 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<void> selectAudioTrack(int playerId, String trackId) {
-    return _playerWith(id: playerId).selectAudioTrack(trackId);
+    return _playerWith(id: playerId)?.selectAudioTrack(trackId) ??
+        Future.value();
   }
 
   @override
@@ -252,7 +275,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<List<VideoTrack>> getVideoTracks(int playerId) async {
-    final NativeVideoTrackData nativeData = await _playerWith(id: playerId).getVideoTracks();
+    final _PlayerInstance? player = _playerWith(id: playerId);
+    if (player == null) return <VideoTrack>[];
+    final NativeVideoTrackData nativeData = await player.getVideoTracks();
     final tracks = <VideoTrack>[];
 
     // Convert ExoPlayer tracks to VideoTrack
@@ -284,7 +309,8 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<void> selectVideoTrack(int playerId, VideoTrack? track) {
-    return _playerWith(id: playerId).selectVideoTrack(track);
+    return _playerWith(id: playerId)?.selectVideoTrack(track) ??
+        Future.value();
   }
 
   @override
@@ -293,10 +319,12 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
     return true;
   }
 
-  _PlayerInstance _playerWith({required int id}) {
-    final _PlayerInstance? player = _players[id];
-    return player ?? (throw StateError('No active player with ID $id.'));
-  }
+  // 返回指定播放器实例；已释放（dispose 后）时返回 null。
+  // 所有公开平台方法都应通过此 getter 取实例，并对 null 做安全降级，
+  // 避免 pub video_player 的 100ms 轮询定时器 / 后台 dispose 在竞态窗口内
+  // 调用已移除的播放器而抛出 "No active player with ID" 未捕获异常
+  // （表现为直播播放/退出时 logcat 高频刷错）。
+  _PlayerInstance? _playerWith({required int id}) => _players[id];
 
   PlatformVideoFormat? _platformVideoFormatFromVideoFormat(VideoFormat? format) {
     return switch (format) {
@@ -490,6 +518,7 @@ class _PlayerInstance {
   Future<void> dispose() async {
     _isDisposed = true;
     _bufferPollingTimer?.cancel();
+    _bufferPollingTimer = null;
     await _eventSubscription.cancel();
   }
 
@@ -504,10 +533,13 @@ class _PlayerInstance {
       );
       // Trigger an extra buffer position check, so that clients have an
       // accurate reporting of the current buffering state.
+      // 播放器已释放后原生调用会抛异常，吞掉避免未捕获异常刷日志。
       _api.getBufferedPosition().then((int position) {
         if (!_isDisposed) {
           _updateBufferPosition(position);
         }
+      }).catchError((Object _) {
+        // 播放器已释放，忽略。
       });
     }
   }
@@ -540,10 +572,23 @@ class _PlayerInstance {
 
         // Start polling for buffer position, since there is no buffer position
         // event to listen to.
+        // 若初始化事件在播放器已释放后才到达（如快速换台/退出），不要启动轮询，
+        // 否则定时器会在原生播放器销毁后持续调用 getBufferedPosition 刷异常。
+        if (_isDisposed) {
+          return;
+        }
         _bufferPollingTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) async {
-          final int position = await _api.getBufferedPosition();
-          if (!_isDisposed) {
-            _updateBufferPosition(position);
+          if (_isDisposed) {
+            return;
+          }
+          // 播放器已释放后原生调用会抛异常，吞掉避免未捕获异常刷日志。
+          try {
+            final int position = await _api.getBufferedPosition();
+            if (!_isDisposed) {
+              _updateBufferPosition(position);
+            }
+          } catch (_) {
+            // 播放器已释放，忽略。
           }
         });
       case IsPlayingStateEvent _:

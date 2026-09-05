@@ -5,17 +5,21 @@ import '../services/user_data_service.dart';
 import 'device_utils.dart';
 import 'windows_window_utils.dart';
 
-/// Windows 桌面端播放页全屏/ESC/双击操作隔离。
+/// 桌面端（Windows/Linux）播放页全屏/ESC/双击操作隔离。
 ///
-/// 该 mixin 仅服务于 Windows 桌面端，TV/Android 的全屏/返回逻辑仍由各自平台代码处理，
-/// 避免互相影响。核心策略：
+/// 该 mixin 服务于 Windows 与 Linux 桌面端，TV/Android 的全屏/返回逻辑仍由各自平台代码处理，
+/// 避免互相影响。核心策略与 [WindowsFullscreenMixin] 一致：
 ///
 /// 1. 切换全屏时以 [windowManager.isFullScreen] 为主要依据，该状态由插件内部维护，
 ///    只在我们显式调用 [setFullScreen] 时改变，因此不会把“窗口较大”误判为全屏。
 /// 2. 窗口边界仅作为辅助校验：当插件报告全屏但窗口实际未铺满屏幕时，修正本地状态。
 /// 3. ESC 统一先尝试退出真实全屏，非全屏时再触发页面返回。
 /// 4. 添加 [_togglingFullScreen] 防抖，避免连续点击导致窗口管理器卡死。
-mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
+///
+/// 与 [WindowsFullscreenMixin] 的区别：内部平台守卫统一为 [DeviceUtils.isDesktop]，
+/// 因此在 Linux 上同样生效；[WindowsWindowUtils] 的 Win32 调用本身已 [DeviceUtils.isWindows]
+/// 守卫，在 Linux 上为空操作，无需额外分支。
+mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
     implements WindowListener {
   bool _isFullScreen = false;
   bool _togglingFullScreen = false;
@@ -42,9 +46,9 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
     }
   }
 
-  /// 初始化 Windows 全屏监听与状态。
+  /// 初始化桌面端全屏监听与状态。
   Future<void> initWindowsFullscreen() async {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     windowManager.addListener(this);
     await syncWindowsFullscreenState();
   }
@@ -54,7 +58,7 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
   /// 优先使用 [windowManager.isFullScreen]（插件内部状态），仅当插件报告全屏但
   /// 窗口边界明显未铺满屏幕时才修正为 false，防止异常情况下状态失步。
   Future<void> syncWindowsFullscreenState() async {
-    if (!DeviceUtils.isWindows || !mounted) return;
+    if (!DeviceUtils.isDesktop || !mounted) return;
     try {
       final pluginState = await windowManager.isFullScreen();
       var actualState = pluginState;
@@ -63,20 +67,20 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
         // 插件报告全屏但窗口明显小于屏幕（<70%）时视为异常，修正为 false。
         if (_isBoundsObviouslyNotFullscreen(bounds)) {
           debugPrint(
-            'WindowsFullscreenMixin: 插件报告全屏但窗口未铺满，修正为 false: $bounds',
+            'DesktopFullscreenMixin: 插件报告全屏但窗口未铺满，修正为 false: $bounds',
           );
           actualState = false;
         }
       }
       debugPrint(
-        'WindowsFullscreenMixin: 同步全屏状态: plugin=$pluginState, '
+        'DesktopFullscreenMixin: 同步全屏状态: plugin=$pluginState, '
         'actual=$actualState, local=$_isFullScreen',
       );
       if (_isFullScreen != actualState) {
         setState(() => _isFullScreen = actualState);
       }
     } catch (e) {
-      debugPrint('WindowsFullscreenMixin: 同步全屏状态失败: $e');
+      debugPrint('DesktopFullscreenMixin: 同步全屏状态失败: $e');
     }
   }
 
@@ -111,31 +115,31 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
           displaySize.height / pixelRatio,
         );
       } catch (e2) {
-        debugPrint('WindowsFullscreenMixin: 计算屏幕尺寸失败: $e; $e2');
+        debugPrint('DesktopFullscreenMixin: 计算屏幕尺寸失败: $e; $e2');
         return null;
       }
     }
   }
 
-  /// 释放 Windows 全屏监听。
+  /// 释放桌面端全屏监听。
   void disposeWindowsFullscreen() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     windowManager.removeListener(this);
   }
 
-  /// Windows 桌面端切换窗口全屏/取消全屏。
+  /// 桌面端切换窗口全屏/取消全屏。
   ///
   /// 关键：以 [windowManager.isFullScreen] 为准决定下一步动作，避免依赖窗口
   /// 边界导致误判。进入全屏前先保存当前普通窗口边界，退出后用它覆盖插件
   /// 可能恢复的错误尺寸。
   Future<void> toggleWindowsFullscreen() async {
-    if (!DeviceUtils.isWindows || _togglingFullScreen) return;
+    if (!DeviceUtils.isDesktop || _togglingFullScreen) return;
     _togglingFullScreen = true;
     try {
       final pluginFullScreen = await windowManager.isFullScreen();
       final next = !pluginFullScreen;
       debugPrint(
-        'Windows 切换全屏: plugin=$pluginFullScreen local=$_isFullScreen next=$next',
+        '桌面端 切换全屏: plugin=$pluginFullScreen local=$_isFullScreen next=$next',
       );
 
       if (next) {
@@ -144,20 +148,21 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
           final bounds = await windowManager.getBounds();
           if (bounds.width >= 900 && bounds.height >= 600) {
             _normalWindowBounds = bounds;
-            debugPrint('Windows 进入全屏前保存边界: $_normalWindowBounds');
+            debugPrint('桌面端 进入全屏前保存边界: $_normalWindowBounds');
           } else {
             _normalWindowBounds = null;
-            debugPrint('Windows 进入全屏前忽略过小边界: $bounds');
+            debugPrint('桌面端 进入全屏前忽略过小边界: $bounds');
           }
         } catch (e) {
           _normalWindowBounds = null;
-          debugPrint('Windows 保存全屏前边界失败: $e');
+          debugPrint('桌面端 保存全屏前边界失败: $e');
         }
 
         // 2. 进入全屏前：必须先恢复普通窗口样式。window_manager 的 SetFullScreen
         // 在 is_frameless_ 为 true 时不会执行实际的全屏 resize；即便修复了该
         // 插件行为，若当前 GWL_STYLE 缺少 WS_CAPTION/WS_THICKFRAME，退出全屏后
-        // 仍会变成不可调整的小窗口。因此先通过 Win32 API 恢复标准窗口框架。
+        // 仍会变成不可调整的小窗口。因此先通过 Win32 API 恢复标准窗口框架
+        // （WindowsWindowUtils 在 Linux 上为空操作）。
         await windowManager.setTitleBarStyle(TitleBarStyle.normal);
         await WindowsWindowUtils.ensureNormalWindowFrame();
         // 放开最大/最小尺寸限制、确保可拉伸。
@@ -165,7 +170,7 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
         await windowManager.setMinimumSize(const Size(320, 180));
         await windowManager.setResizable(true);
         await WindowsWindowUtils.ensureResizableFrame();
-        // 给 Windows 消息队列留出时间应用标题栏/框架变更。
+        // 给窗口系统消息队列留出时间应用标题栏/框架变更。
         await Future.delayed(const Duration(milliseconds: 50));
       }
 
@@ -198,9 +203,9 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
             savedBounds.height >= 600) {
           try {
             await windowManager.setBounds(savedBounds);
-            debugPrint('Windows 退出全屏后恢复边界: $savedBounds');
+            debugPrint('桌面端 退出全屏后恢复边界: $savedBounds');
           } catch (e) {
-            debugPrint('Windows 退出全屏恢复边界失败: $e');
+            debugPrint('桌面端 退出全屏恢复边界失败: $e');
           }
         }
         // 兜底：如果恢复后的窗口仍然过小，强制设置为默认正常尺寸并居中。
@@ -209,13 +214,13 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
           final restoredBounds = await windowManager.getBounds();
           if (restoredBounds.width < 900 || restoredBounds.height < 600) {
             debugPrint(
-              'Windows 退出全屏后尺寸异常，强制恢复默认尺寸: $restoredBounds',
+              '桌面端 退出全屏后尺寸异常，强制恢复默认尺寸: $restoredBounds',
             );
             await windowManager.setSize(const Size(900, 600));
             await windowManager.center();
           }
         } catch (e) {
-          debugPrint('Windows 退出全屏后校验尺寸失败: $e');
+          debugPrint('桌面端 退出全屏后校验尺寸失败: $e');
         }
         // 先恢复边界，再限制最小尺寸，避免保存的边界小于 900x600 时被强制放大。
         await windowManager.setMinimumSize(const Size(900, 600));
@@ -225,9 +230,9 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
 
       // 同步本地状态，优先以插件状态为准。
       await syncWindowsFullscreenState();
-      debugPrint('Windows 切换全屏完成: _isFullScreen=$_isFullScreen');
+      debugPrint('桌面端 切换全屏完成: _isFullScreen=$_isFullScreen');
     } catch (e) {
-      debugPrint('Windows 切换全屏失败: $e');
+      debugPrint('桌面端 切换全屏失败: $e');
     } finally {
       _togglingFullScreen = false;
     }
@@ -235,7 +240,7 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
 
   /// ESC 键处理：真实全屏时退出全屏，否则返回上一页。
   void handleWindowsEsc() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     // fire-and-forget，HardwareKeyboard handler 需要同步返回是否已处理。
     _exitFullScreenOrPopAsync();
   }
@@ -248,7 +253,7 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
     _togglingFullScreen = true;
     try {
       final pluginFullScreen = await windowManager.isFullScreen();
-      debugPrint('Windows ESC: plugin=$pluginFullScreen local=$_isFullScreen');
+      debugPrint('桌面端 ESC: plugin=$pluginFullScreen local=$_isFullScreen');
       if (pluginFullScreen) {
         await windowManager.setFullScreen(false);
         // 退出全屏后恢复窗口尺寸限制，避免仍处于小窗的限制状态。
@@ -264,9 +269,9 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
             savedBounds.height >= 600) {
           try {
             await windowManager.setBounds(savedBounds);
-            debugPrint('Windows ESC 退出全屏后恢复边界: $savedBounds');
+            debugPrint('桌面端 ESC 退出全屏后恢复边界: $savedBounds');
           } catch (e) {
-            debugPrint('Windows ESC 退出全屏恢复边界失败: $e');
+            debugPrint('桌面端 ESC 退出全屏恢复边界失败: $e');
           }
         }
         // 兜底：如果恢复后的窗口仍然过小，强制设置为默认正常尺寸并居中。
@@ -275,13 +280,13 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
           final restoredBounds = await windowManager.getBounds();
           if (restoredBounds.width < 900 || restoredBounds.height < 600) {
             debugPrint(
-              'Windows ESC 退出全屏后尺寸异常，强制恢复默认尺寸: $restoredBounds',
+              '桌面端 ESC 退出全屏后尺寸异常，强制恢复默认尺寸: $restoredBounds',
             );
             await windowManager.setSize(const Size(900, 600));
             await windowManager.center();
           }
         } catch (e) {
-          debugPrint('Windows ESC 退出全屏后校验尺寸失败: $e');
+          debugPrint('桌面端 ESC 退出全屏后校验尺寸失败: $e');
         }
         await windowManager.setMinimumSize(const Size(900, 600));
         await WindowsWindowUtils.ensureResizableFrame();
@@ -299,7 +304,7 @@ mixin WindowsFullscreenMixin<T extends StatefulWidget> on State<T>
         await WindowsWindowUtils.ensureResizableFrame();
       }
     } catch (e) {
-      debugPrint('Windows ESC 处理失败: $e');
+      debugPrint('桌面端 ESC 处理失败: $e');
     } finally {
       _togglingFullScreen = false;
     }

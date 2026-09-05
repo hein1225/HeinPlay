@@ -80,3 +80,34 @@ data/windows_logs/
 *_log*.md
 *.tmp
 *.temp
+
+# =====================
+# Local tool / debug state (not project source)
+# =====================
+
+# WorkBuddy agent memory & skills (private, regenerable)
+.workbuddy/
+
+# Flutter CLI local state
+.flutter_tool_state
+hain_tv/.flutter_tool_state
+hain_tv/.flutter
+
+# Debug / probe artifacts from porting investigation (ohpm recursion, hap signing)
+hain_tv/ohpm_*.js
+hain_tv/ohpm_*.exit
+hain_tv/probe.txt
+hain_tv/ps_probe.txt
+hain_tv/dart_spawn_test.dart
+hain_tv/hapsig_help.txt
+
+# media3 source checkouts used only to rebuild the ffmpeg decoder AAR locally.
+# The prebuilt AAR is already committed at
+# hain_tv/deps/video_player_android/android/libs/decoder_ffmpeg-release.aar,
+# so these large upstream trees are intentionally NOT tracked.
+tools/mediax/
+tools/mediax_src/
+
+# HarmonyOS: generated Flutter assets produced by `flutter build hap`
+# (regenerate on every build; never edit by hand).
+hain_tv/harmony_haintv/entry/src/main/resources/rawfile/flutter_assets/

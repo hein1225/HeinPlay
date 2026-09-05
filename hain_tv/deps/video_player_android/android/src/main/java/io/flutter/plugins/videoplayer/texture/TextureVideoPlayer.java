@@ -15,6 +15,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
 import io.flutter.plugins.videoplayer.VideoAsset;
@@ -83,6 +84,17 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
           // 应用在 Dart 层使用 wakelock_plus 管理常亮，因此低版本上禁用 ExoPlayer 自带 wake lock。
           if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             builder.setWakeMode(C.WAKE_MODE_NONE);
+          }
+          // 直播专用：请求带 x-heinplay-soft-audio 时，允许 ffmpeg 扩展音频渲染器。
+          // EXTENSION_RENDERER_MODE_ON 让扩展渲染器排在核心(MediaCodec)之后，
+          // 因此仅当 MediaCodec 硬解不了(如 IPTV 的 MPEG-1 Layer II/mp2)时才回退 ffmpeg 软解；
+          // 点播不带该标志 → 保持默认 EXTENSION_RENDERER_MODE_OFF，纯硬解、不装 ffmpeg。
+          if (options.enableFfmpegAudioSoftDecode) {
+            DefaultRenderersFactory renderersFactory =
+                new DefaultRenderersFactory(context);
+            renderersFactory.setExtensionRendererMode(
+                DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+            builder.setRenderersFactory(renderersFactory);
           }
           builder
               .setTrackSelector(trackSelector)

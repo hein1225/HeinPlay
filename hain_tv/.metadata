@@ -4,8 +4,8 @@
 # This file should be version controlled and should not be manually edited.
 
 version:
-  revision: "559ffa3f75e7402d65a8def9c28389a9b2e6fe42"
-  channel: "stable"
+  revision: "244a0e8abb3085e8675589b13e219af8c41cb7aa"
+  channel: "[user-branch]"
 
 project_type: app
 
@@ -13,17 +13,11 @@ project_type: app
 migration:
   platforms:
     - platform: root
-      create_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-      base_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-    - platform: android
-      create_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-      base_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-    - platform: web
-      create_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-      base_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-    - platform: windows
-      create_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
-      base_revision: 559ffa3f75e7402d65a8def9c28389a9b2e6fe42
+      create_revision: 244a0e8abb3085e8675589b13e219af8c41cb7aa
+      base_revision: 244a0e8abb3085e8675589b13e219af8c41cb7aa
+    - platform: ohos
+      create_revision: 244a0e8abb3085e8675589b13e219af8c41cb7aa
+      base_revision: 244a0e8abb3085e8675589b13e219af8c41cb7aa
 
   # User provided section
 

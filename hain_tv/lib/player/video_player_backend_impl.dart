@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:fvp/fvp.dart';
 import '../services/ad_filter_service.dart';
 import '../services/user_data_service.dart';
 import '../utils/windows_logger.dart';
@@ -138,6 +139,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     BufferProfileConfig? bufferConfig,
     bool isLive = false,
     VideoFormat? formatHint,
+    BufferProfileConfig? preInitBufferConfig,
   }) async {
     await dispose();
     _completedReported = false;
@@ -181,6 +183,11 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
           : '*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       if (!isLive) ..._refererFor(url),
+      // 仅 Android 直播路径：请求头透传一个内部标记，video_player_android 原生
+      // 在构建 ExoPlayer 时据此启用 ffmpeg 音频软解（解 MediaCodec 硬解不了的
+      // mp2 等）。点播/其它平台不带该头 → 原生维持纯硬解，不受影响。
+      // 该头不会真正发给上游：原生端读取后剥离（见 stripInternalRequestHeaders 注释）。
+      if (isLive && Platform.isAndroid) 'x-heinplay-soft-audio': '1',
       ...?stripInternalRequestHeaders(headers),
     };
 
@@ -203,9 +210,14 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       // udpxy 等 RTP over HTTP 代理以及原始 RTP/UDP/RTSP 组播通常传输 MPEG-TS，
       // 需要按普通媒体源播放，否则 ExoPlayer 会误按 HLS playlist 解析。
       if (lowerFinalUrl.contains('/rtp/') ||
+          lowerFinalUrl.contains('/rtsp/') ||
           lowerFinalUrl.startsWith('rtp://') ||
           lowerFinalUrl.startsWith('udp://') ||
           lowerFinalUrl.startsWith('rtsp://')) {
+        effectiveFormatHint = VideoFormat.other;
+      } else if (lowerFinalUrl.contains('.smil')) {
+        // LunaTV 等运营商代理把 RTSP/组播流包装成 http://.../rtsp/...xxx.smil?fcc=...
+        // 实际返回 MPEG-TS 流，需走普通媒体源让 ExoPlayer 自动探测。
         effectiveFormatHint = VideoFormat.other;
       } else if (lowerFinalUrl.contains('.m3u8') ||
           lowerFinalUrl.contains('.m3u') ||
@@ -228,57 +240,102 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
 
     debugPrint('VideoPlayerBackendImpl open: $finalUrl');
 
-    if (isNetwork) {
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(finalUrl),
-        httpHeaders: effectiveHeaders,
-        formatHint: effectiveFormatHint,
-        // Windows 端 FVP/libmdk 使用 texture view 更稳定，
-        // platform view 在部分 Windows 环境会导致初始化失败或无法发起网络请求。
-        viewType: Platform.isWindows
-            ? VideoViewType.textureView
-            : VideoViewType.platformView,
-      );
-    } else if (isFile) {
-      final filePath = Uri.parse(finalUrl).toFilePath();
-      _controller = VideoPlayerController.file(
-        File(filePath),
-        httpHeaders: effectiveHeaders,
-      );
-    } else {
-      _controller = VideoPlayerController.asset(finalUrl);
-    }
-
-    _controller!.addListener(_onControllerValueChanged);
-
-    try {
-      await _controller!.initialize();
-    } catch (e, stackTrace) {
-      debugPrint('VideoPlayerBackendImpl 初始化失败: $finalUrl');
-      debugPrint('错误: $e');
-      debugPrint('$stackTrace');
-      rethrow;
-    }
-
-    // 若指定了起始位置，先在暂停状态下 seek，再开始播放，
-    // 避免 ExoPlayer 在 HLS 起播阶段 seek 被忽略或回退到 0。
-    if (startAt != null && startAt > Duration.zero) {
-      await seek(startAt);
-      // 给 ExoPlayer 一小段时间应用 seek，随后若位置仍被回退则再次 seek。
-      await Future.delayed(const Duration(milliseconds: 100));
-      final actual = _controller?.value.position ?? Duration.zero;
-      if (actual.inMilliseconds < startAt.inMilliseconds * 0.5) {
-        debugPrint(
-          'VideoPlayerBackendImpl 起始定位未生效，再次 seek: actual=${actual.inMilliseconds}ms target=${startAt.inMilliseconds}ms',
+    Future<void> doOpen() async {
+      if (isNetwork) {
+        _controller = VideoPlayerController.networkUrl(
+          Uri.parse(finalUrl),
+          httpHeaders: effectiveHeaders,
+          formatHint: effectiveFormatHint,
+          // Windows 端 FVP/libmdk 使用 texture view 更稳定，
+          // platform view 在部分 Windows 环境会导致初始化失败或无法发起网络请求。
+          viewType: (Platform.isWindows || Platform.isLinux)
+              ? VideoViewType.textureView
+              : VideoViewType.platformView,
         );
+      } else if (isFile) {
+        final filePath = Uri.parse(finalUrl).toFilePath();
+        _controller = VideoPlayerController.file(
+          File(filePath),
+          httpHeaders: effectiveHeaders,
+        );
+      } else {
+        _controller = VideoPlayerController.asset(finalUrl);
+      }
+
+      _controller!.addListener(_onControllerValueChanged);
+
+      // 直播/低延迟场景：必须在 initialize()（底层 fvp/libmdk 的 prepare）之前就应用
+      // 缓冲配置。否则首开会沿用 libmdk 默认缓冲窗口等待填满，导致加载慢（与 exo 差距明显）。
+      // 仅 fvp 后端经由 preInitBufferConfig 传入；exo 不传，不调用 setBufferRange。
+      if (preInitBufferConfig != null && _controller != null) {
+        try {
+          _controller!.setBufferRange(
+            min: preInitBufferConfig.fvpMinMs,
+            max: preInitBufferConfig.fvpMaxMs,
+            drop: preInitBufferConfig.fvpDrop,
+          );
+        } catch (e) {
+          debugPrint('VideoPlayerBackendImpl preInit setBufferRange 失败: $e');
+        }
+      }
+
+      try {
+        await _controller!.initialize();
+      } catch (e, stackTrace) {
+        debugPrint('VideoPlayerBackendImpl 初始化失败: $finalUrl');
+        debugPrint('错误: $e');
+        debugPrint('$stackTrace');
+        rethrow;
+      }
+
+      // 若指定了起始位置，先在暂停状态下 seek，再开始播放，
+      // 避免 ExoPlayer 在 HLS 起播阶段 seek 被忽略或回退到 0。
+      if (startAt != null && startAt > Duration.zero) {
         await seek(startAt);
+        // 给 ExoPlayer 一小段时间应用 seek，随后若位置仍被回退则再次 seek。
+        await Future.delayed(const Duration(milliseconds: 100));
+        final actual = _controller?.value.position ?? Duration.zero;
+        if (actual.inMilliseconds < startAt.inMilliseconds * 0.5) {
+          debugPrint(
+            'VideoPlayerBackendImpl 起始定位未生效，再次 seek: actual=${actual.inMilliseconds}ms target=${startAt.inMilliseconds}ms',
+          );
+          await seek(startAt);
+        }
+      }
+
+      await _controller!.play();
+
+      _durationController.add(_controller!.value.duration);
+      _startPositionTimer();
+    }
+
+    // 直播网络源偶发因 CDN 调度到异常节点而返回 404/HTML/空响应，
+    // 重试几次可换到正常节点。点播保持单次尝试。
+    const maxAttempts = 3;
+    final shouldRetry = isLive && isNetwork;
+    Object? lastError;
+    StackTrace? lastStack;
+    for (var attempt = 1; attempt <= (shouldRetry ? maxAttempts : 1); attempt++) {
+      try {
+        await doOpen();
+        return;
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
+        debugPrint(
+          'VideoPlayerBackendImpl 打开失败 (attempt $attempt/${shouldRetry ? maxAttempts : 1}): $e',
+        );
+        await dispose();
+        if (shouldRetry && attempt < maxAttempts) {
+          await Future.delayed(const Duration(milliseconds: 400));
+        }
       }
     }
 
-    await _controller!.play();
-
-    _durationController.add(_controller!.value.duration);
-    _startPositionTimer();
+    debugPrint('VideoPlayerBackendImpl 初始化失败: $finalUrl');
+    debugPrint('错误: $lastError');
+    debugPrint('$lastStack');
+    throw lastError!;
   }
 
   void _onControllerValueChanged() {

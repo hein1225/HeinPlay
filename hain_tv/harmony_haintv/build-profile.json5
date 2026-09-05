@@ -1,0 +1,57 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\hyc50\\.ohos\\config\\default_harmony_haintv_e65oL77fTAYl3Qc7VEIxzQuyLmC5uBDpx69jRLXEKGI=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BEBAB9A3EF4F800F4904374F081BE7774B31BA682CFB5908EF1402F7F80D28534AC898CE58340BC",
+          "profile": "C:\\Users\\hyc50\\.ohos\\config\\default_harmony_haintv_e65oL77fTAYl3Qc7VEIxzQuyLmC5uBDpx69jRLXEKGI=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\hyc50\\.ohos\\config\\default_harmony_haintv_e65oL77fTAYl3Qc7VEIxzQuyLmC5uBDpx69jRLXEKGI=.p12",
+          "storePassword": "0000001B17175C06209ED2267F7DF8213233C8EF0F367B9E1773F4B4B3EE58F8BC0507986B64E6E7F6982B"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          },
+          "nativeCompiler": "BiSheng"
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

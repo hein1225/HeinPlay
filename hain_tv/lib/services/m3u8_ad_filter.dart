@@ -1388,7 +1388,13 @@ class M3u8AdFilter {
 
   static String? _keepVodEndList(String original, String? result) {
     if (result == null) return null;
-    if (!_hasEndList(original) || _hasEndList(result)) return result;
+    // 去广告过滤后的播放列表经由本地代理以“冻结快照”形式一次性供给播放器，
+    // 无论原始是 VOD 还是事件/直播式（无 #EXT-X-ENDLIST）列表，都必须补上
+    // ENDLIST，让播放器把它当作有限 VOD 播放一次。否则 mpv/fvp 会把无
+    // ENDLIST 的列表当作直播流周期性重新拉取，而代理快照的 MEDIA-SEQUENCE
+    // 永不前进，播放器便会从头重载，表现为“去广告后变为重新播放”。
+    // 见问题核查：部分播放源（事件/直播式 M3U8）去广告时错误重播。
+    if (_hasEndList(result)) return result;
     return result + (result.endsWith('\n') ? '' : '\n') + _tagEndList + '\n';
   }
 

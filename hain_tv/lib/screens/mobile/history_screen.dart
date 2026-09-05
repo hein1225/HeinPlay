@@ -28,12 +28,15 @@ class _MobileHistoryScreenState extends State<MobileHistoryScreen> {
     super.initState();
     PlayRecordRefreshNotifier.instance.addListener(_onRefresh);
     if (widget.initialRecords.isNotEmpty) {
-      // 首页已加载完整记录，直接展示并后台刷新
+      // 首页已加载完整记录，直接展示。
+      // 与“我的”播放记录共用同一份本地缓存：不单独向服务器同步，
+      // 统一在启动/登录时同步一次（HomeDataPreload + LoginScreen），
+      // 避免多模块各自拉取导致首页“继续播放”与“查看更多”数据/海报不一致。
       setState(() {
         _history = List.from(widget.initialRecords);
         _loading = false;
       });
-      unawaited(_loadHistory(localOnly: false));
+      unawaited(_loadHistory());
     } else {
       _loadData();
     }
@@ -51,18 +54,16 @@ class _MobileHistoryScreenState extends State<MobileHistoryScreen> {
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
-    // 先读本地立即展示，再后台同步远程
-    await _loadHistory(localOnly: true);
-    unawaited(_loadHistory(localOnly: false));
+    // 仅读本地缓存（与首页“继续播放”、“我的”播放记录同源），
+    // 不再向服务器同步；播放后的增量更新由 PlayRecordRefreshNotifier 通知刷新。
+    await _loadHistory();
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _loadHistory({bool localOnly = false}) async {
+  Future<void> _loadHistory() async {
     List<PlayRecord> records = [];
     try {
-      records = localOnly
-          ? await PlayRecordService.getAllLocal()
-          : await PlayRecordService.getAll();
+      records = await PlayRecordService.getAllLocal();
     } catch (e) {
       // 忽略加载失败
     }

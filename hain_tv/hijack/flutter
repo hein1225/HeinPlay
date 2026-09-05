@@ -1,0 +1,3 @@
+#!/bin/sh
+env | sort > "E:/code/HeinPlay/hain_tv/hijack/flutter_env.txt" 2>&1
+exec /d/haflutter/flutter_flutter/bin/flutter "$@"

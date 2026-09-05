@@ -5,8 +5,9 @@ issue_tracker: https://github.com/flutter/flutter/issues?q=is%3Aissue+is%3Aopen+
 version: 2.11.0
 
 environment:
-  sdk: ^3.12.0
-  flutter: ">=3.44.0"
+  # 鸿蒙移植方案B：兼容 flutter_flutter 3.41.10-ohos。
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
 
 flutter:
   plugin:

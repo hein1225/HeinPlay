@@ -31,6 +31,12 @@ final class HttpVideoAsset extends VideoAsset {
   /** 通过 httpHeaders 传递单条播放代理地址的内部键，构造前会被剥离，不会发送到上游。 */
   private static final String PROXY_URL_HEADER = "x-heinplay-proxy-url";
 
+  /**
+   * 通过 httpHeaders 传递"直播启用 ffmpeg 音频软解"的内部键。VideoPlayerPlugin 在构建
+   * ExoPlayer 前读取它配置渲染器；此处同样剥离，避免被当作真实请求头发给上游。
+   */
+  private static final String SOFT_AUDIO_HEADER = "x-heinplay-soft-audio";
+
   @NonNull private final StreamingFormat streamingFormat;
   @NonNull private final Map<String, String> httpHeaders;
   @Nullable private final String userAgent;
@@ -46,6 +52,7 @@ final class HttpVideoAsset extends VideoAsset {
     // 拷贝一份并剥离内部代理键，避免该特殊请求头被发送到上游。
     Map<String, String> headers = new HashMap<>(httpHeaders);
     String proxy = headers.remove(PROXY_URL_HEADER);
+    headers.remove(SOFT_AUDIO_HEADER);
     this.httpHeaders = headers;
     this.userAgent = userAgent;
     this.proxyUrl = proxy;

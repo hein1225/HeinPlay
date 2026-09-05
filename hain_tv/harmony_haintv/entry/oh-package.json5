@@ -1,0 +1,13 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "@ohos/flutter_ohos": "har/flutter.har",
+    "screen_brightness_ohos": "file:../../ohos/har/screen_brightness_ohos.har",
+    "fvp": "file:../../ohos/har/fvp.har"
+  }
+}

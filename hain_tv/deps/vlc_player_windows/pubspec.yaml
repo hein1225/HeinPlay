@@ -11,7 +11,8 @@ topics:
   - streaming
 
 environment:
-  sdk: ^3.12.0
+  # 鸿蒙移植方案B：兼容 flutter_flutter 3.41.10-ohos。
+  sdk: ^3.11.0
   flutter: '>=3.3.0'
 
 dependencies:
@@ -45,6 +46,10 @@ flutter:
     platforms:
       windows:
         pluginClass: VlcPlayerPluginCApi
+      linux:
+        # Linux 不使用 VLC 后端（播放统一走 fvp），仅提供占位注册类以满足
+        # `flutter build linux` 的平台支持检查，避免构建因插件不支持 linux 而失败。
+        dartPluginClass: VlcPlayerPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

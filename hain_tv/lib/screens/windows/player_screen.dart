@@ -10,6 +10,7 @@ import 'package:hain_tv/models/skip_segment.dart';
 import 'package:hain_tv/models/video_detail.dart';
 import 'package:hain_tv/player/player_backend_factory.dart';
 import 'package:hain_tv/player/video_player_backend.dart';
+import 'package:hain_tv/player/switch_gate.dart';
 import 'package:hain_tv/services/ad_filter_engine.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
@@ -18,7 +19,7 @@ import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 import 'package:hain_tv/widgets/windows/skip_config_dialog.dart';
 import 'package:hain_tv/platform/device_utils.dart';
-import 'package:hain_tv/platform/windows_fullscreen_mixin.dart';
+import 'package:hain_tv/platform/desktop_fullscreen_mixin.dart';
 import 'package:hain_tv/platform/windows_window_utils.dart';
 
 class WindowsPlayerScreen extends StatefulWidget {
@@ -46,7 +47,7 @@ class WindowsPlayerScreen extends StatefulWidget {
 }
 
 class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
-    with WindowsFullscreenMixin<WindowsPlayerScreen> {
+    with DesktopFullscreenMixin<WindowsPlayerScreen> {
   late VideoDetail _currentVideoDetail;
   late int _currentSourceIndex;
   // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
@@ -54,6 +55,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   // 导致播放源被重置到列表首位。
   String? _initialSourceKey;
   VideoPlayerBackend? _backend;
+  final PlayerSwitchGate _switchGate = PlayerSwitchGate();
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
   bool _playing = true;
@@ -185,7 +187,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       if (mounted) {
         HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
       }
-      if (DeviceUtils.isWindows && mounted) {
+      if (DeviceUtils.isDesktop && mounted) {
         try {
           final bounds = await windowManager.getBounds();
           if (_isValidNormalBounds(bounds) && !_isNearScreenSize(bounds)) {
@@ -334,7 +336,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         }),
       );
 
-    await _openEpisode(_currentEpisodeIndex);
+    await _openEpisodeImpl(_currentEpisodeIndex);
   }
 
   void _safeSeekToSeconds(double targetSeconds) {
@@ -470,7 +472,10 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     return _duration.inMilliseconds > 0;
   }
 
-  Future<void> _openEpisode(int index) async {
+  Future<void> _openEpisode(int index) =>
+      _switchGate.run(() => _openEpisodeImpl(index));
+
+  Future<void> _openEpisodeImpl(int index) async {
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
 
@@ -621,10 +626,14 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       });
       _autoSwitchTimer = Timer(Duration(seconds: timeoutSeconds), () async {
         if (!mounted) return;
-        final switched = await _tryAutoSwitchSource(
-          index,
-          timeoutSeconds: timeoutSeconds,
-        );
+        bool? _switchedResult;
+        await _switchGate.run(() async {
+          _switchedResult = await _tryAutoSwitchSource(
+            index,
+            timeoutSeconds: timeoutSeconds,
+          );
+        });
+        final switched = _switchedResult ?? false;
         if (mounted && !switched) {
           setState(() {
             if (_error == null || _error!.isEmpty) {
@@ -778,7 +787,10 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     return false;
   }
 
-  Future<void> _switchSource(int index) async {
+  Future<void> _switchSource(int index) =>
+      _switchGate.run(() => _switchSourceImpl(index));
+
+  Future<void> _switchSourceImpl(int index) async {
     if (index < 0 || index >= _sources.length) return;
     if (index == _currentSourceIndex) return;
 
@@ -1485,7 +1497,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Future<void> _toggleMiniPlayer() async {
-    if (!DeviceUtils.isWindows || _togglingMiniPlayer) return;
+    if (!DeviceUtils.isDesktop || _togglingMiniPlayer) return;
     _togglingMiniPlayer = true;
     try {
       if (_isMiniPlayer) {
@@ -1607,7 +1619,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Future<void> _toggleAlwaysOnTop() async {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     try {
       final current = await windowManager.isAlwaysOnTop();
       final next = !current;
@@ -1619,7 +1631,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Future<void> _restoreNormalWindowIfMini() async {
-    if (!DeviceUtils.isWindows || !_isMiniPlayer || _togglingMiniPlayer) return;
+    if (!DeviceUtils.isDesktop || !_isMiniPlayer || _togglingMiniPlayer) return;
     _togglingMiniPlayer = true;
     try {
       // 先放开尺寸限制，再恢复窗口边界，避免被小窗最大尺寸截断。
@@ -1841,7 +1853,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 显示，再重新启动 [._kMouseHideDelay] 后的自动隐藏。非全屏时仅确保光标
   /// 可见并取消定时器，不启用自动隐藏。
   void _resetMouseTimer() {
-    if (!DeviceUtils.isWindows) return;
+    if (!DeviceUtils.isDesktop) return;
     _mouseInactivityTimer?.cancel();
     _mouseInactivityTimer = null;
     if (!isWindowsFullScreen) {
@@ -1860,7 +1872,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
   /// 隐藏鼠标光标（仅 Windows 全屏时生效）。
   void _hideCursor() {
-    if (!DeviceUtils.isWindows || !isWindowsFullScreen) return;
+    if (!DeviceUtils.isDesktop || !isWindowsFullScreen) return;
     if (!mounted || _isCursorHidden) return;
     WindowsWindowUtils.setCursorVisible(false);
     _isCursorHidden = true;
@@ -1869,7 +1881,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
 
   /// 显示鼠标光标。
   void _showCursor() {
-    if (!DeviceUtils.isWindows || !mounted) return;
+    if (!DeviceUtils.isDesktop || !mounted) return;
     if (!_isCursorHidden) return;
     WindowsWindowUtils.setCursorVisible(true);
     _isCursorHidden = false;
@@ -1890,7 +1902,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Widget _buildGestureOverlay() {
-    if (DeviceUtils.isWindows && _isMiniPlayer) {
+    if (DeviceUtils.isDesktop && _isMiniPlayer) {
       return _buildMiniCentralGestureOverlay();
     }
     return Positioned.fill(
@@ -2452,7 +2464,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   ),
                 ),
                 SizedBox(width: AppSpacing.md),
-                if (DeviceUtils.isWindows)
+                if (DeviceUtils.isDesktop)
                   _buildControlTextButton(
                     onTap: toggleWindowsFullscreen,
                     icon: isWindowsFullScreen
@@ -2461,8 +2473,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: isWindowsFullScreen ? '退出全屏' : '全屏',
                     tooltip: isWindowsFullScreen ? '退出全屏' : '全屏',
                   ),
-                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
-                if (DeviceUtils.isWindows)
+                if (DeviceUtils.isDesktop) SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isDesktop)
                   _buildControlTextButton(
                     onTap: _toggleMiniPlayer,
                     icon: _isMiniPlayer
@@ -2471,8 +2483,8 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: _isMiniPlayer ? '恢复窗口' : '小窗播放',
                     tooltip: _isMiniPlayer ? '恢复窗口' : '小窗播放',
                   ),
-                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
-                if (DeviceUtils.isWindows)
+                if (DeviceUtils.isDesktop) SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isDesktop)
                   _buildControlTextButton(
                     onTap: _toggleAlwaysOnTop,
                     icon: _isAlwaysOnTop
@@ -2481,7 +2493,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label: _isAlwaysOnTop ? '取消置顶' : '置顶',
                     tooltip: _isAlwaysOnTop ? '取消置顶' : '窗口置顶',
                   ),
-                if (DeviceUtils.isWindows) SizedBox(width: AppSpacing.md),
+                if (DeviceUtils.isDesktop) SizedBox(width: AppSpacing.md),
                 if (_currentVideoDetail.source.isNotEmpty &&
                     _currentVideoDetail.id.isNotEmpty)
                   _buildControlTextButton(

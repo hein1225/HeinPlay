@@ -176,7 +176,7 @@ class _WindowsLiveSourceManagerScreenState
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       itemCount: allItems.length,
       buildDefaultDragHandles: false,
-      onReorderItem: (oldIndex, newIndex) {
+      onReorder: (oldIndex, newIndex) {
         if (oldIndex == 0) return;
         final userOldIndex = oldIndex - 1;
         final userNewIndex = newIndex <= 0 ? 0 : newIndex - 1;

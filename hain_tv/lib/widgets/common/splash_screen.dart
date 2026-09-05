@@ -22,6 +22,9 @@ enum SplashTarget {
   /// Windows 桌面版。
   windows,
 
+  /// Linux 桌面版。
+  linux,
+
   /// 手机版（竖屏与横屏平板）。
   mobile,
 }
@@ -165,7 +168,10 @@ class _SplashScreenState extends State<SplashScreen>
 
       // 7. 预加载首页数据（豆瓣热门、继续观看、首次进入时同步服务器记录/收藏），
       //    让进入首页时直接展示内容，不再出现单独加载圈。
-      await HomeDataPreload.preload();
+      //    双保险超时：preload 内部已对同步/拉取各加 ~10s 硬超时，这里再兜底一层，
+      //    确保任何极端情况下 SplashScreen 都不会因首页数据而卡死、进不了首页。
+      await HomeDataPreload.preload()
+          .timeout(const Duration(seconds: 15), onTimeout: () => false);
       _setProgress(0.90);
 
       // 8. Bangumi 代理设置加载。

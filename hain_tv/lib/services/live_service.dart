@@ -18,7 +18,23 @@ class _CatchupInfo {
   final String? catchupSource;
   final int? catchupDays;
 
-  _CatchupInfo({this.catchup, this.catchupSource, this.catchupDays});
+  /// 顺带从同一份 M3U 中提取的 FCC 快速换台地址（若源提供）。
+  final String? fccUrl;
+
+  _CatchupInfo({
+    this.catchup,
+    this.catchupSource,
+    this.catchupDays,
+    this.fccUrl,
+  });
+}
+
+/// 播放地址 + 从地址中剥离出的 FCC 快速换台地址。
+class _UrlWithFcc {
+  final String url;
+  final String? fccUrl;
+
+  _UrlWithFcc(this.url, this.fccUrl);
 }
 
 /// 直播服务：拉取 LunaTV 直播源、解析本地 M3U/JSON、缓存频道列表。
@@ -183,10 +199,12 @@ class LiveService {
           await _fillEpgAndCatchupFromM3uUrl(channels, fillUrl);
         }
         // 补全后回写缓存，避免下次继续缺失。
-        await CacheService().set(
+        // 注意：只补充 catchup 元数据，不可重置频道列表（播放地址）的刷新周期，
+        // 否则 App 频繁打开会令缓存永不过期，服务端已更新的地址（如 rtp→rtsp）无法生效。
+        await CacheService().setPreservingTtl(
           cacheKey,
           channels.map((c) => c.toJson()).toList(),
-          Duration(hours: cacheHours),
+          fallbackTtl: Duration(hours: cacheHours),
         );
       }
       return ApiResponse.success(channels);
@@ -290,6 +308,7 @@ class LiveService {
               catchup: info.catchup,
               catchupSource: info.catchupSource,
               catchupDays: info.catchupDays,
+              fccUrl: info.fccUrl,
             );
             filledCount++;
           } else if (defaultCatchup.catchup != null ||
@@ -397,6 +416,7 @@ class LiveService {
     String? pendingCatchup;
     String? pendingCatchupSource;
     int? pendingCatchupDays;
+    String? pendingFccUrl;
 
     for (final rawLine in lines) {
       final line = rawLine.trim();
@@ -420,6 +440,7 @@ class LiveService {
         pendingCatchupDays = int.tryParse(
           attrs['catchup-days'] ?? attrs['catchup_days'] ?? '',
         );
+        pendingFccUrl = _pickFccAttribute(attrs);
         continue;
       }
 
@@ -430,6 +451,7 @@ class LiveService {
           catchup: pendingCatchup ?? defaultCatchup,
           catchupSource: pendingCatchupSource ?? defaultCatchupSource,
           catchupDays: pendingCatchupDays ?? defaultCatchupDays,
+          fccUrl: pendingFccUrl ?? _splitFccFromUrl(line).fccUrl,
         );
         if (pendingTvgId != null && pendingTvgId.trim().isNotEmpty) {
           result[pendingTvgId.trim().toLowerCase()] = info;
@@ -445,6 +467,7 @@ class LiveService {
       pendingCatchup = null;
       pendingCatchupSource = null;
       pendingCatchupDays = null;
+      pendingFccUrl = null;
     }
     return (
       result,
@@ -578,10 +601,12 @@ class LiveService {
   ) async {
     final cacheKey = _getChannelsCacheKey(source);
     final cacheHours = await UserDataService.getLiveSourceCacheHours();
-    await CacheService().set(
+    // 仅补充/回写 catchup、EPG 等 enrichment 数据，【不得重置频道列表（播放地址）刷新周期】。
+    // 频道列表按"直播源缓存时间"回源刷新，否则服务端已更新的播放地址（如 rtp→rtsp）无法生效。
+    await CacheService().setPreservingTtl(
       cacheKey,
       channels.map((c) => c.toJson()).toList(),
-      Duration(hours: cacheHours),
+      fallbackTtl: Duration(hours: cacheHours),
     );
     print('直播源缓存已更新: ${source.name}, 含节目单频道数: '
         '${channels.where((c) => c.programs.isNotEmpty).length}');
@@ -626,6 +651,7 @@ class LiveService {
     String? pendingCatchup;
     String? pendingCatchupSource;
     int? pendingCatchupDays;
+    String? pendingFccUrl;
     final pendingUrls = <String>[];
 
     void flushPending() {
@@ -646,6 +672,7 @@ class LiveService {
             catchup: pendingCatchup ?? defaultCatchup,
             catchupSource: pendingCatchupSource ?? defaultCatchupSource,
             catchupDays: pendingCatchupDays ?? defaultCatchupDays,
+            fccUrl: pendingFccUrl,
           ),
         );
       }
@@ -658,6 +685,7 @@ class LiveService {
       pendingCatchup = null;
       pendingCatchupSource = null;
       pendingCatchupDays = null;
+      pendingFccUrl = null;
       pendingUrls.clear();
     }
 
@@ -695,6 +723,7 @@ class LiveService {
         final catchupDays = int.tryParse(
           attrs['catchup-days'] ?? attrs['catchup_days'] ?? '',
         );
+        final fccUrl = _pickFccAttribute(attrs);
 
         // 若名称/分组发生变化，则先落盘上一个频道。
         if (pendingName != null &&
@@ -702,6 +731,7 @@ class LiveService {
           flushPending();
         }
 
+        pendingFccUrl = fccUrl;
         pendingName = name;
         pendingTvgId = tvgId;
         pendingLogo = logo;
@@ -718,7 +748,11 @@ class LiveService {
 
       // 媒体行；同一 #EXTINF 后的多个 URL 视为同一频道的备选源。
       if (pendingName != null && line.isNotEmpty) {
-        pendingUrls.add(line);
+        // 部分源把 FCC 地址挂在播放地址后面（如 `url$fcc=http://...`），
+        // 需要剥离出来，避免污染真实播放地址。
+        final split = _splitFccFromUrl(line);
+        pendingFccUrl ??= split.fccUrl;
+        pendingUrls.add(split.url);
       }
     }
 
@@ -767,6 +801,52 @@ class LiveService {
       result[match.group(1)!.toLowerCase()] = match.group(2)!;
     }
     return result;
+  }
+
+  /// 从属性字典中挑出 FCC 快速换台地址。
+  ///
+  /// 不同直播源命名不统一，这里覆盖常见写法：`fcc`、`fcc-url`、`fcc-src`、
+  /// `fcc-source`、`fcc-server`、`fcc-host`、`x-fcc` 等。
+  static String? _pickFccAttribute(Map<String, String> attrs) {
+    const keys = [
+      'fcc',
+      'fcc-url',
+      'fcc_url',
+      'fcc-src',
+      'fcc_src',
+      'fcc-source',
+      'fcc_source',
+      'fcc-server',
+      'fcc_server',
+      'fcc-host',
+      'fcc_host',
+      'x-fcc',
+      'x_fcc',
+    ];
+    for (final key in keys) {
+      final value = attrs[key]?.trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  /// 从播放地址中剥离 `$fcc=...` / `$fcc:...` 形式的 FCC 地址。
+  ///
+  /// 注意：`$` 后面的内容在 TVbox 类源里也常用于标注清晰度名称，
+  /// 因此只有显式以 `fcc` 开头的片段才会被识别为 FCC 地址。
+  static _UrlWithFcc _splitFccFromUrl(String rawUrl) {
+    final url = rawUrl.trim();
+    final dollarIndex = url.indexOf(r'$');
+    if (dollarIndex <= 0) return _UrlWithFcc(url, null);
+    final suffix = url.substring(dollarIndex + 1).trim();
+    final match = RegExp(r'^fcc\s*[=:]\s*(.+)$', caseSensitive: false)
+        .firstMatch(suffix);
+    if (match == null) return _UrlWithFcc(url, null);
+    final fcc = match.group(1)?.trim();
+    return _UrlWithFcc(
+      url.substring(0, dollarIndex).trim(),
+      (fcc != null && fcc.isNotEmpty) ? fcc : null,
+    );
   }
 
   /// 从 #EXTINF 行解析频道名称（逗号之后）。
@@ -828,10 +908,12 @@ class LiveService {
             ? rest.substring(secondComma + 1).trim()
             : null;
         if (name.isNotEmpty && url.isNotEmpty) {
+          final split = _splitFccFromUrl(url);
           channels.add(
             LiveChannel(
               name: name,
-              url: url,
+              url: split.url,
+              fccUrl: split.fccUrl,
               group: currentGroup,
               program: program?.isNotEmpty == true ? program : null,
             ),

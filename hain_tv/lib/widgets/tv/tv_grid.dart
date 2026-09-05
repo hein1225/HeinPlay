@@ -167,7 +167,6 @@ class _TvHorizontalPosterListState extends State<TvHorizontalPosterList> {
       controller: _scrollController,
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      scrollCacheExtent: ScrollCacheExtent.pixels(double.maxFinite),
       itemCount: widget.items.length,
       separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.md),
       itemBuilder: (context, index) {
@@ -517,7 +516,6 @@ class _TvPosterGridState extends State<TvPosterGrid> {
             mainAxisSpacing: 6,
             childAspectRatio: 0.78,
           ),
-          scrollCacheExtent: ScrollCacheExtent.pixels(2000),
           itemCount: widget.items.length,
           itemBuilder: (context, index) => _buildItem(index, count),
         );
