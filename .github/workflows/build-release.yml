@@ -192,6 +192,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Windows 默认禁用长路径（MAX_PATH=260），flutter 插件 git 依赖的
+      # example 路径超过限制会导致 `git checkout` 失败（Filename too long）。
+      # 开启 core.longpaths 让 git 支持长路径，必须在 flutter pub get 之前。
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -199,7 +205,7 @@ jobs:
           channel: 'stable'
 
       - name: Get Flutter dependencies
-        run: flutter pub get
+        run: git config --global core.longpaths true && flutter pub get
 
       # mdk-sdk 的 GitHub latest 目录中已不存在 mdk-sdk-windows-x64.7z，
       # 导致 FVP 在 CI 中下载失败。这里手动下载与 fvp 0.37.x 对应的

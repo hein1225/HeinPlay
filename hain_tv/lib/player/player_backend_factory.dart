@@ -84,11 +84,13 @@ class PlayerBackendFactory {
     return PlayerBackendType.exo;
   }
 
-  /// 直播默认后端：Android / TV 与 Windows 默认 ExoPlayer（Android/TV 点播同款，
-  /// 兼容性最佳）；HarmonyOS / Linux 无 ExoPlayer 运行时，仍用 fvp。
+  /// 直播默认后端：Android / TV 默认 ExoPlayer（Android/TV 点播同款，
+  /// 起播与换台速度更快）；Windows / HarmonyOS / Linux 无 ExoPlayer 运行时，仍用 fvp。
   /// 见 [UserDataService.getLivePlayerBackend] 的默认值说明。
   static PlayerBackendType get platformLiveDefault {
-    if (Platform.operatingSystem == 'ohos' || Platform.isLinux) {
+    if (Platform.isWindows ||
+        Platform.operatingSystem == 'ohos' ||
+        Platform.isLinux) {
       return PlayerBackendType.fvp;
     }
     return PlayerBackendType.exo;
