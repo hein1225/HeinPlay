@@ -1072,13 +1072,13 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     _continuousSeekTimer = null;
   }
 
-  // 播放记录节流保存（30秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
+  // 播放记录节流保存（15秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
   void _savePlayRecordThrottled() {
     if (_isRecordSaveThrottled) return;
     if (!_isPlaybackReadyForRecord()) return;
     _isRecordSaveThrottled = true;
     _savePlayRecordToLunaTV();
-    Timer(const Duration(seconds: 30), () {
+    Timer(const Duration(seconds: 15), () {
       _isRecordSaveThrottled = false;
     });
   }
@@ -1848,6 +1848,17 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
               ),
             ),
             SizedBox(height: AppSpacing.md),
+            Center(
+              child: Text(
+                '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 13,
+                  color: Color(0xFFF0F0F5),
+                ),
+              ),
+            ),
+            SizedBox(height: AppSpacing.xs),
             if (isPortrait)
               Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1879,14 +1890,6 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                         ),
                       ),
                       SizedBox(width: AppSpacing.sm),
-                      Text(
-                        '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                        style: TextStyle(
-                          fontFamily: 'NotoSansSC',
-                          fontSize: 14,
-                          color: Color(0xFFF0F0F5),
-                        ),
-                      ),
                     ],
                   ),
                   SizedBox(height: AppSpacing.sm),
@@ -1918,15 +1921,6 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
                       Icons.skip_next,
                       color: Color(0xFFF0F0F5),
                       size: 28,
-                    ),
-                  ),
-                  SizedBox(width: AppSpacing.md),
-                  Text(
-                    '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: Color(0xFFF0F0F5),
                     ),
                   ),
                   Spacer(),

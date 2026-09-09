@@ -14,7 +14,7 @@ void showSettingsSnackBar(
   if (!context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text(message, style: const TextStyle(color: Colors.white)),
+      content: Text(message, style: TextStyle(color: AppColors.textPrimary)),
       backgroundColor: backgroundColor ?? AppColors.bgElevated,
       duration: duration,
     ),

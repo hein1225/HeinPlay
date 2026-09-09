@@ -165,7 +165,13 @@ class M3u8AdFilter {
 
   /// 主入口：净化 M3U8 内容。
   /// [baseUrl] 是 M3U8 的基地址，用于相对 URL 绝对化。
-  String? purify(String baseUrl, String m3u8content) {
+  /// [cleanDiscontinuities] 为 true 时（Windows/fvp），去广告后清理孤立的
+  /// `#EXT-X-DISCONTINUITY` 标记，避免播放器因孤立断点重置时间轴造成重新播放。
+  String? purify(
+    String baseUrl,
+    String m3u8content, {
+    bool cleanDiscontinuities = false,
+  }) {
     final start = DateTime.now();
     currentAdCount = 0;
 
@@ -192,7 +198,17 @@ class M3u8AdFilter {
     } else {
       result = _get(baseUrl, content);
     }
-    result = _ensureDiscontinuityAtBoundaries(baseUrl, content, result);
+    result = _ensureDiscontinuityAtBoundaries(
+      baseUrl,
+      content,
+      result,
+      insertDiscontinuity: !cleanDiscontinuities,
+    );
+    if (cleanDiscontinuities) {
+      // Windows(fvp/VLC) 对孤立的 EXT-X-DISCONTINUITY 会重置时间轴导致重新播放，
+      // 去广告后这些标记往往变成孤立标记，需清理。
+      result = _removeOrphanDiscontinuities(baseUrl, result);
+    }
     result = _keepVodEndList(content, result);
 
     if (totalSegments > 0 && currentAdCount > totalSegments * 0.5) {
@@ -1011,9 +1027,10 @@ class M3u8AdFilter {
           (sum, s) => sum + s.duration,
         );
         // 被 discontinuity 包围的短簇：片段数较少且总时长明显短于正片单片段时长。
-        if (clusterCount <= 5 &&
+        // 放宽阈值以覆盖 3 段以上的广告块（多数正片片段约 2s，广告块常 6~15s）。
+        if (clusterCount <= 8 &&
             clusterTotal > 0 &&
-            clusterTotal < mainDuration * 0.8) {
+            clusterTotal < mainDuration * 4) {
           for (final seg in clusterSegments) {
             keepIndices.remove(seg.index);
             if (seg.durationIndex != null) {
@@ -1038,9 +1055,9 @@ class M3u8AdFilter {
     if (lastCluster.isNotEmpty) {
       final clusterCount = lastCluster.length;
       final clusterTotal = lastCluster.fold<double>(0, (sum, s) => sum + s.duration);
-      if (clusterCount <= 5 &&
+      if (clusterCount <= 8 &&
           clusterTotal > 0 &&
-          clusterTotal < mainDuration * 0.8) {
+          clusterTotal < mainDuration * 4) {
         for (final seg in lastCluster) {
           keepIndices.remove(seg.index);
           if (seg.durationIndex != null) keepIndices.remove(seg.durationIndex!);
@@ -1211,8 +1228,9 @@ class M3u8AdFilter {
   static String _ensureDiscontinuityAtBoundaries(
     String baseUrl,
     String originalContent,
-    String filteredContent,
-  ) {
+    String filteredContent, {
+    bool insertDiscontinuity = true,
+  }) {
     final originalUris = _extractMediaUris(baseUrl, originalContent);
     if (originalUris.isEmpty) return filteredContent;
 
@@ -1250,7 +1268,9 @@ class M3u8AdFilter {
       final originalIndex = queue.removeFirst();
       final hasGap = (prevOriginalIndex == null && originalIndex > 0) ||
           (prevOriginalIndex != null && originalIndex > prevOriginalIndex + 1);
-      if (hasGap && !_groupHasDiscontinuity(group)) {
+      if (insertDiscontinuity &&
+          hasGap &&
+          !_groupHasDiscontinuity(group)) {
         group.insert(0, _tagDiscontinuity);
         insertedCount++;
       }
@@ -1268,6 +1288,70 @@ class M3u8AdFilter {
       }
     }
     return sb.toString();
+  }
+
+  /// 清理去广告后残留的孤立 `#EXT-X-DISCONTINUITY` 标记。
+  ///
+  /// 某些播放器后端（如 fvp/mpv）遇到孤立断点会重置时间轴，表现为从头重新播放。
+  /// 判定为孤立的条件：标记前/后没有媒体片段（位于开头或结尾），或前后媒体片段
+  /// 属于同一域名（说明该断点原本只是用来包裹被删掉的广告）。
+  /// 跨域名（不同内容）的断点予以保留，避免误合并不同编码的内容。
+  static String _removeOrphanDiscontinuities(String baseUrl, String content) {
+    final lines = content.replaceAll('\r\n', '\n').split('\n');
+    final discIndices = <int>[];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim().startsWith(_tagDiscontinuity)) discIndices.add(i);
+    }
+    if (discIndices.isEmpty) return content;
+
+    final remove = <int>{};
+    for (final di in discIndices) {
+      final prevHost = _nearestMediaHost(lines, di, baseUrl, before: true);
+      final nextHost = _nearestMediaHost(lines, di, baseUrl, before: false);
+      // 孤立：开头/结尾无相邻媒体，或前后媒体同域（仅用来包裹广告）。
+      if (prevHost == null || nextHost == null || prevHost == nextHost) {
+        remove.add(di);
+      }
+    }
+    if (remove.isEmpty) return content;
+
+    final remainingDisc =
+        discIndices.where((i) => !remove.contains(i)).length;
+    final sb = StringBuffer();
+    for (var i = 0; i < lines.length; i++) {
+      final t = lines[i].trim();
+      if (remove.contains(i)) continue;
+      // 若没有断点残留，相关的 SEQUENCE 标记也失去意义，一并移除。
+      if (remainingDisc == 0 &&
+          t.startsWith('#EXT-X-DISCONTINUITY-SEQUENCE')) {
+        continue;
+      }
+      sb.writeln(lines[i]);
+    }
+    return sb.toString();
+  }
+
+  /// 从 [discIndex] 沿 [before] 方向找到最近的一条媒体片段并返回其域名。
+  static String? _nearestMediaHost(
+    List<String> lines,
+    int discIndex,
+    String baseUrl, {
+    required bool before,
+  }) {
+    if (before) {
+      for (var i = discIndex - 1; i >= 0; i--) {
+        final t = lines[i].trim();
+        if (t.isEmpty || t.startsWith('#')) continue;
+        return _hostOf(_toAbsoluteUrl(baseUrl, t));
+      }
+    } else {
+      for (var i = discIndex + 1; i < lines.length; i++) {
+        final t = lines[i].trim();
+        if (t.isEmpty || t.startsWith('#')) continue;
+        return _hostOf(_toAbsoluteUrl(baseUrl, t));
+      }
+    }
+    return null;
   }
 
   static List<String> _extractMediaUris(String baseUrl, String content) {

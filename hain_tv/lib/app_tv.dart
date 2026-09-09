@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hain_tv/screens/tv/login_screen.dart';
+import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/splash_screen.dart';
@@ -14,12 +15,38 @@ class HainTvApp extends StatefulWidget {
 }
 
 class _HainTvAppState extends State<HainTvApp> {
+  /// 全局导航 key：供 MaterialApp 管理路由栈（搜索跳转已迁移到 TvShell 的常驻 Tab）。
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
     ThemeModeService.instance.addListener(_onThemeChanged);
     ThemeModeService.instance.init();
+    _startRemoteControl();
   }
+
+  void _startRemoteControl() {
+    // 手机控制服务常驻后台，固定端口 5025，APP 启动即开始监听，
+    // 这样任意入口的二维码都能指向统一的手机设置页。
+    RemoteInputService().deviceName = '海因影视 TV';
+    RemoteInputService()
+        .startServer()
+        .then((url) => debugPrint('远程控制服务已启动: $url'))
+        .catchError((e) => debugPrint('远程控制服务启动失败: $e'));
+    // 账号处理器在 App 层常驻注册（与 tv_shell 生命周期解耦），保证切账号后
+    // 手机端账号操作仍可由单例响应，无需重启 TV 才能再次切账号。
+    RemoteInputService().setSubAccountHandler(
+      (d) => handleRemoteSubAccount(d, _navigatorKey),
+    );
+    RemoteInputService().setAccountActionHandler(
+      (d) => handleRemoteAccountAction(d, _navigatorKey),
+    );
+  }
+
+  // 手机搜索跳转逻辑已迁移到 TvShell：搜索是 TvShell 的常驻 Tab（顶栏"搜索"，index 1），
+  // 由 TvShell 监听 RemoteInputService 的命令/关键词流后切到该 Tab，而不是 push 一个独立
+  // SearchScreen 路由——这样既不会"另开一个新页"，也避免了搜索 Tab 已被缓存导致永不跳转。
 
   @override
   void dispose() {
@@ -40,6 +67,7 @@ class _HainTvAppState extends State<HainTvApp> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: '海因影视',
       debugShowCheckedModeBanner: false,
       theme: buildLightTheme(),

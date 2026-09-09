@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
-import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
@@ -28,31 +26,20 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameFocusNode = FocusNode();
   final _passwordFocusNode = FocusNode();
   final _loginButtonFocusNode = FocusNode();
-  final _qrButtonFocusNode = FocusNode();
   bool _loading = false;
   String? _error;
-  // 电脑版（Windows / Linux）不需要二维码登录；TV 版默认焦点在扫码登录，
-  // 电脑版默认焦点在服务器地址输入框。
-  final bool _hasQrLogin = !DeviceUtils.isComputer;
-  late int _focusedIndex = _hasQrLogin ? 0 : 1;
+  // 电脑版（Windows / Linux）不需要二维码登录，默认焦点在服务器地址输入框。
+  late int _focusedIndex = 1;
 
-  final _remoteInputService = RemoteInputService();
-  StreamSubscription<Map<String, String>>? _qrLoginSub;
-  bool _qrDialogShowing = false;
 
   @override
   void initState() {
     super.initState();
     _loadSavedData();
-    if (_hasQrLogin) {
-      _setupQrLogin();
-    }
     // 首帧渲染后设置唯一初始焦点，避免多个 FocusableWidget 同时 autofocus 导致双焦点。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       switch (_focusedIndex) {
-        case 0:
-          _qrButtonFocusNode.requestFocus();
         case 1:
           _serverFocusNode.requestFocus();
         case 2:
@@ -67,29 +54,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void _setupQrLogin() {
-    _qrLoginSub = _remoteInputService.onLogin.listen((data) {
-      if (!mounted) return;
-      final serverUrl = data['serverUrl'] ?? '';
-      final backupServerUrl = data['backupServerUrl'] ?? '';
-      final username = data['username'] ?? '';
-      final password = data['password'] ?? '';
-      if ((serverUrl.isEmpty && backupServerUrl.isEmpty) || password.isEmpty) return;
-
-      _serverController.text = serverUrl;
-      _backupServerController.text = backupServerUrl;
-      _usernameController.text = username;
-      _passwordController.text = password;
-      setState(() => _focusedIndex = 5);
-
-      if (_qrDialogShowing && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-        setState(() => _qrDialogShowing = false);
-      }
-
-      _login();
-    });
-  }
 
   Future<void> _loadSavedData() async {
     final serverUrl = await UserDataService.getServerUrl();
@@ -109,8 +73,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _qrLoginSub?.cancel();
-    _remoteInputService.dispose();
     _serverController.dispose();
     _backupServerController.dispose();
     _usernameController.dispose();
@@ -120,19 +82,16 @@ class _LoginScreenState extends State<LoginScreen> {
     _usernameFocusNode.dispose();
     _passwordFocusNode.dispose();
     _loginButtonFocusNode.dispose();
-    _qrButtonFocusNode.dispose();
     super.dispose();
   }
 
   void _moveFocus(int direction) {
-    final minIndex = _hasQrLogin ? 0 : 1;
+    final minIndex = 1;
     final newIndex = (_focusedIndex + direction).clamp(minIndex, 5);
     setState(() => _focusedIndex = newIndex);
 
     // 请求对应焦点
     switch (newIndex) {
-      case 0:
-        if (_hasQrLogin) _qrButtonFocusNode.requestFocus();
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
@@ -148,8 +107,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _onConfirm() {
     switch (_focusedIndex) {
-      case 0:
-        if (_hasQrLogin) _showQrLoginDialog();
       case 1:
         _serverFocusNode.requestFocus();
       case 2:
@@ -286,10 +243,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       _buildLogo(),
                       const SizedBox(height: AppSpacing.xl),
-                      if (_hasQrLogin) ...[
-                        _buildQrLoginButton(),
-                        const SizedBox(height: AppSpacing.lg),
-                      ],
                       _buildForm(),
                       const SizedBox(height: AppSpacing.lg),
                       _buildLoginButton(),
@@ -511,184 +464,5 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildQrLoginButton() {
-    final isFocused = _focusedIndex == 0;
 
-    return FocusableWidget(
-      focusNode: _qrButtonFocusNode,
-      // 统一由 initState 中的 postFrameCallback 设置唯一初始焦点。
-      autofocus: false,
-      onTap: _loading ? null : _showQrLoginDialog,
-      child: Container(
-        width: double.infinity,
-        height: 48,
-        decoration: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: isFocused ? AppColors.primary : AppColors.border,
-            width: isFocused ? 2 : 1,
-          ),
-        ),
-        child: Center(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.qr_code_scanner,
-                color: isFocused ? AppColors.primary : AppColors.textSecondary,
-                size: 20,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              Text(
-                '扫码登录',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: isFocused
-                      ? AppColors.primary
-                      : AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showQrLoginDialog() async {
-    if (_qrDialogShowing) return;
-    setState(() => _qrDialogShowing = true);
-
-    String? url;
-    String? error;
-    try {
-      final baseUrl = await _remoteInputService.startServer();
-      url = '$baseUrl?mode=login';
-    } catch (e) {
-      error = '启动失败，请检查网络权限';
-    }
-
-    if (!mounted) return;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
-          title: Text(
-            '手机扫码登录',
-            style: TextStyle(
-              fontFamily: 'NotoSansSC',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          content: SizedBox(
-            width: 280,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (error != null)
-                  Text(
-                    error,
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: Colors.redAccent,
-                    ),
-                  )
-                else if (url != null) ...[
-                  Container(
-                    width: 200,
-                    height: 200,
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: QrImageView(
-                      data: url,
-                      version: QrVersions.auto,
-                      size: 180,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    '使用手机扫描上方二维码',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    '或访问 $url',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    '在手机页面输入服务器、用户名和密码后，电视将自动登录',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ] else
-                  const SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: TechLoadingIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            FocusableWidget(
-              autofocus: true,
-              onTap: () => Navigator.of(ctx).pop(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: const Text(
-                  '关闭',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (mounted) {
-      setState(() => _qrDialogShowing = false);
-    }
-  }
 }

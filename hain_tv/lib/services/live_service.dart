@@ -59,6 +59,10 @@ class LiveService {
   /// 服务端返回或从 M3U 头解析到的 LunaTV 源级 EPG 地址缓存。
   static String? _lunaTvEpgUrl;
 
+  /// 最近一次成功拉取的全部内置直播源缓存。
+  /// 拉取失败（或返回空）时复用，避免直播源列表/源管理页突然只剩单个默认内置源。
+  static List<LiveSourceConfig>? _cachedBuiltinSources;
+
   /// 内置 LunaTV 直播源配置（置顶、不可编辑删除）。
   /// 名称优先使用服务端返回的第一个启用源名称，获取失败时回退到默认名称。
   static LiveSourceConfig get lunaTvBuiltinSource {
@@ -81,13 +85,14 @@ class LiveService {
       final response = await LunaTVService.getLiveSources();
       final sources = response.data ?? [];
       if (sources.isEmpty) {
-        return [lunaTvBuiltinSource];
+        // 拉到空列表时优先复用上一次成功的全部内置源，避免回退成单个默认源。
+        return _cachedBuiltinSources ?? [lunaTvBuiltinSource];
       }
       final firstName = sources.first['name']?.toString();
       if (firstName != null && firstName.isNotEmpty) {
         _lunaTvServerSourceName = firstName;
       }
-      return sources.map((s) {
+      final result = sources.map((s) {
         final key = s['key']?.toString() ?? defaultLunaTvSourceKey;
         final name = s['name']?.toString() ?? 'LunaTV 直播';
         final url = s['url']?.toString() ?? '';
@@ -104,14 +109,20 @@ class LiveService {
           createTime: DateTime.utc(2024, 1, 1),
         );
       }).toList();
+      // 缓存成功拉取的全部内置源，供后续拉取失败时使用，避免列表突然只剩单个默认源。
+      _cachedBuiltinSources = result;
+      return result;
     } catch (_) {
-      // 获取失败时回退到默认内置源，避免阻塞列表加载。
-      return [lunaTvBuiltinSource];
+      // 获取失败时优先复用上一次成功的全部内置源，避免回退成单个默认源。
+      return _cachedBuiltinSources ?? [lunaTvBuiltinSource];
     }
   }
 
   /// 获取所有直播源：LunaTV 内置源置顶（每个服务端源一个），其后为用户自定义源。
   /// 若用户在设置中关闭了 LunaTV 服务器直播源，则只返回用户自定义源。
+  ///
+  /// 内置源默认按服务端返回顺序置顶，但支持手动排序：用户的排序结果记录在
+  /// [LiveSourceStorage] 的 builtin 排序映射中，这里据此重排内置源列表。
   static Future<List<LiveSourceConfig>> getAllSources() async {
     final userConfigs = await LiveSourceStorage.getConfigs();
     final lunaTvEnabled = await UserDataService.getLunaTvLiveEnabled();
@@ -119,7 +130,20 @@ class LiveService {
       return userConfigs;
     }
     final builtinSources = await _fetchBuiltinSources();
-    return [...builtinSources, ...userConfigs];
+    // 应用用户对内置源的手动排序（未记录的源保持服务端默认顺序排在末尾）。
+    final orderMap = await LiveSourceStorage.getBuiltinOrderMap();
+    List<LiveSourceConfig> orderedBuiltins;
+    if (orderMap.isEmpty) {
+      orderedBuiltins = builtinSources;
+    } else {
+      final entries = builtinSources.map((b) {
+        final o = orderMap[b.id];
+        return MapEntry(b, o ?? 1000000);
+      }).toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      orderedBuiltins = entries.map((e) => e.key).toList();
+    }
+    return [...orderedBuiltins, ...userConfigs];
   }
 
   /// 从 LunaTV 服务端获取直播频道列表。

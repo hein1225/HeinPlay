@@ -2,12 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/search_result.dart';
-import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
-import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/windows_logger.dart';
@@ -27,7 +24,6 @@ enum _KeyAction { handled, ignored }
 class SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
-  final _qrFocusNode = FocusNode();
   final List<FocusNode> _historyFocusNodes = [];
   final List<FocusNode> _resultFocusNodes = [];
   final _pageScrollController = ScrollController();
@@ -42,11 +38,6 @@ class SearchScreenState extends State<SearchScreen> {
   List<String> _searchHistory = [];
   http.Client? _searchClient;
 
-  // Windows 电脑版使用键盘输入，不需要手机扫码输入。
-  final bool _hasQrInput = !DeviceUtils.isWindows;
-  final _remoteInputService = RemoteInputService();
-  StreamSubscription<String>? _remoteInputSub;
-  bool _qrDialogShowing = false;
 
   void requestSearchBoxFocus() {
     _focusNode.requestFocus();
@@ -55,9 +46,6 @@ class SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    if (_hasQrInput) {
-      _setupRemoteInput();
-    }
     _loadSearchHistory();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -66,21 +54,6 @@ class SearchScreenState extends State<SearchScreen> {
     });
   }
 
-  void _setupRemoteInput() {
-    _remoteInputSub = _remoteInputService.onMessage.listen((message) {
-      if (mounted) {
-        _controller.text = message;
-        _controller.selection = TextSelection.collapsed(
-          offset: _controller.text.length,
-        );
-        _search(message);
-        if (_qrDialogShowing && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-          setState(() => _qrDialogShowing = false);
-        }
-      }
-    });
-  }
 
   @override
   void dispose() {
@@ -88,7 +61,6 @@ class SearchScreenState extends State<SearchScreen> {
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _controller.dispose();
     _focusNode.dispose();
-    _qrFocusNode.dispose();
     for (final node in _historyFocusNodes) {
       node.dispose();
     }
@@ -96,8 +68,6 @@ class SearchScreenState extends State<SearchScreen> {
       node.dispose();
     }
     _pageScrollController.dispose();
-    _remoteInputSub?.cancel();
-    _remoteInputService.dispose();
     super.dispose();
   }
 
@@ -234,128 +204,6 @@ class SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Future<void> _showQrDialog() async {
-    if (_qrDialogShowing) return;
-    setState(() => _qrDialogShowing = true);
-
-    String? url;
-    String? error;
-    try {
-      url = await _remoteInputService.startServer();
-    } catch (e) {
-      error = '启动失败，请检查网络权限';
-    }
-
-    if (!mounted) return;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.bgSurface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
-          title: Text(
-            '手机扫码输入',
-            style: TextStyle(
-              fontFamily: 'NotoSansSC',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          content: SizedBox(
-            width: 280,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (error != null)
-                  Text(
-                    error,
-                    style: const TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: Colors.redAccent,
-                    ),
-                  )
-                else if (url != null) ...[
-                  Container(
-                    width: 200,
-                    height: 200,
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                    ),
-                    child: QrImageView(
-                      data: url,
-                      version: QrVersions.auto,
-                      size: 180,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    '使用手机扫描上方二维码',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    '或访问 $url',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ] else
-                  const SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: TechLoadingIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            FocusableWidget(
-              autofocus: true,
-              onTap: () => Navigator.of(ctx).pop(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: const Text(
-                  '关闭',
-                  style: TextStyle(
-                    fontFamily: 'NotoSansSC',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (mounted) {
-      setState(() => _qrDialogShowing = false);
-    }
-  }
 
   int get _effectiveResultCrossAxisCount {
     final constraints = _resultGridConstraints;
@@ -384,11 +232,10 @@ class SearchScreenState extends State<SearchScreen> {
   }
 
   bool get _focusInSearchBox => _focusNode.hasFocus;
-  bool get _focusInQr => _hasQrInput && _qrFocusNode.hasFocus;
   bool get _focusInHistory => _currentHistoryIndex != null;
   bool get _focusInResults => _currentResultIndex != null;
   bool get _focusInSearchPage =>
-      _focusInSearchBox || _focusInQr || _focusInHistory || _focusInResults;
+      _focusInSearchBox || _focusInHistory || _focusInResults;
 
   /// 全局硬件按键兜底处理。
   ///
@@ -429,10 +276,6 @@ class SearchScreenState extends State<SearchScreen> {
     // 按右：搜索框→二维码（TV 版）；搜索框/历史→搜索结果第一项
     if (key == LogicalKeyboardKey.arrowRight) {
       if (_focusInSearchBox) {
-        if (_hasQrInput) {
-          _qrFocusNode.requestFocus();
-          return _KeyAction.handled;
-        }
         if (_resultFocusNodes.isNotEmpty) {
           _resultFocusNodes.first.requestFocus();
           return _KeyAction.handled;
@@ -460,10 +303,6 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 按左：二维码→搜索框（TV 版）；结果/历史网格内横向移动（首个海报左键不再回到搜索框）
     if (key == LogicalKeyboardKey.arrowLeft) {
-      if (_focusInQr) {
-        _focusNode.requestFocus();
-        return _KeyAction.handled;
-      }
       if (_focusInResults) {
         final idx = _currentResultIndex!;
         if (idx % resultCrossAxisCount > 0) {
@@ -483,7 +322,7 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 按下
     if (key == LogicalKeyboardKey.arrowDown) {
-      if (_focusInSearchBox || _focusInQr) {
+      if (_focusInSearchBox) {
         if (_historyFocusNodes.isNotEmpty) {
           _historyFocusNodes.first.requestFocus();
           return _KeyAction.handled;
@@ -522,7 +361,7 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 按上
     if (key == LogicalKeyboardKey.arrowUp) {
-      if (_focusInSearchBox || _focusInQr) {
+      if (_focusInSearchBox) {
         // 将焦点交回顶部导航栏（TvShell 的搜索项）
         return _KeyAction.ignored;
       }
@@ -591,10 +430,6 @@ class SearchScreenState extends State<SearchScreen> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(child: _buildSearchBox()),
-                      if (_hasQrInput) ...[
-                        const SizedBox(width: AppSpacing.md),
-                        _buildQrButton(),
-                      ],
                     ],
                   ),
                   const SizedBox(height: AppSpacing.md),
@@ -697,42 +532,6 @@ class SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildQrButton() {
-    return FocusableWidget(
-      focusNode: _qrFocusNode,
-      onTap: _showQrDialog,
-      onKeyEvent: _handleKeyEvent,
-      child: Container(
-        width: 100,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.sm,
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.primaryTint,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: AppColors.primary),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.qr_code_scanner, color: AppColors.primary, size: 24),
-            SizedBox(height: AppSpacing.xs),
-            Text(
-              '手机输入',
-              style: TextStyle(
-                fontFamily: 'NotoSansSC',
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildHistorySection(double width, int crossAxisCount) {
     const crossSpacing = AppSpacing.sm;
@@ -891,15 +690,6 @@ class SearchScreenState extends State<SearchScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (_hasQrInput)
-              Text(
-                '或使用手机扫码输入',
-                style: TextStyle(
-                  fontFamily: 'NotoSansSC',
-                  fontSize: 14,
-                  color: AppColors.textMuted,
-                ),
-              ),
           ],
         ),
       );

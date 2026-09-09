@@ -17,12 +17,18 @@ class LocalM3u8Proxy {
   http.Client? _client;
   bool _closing = false;
   bool _filterEnabled = false;
+  bool _discontinuityCleanup = false;
 
   bool get isRunning => _server != null;
 
   /// 设置是否对子 M3U8 启用广告过滤。
   void setFilterEnabled(bool enabled) {
     _filterEnabled = enabled;
+  }
+
+  /// 设置去广告后是否清理孤立的 EXT-X-DISCONTINUITY 标记（Windows/fvp 需要）。
+  void setDiscontinuityCleanup(bool enabled) {
+    _discontinuityCleanup = enabled;
   }
 
   void _log(String message) {
@@ -233,7 +239,13 @@ class LocalM3u8Proxy {
           _log(
             'proxySegment sub-m3u8 raw: $targetUrl\n${_summarizeContent(decoded)}',
           );
-          final filtered = _filterEnabled ? _filterM3u8(targetUrl, decoded) : decoded;
+          final filtered = _filterEnabled
+              ? _filterM3u8(
+                  targetUrl,
+                  decoded,
+                  cleanDiscontinuities: _discontinuityCleanup,
+                )
+              : decoded;
           final resolved = resolveRelativeUrls(filtered, targetUrl);
           final rewritten = rewriteToLocalProxy(resolved, baseUrl!);
           bodyBytes = utf8.encode(rewritten);
@@ -445,10 +457,18 @@ class LocalM3u8Proxy {
   }
 
   /// 对 M3U8 内容进行本地广告过滤。
-  static String _filterM3u8(String baseUrl, String content) {
+  static String _filterM3u8(
+    String baseUrl,
+    String content, {
+    bool cleanDiscontinuities = false,
+  }) {
     try {
       final filter = M3u8AdFilter();
-      final filtered = filter.purify(baseUrl, content);
+      final filtered = filter.purify(
+        baseUrl,
+        content,
+        cleanDiscontinuities: cleanDiscontinuities,
+      );
       if (filtered != null && filtered != content) {
         WindowsLogger.log(
           'LocalM3u8Proxy',

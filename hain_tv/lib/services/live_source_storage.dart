@@ -9,6 +9,11 @@ class LiveSourceStorage {
   static const String _key = 'live_source_configs';
   static const String _lastChannelKeyPrefix = 'live_last_channel_';
 
+  /// 服务端（内置）直播源的手动排序映射：sourceId -> 组内位置。
+  /// 内置源每次从服务端实时拉取，无法像用户源那样整体持久化，
+  /// 因此单独用一份 id->order 映射来记录用户的手动排序结果。
+  static const String _builtinOrderKey = 'live_source_builtin_order';
+
   static Future<SharedPreferences> _prefs() async {
     return SharedPreferences.getInstance();
   }
@@ -60,6 +65,86 @@ class LiveSourceStorage {
       ordered[i] = ordered[i].copyWith(order: i);
     }
     await _saveAll(ordered);
+  }
+
+  /// 读取服务端（内置）直播源的手动排序映射。
+  static Future<Map<String, int>> getBuiltinOrderMap() async {
+    final prefs = await _prefs();
+    final raw = prefs.getString(_builtinOrderKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final map = json.decode(raw) as Map<String, dynamic>;
+      return map.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// 持久化服务端（内置）直播源的手动排序结果（按列表下标写入 id->order）。
+  static Future<void> saveBuiltinOrder(List<LiveSourceConfig> builtins) async {
+    final map = <String, int>{};
+    for (int i = 0; i < builtins.length; i++) {
+      map[builtins[i].id] = i;
+    }
+    final prefs = await _prefs();
+    await prefs.setString(_builtinOrderKey, json.encode(map));
+  }
+
+  /// 对「内置源在前、用户源在后」的组合列表执行分段感知重排。
+  ///
+  /// 拖拽/长按排序时调用：内置源只在内置段内移动，用户源只在用户段内移动，
+  /// 两类源不互相穿插（[newIndex] 会被夹取到所属段内）。
+  static Future<void> reorderCombined(
+    List<LiveSourceConfig> combined,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    final b = combined.where((c) => c.isBuiltin).length;
+    final total = combined.length;
+    if (oldIndex < b) {
+      final newClamped = newIndex.clamp(0, b - 1);
+      if (newClamped == oldIndex) return;
+      final builtins = combined.where((c) => c.isBuiltin).toList();
+      final item = builtins.removeAt(oldIndex);
+      builtins.insert(newClamped, item);
+      await saveBuiltinOrder(builtins);
+    } else {
+      final newClamped = (newIndex - b).clamp(0, total - b - 1);
+      final userOld = oldIndex - b;
+      if (newClamped == userOld) return;
+      final users = combined.where((c) => !c.isBuiltin).toList();
+      final item = users.removeAt(userOld);
+      users.insert(newClamped, item);
+      await reorderConfigs(users);
+    }
+  }
+
+  /// 在组合列表中把 [index] 处的项向上(delta=-1)/向下(delta=+1)移动一格（仅段内）。
+  ///
+  /// TV 版「排序模式」的上下移动调用：超出段边界时自动停在该段首尾。
+  static Future<void> moveCombined(
+    List<LiveSourceConfig> combined,
+    int index,
+    int delta,
+  ) async {
+    final b = combined.where((c) => c.isBuiltin).length;
+    final total = combined.length;
+    if (index < b) {
+      final target = (index + delta).clamp(0, b - 1);
+      if (target == index) return;
+      final builtins = combined.where((c) => c.isBuiltin).toList();
+      final item = builtins.removeAt(index);
+      builtins.insert(target, item);
+      await saveBuiltinOrder(builtins);
+    } else {
+      final users = combined.where((c) => !c.isBuiltin).toList();
+      final userIndex = index - b;
+      final target = (userIndex + delta).clamp(0, users.length - 1);
+      if (target == userIndex) return;
+      final item = users.removeAt(userIndex);
+      users.insert(target, item);
+      await reorderConfigs(users);
+    }
   }
 
   static Future<void> _saveAll(List<LiveSourceConfig> configs) async {

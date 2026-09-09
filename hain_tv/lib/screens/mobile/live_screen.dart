@@ -23,6 +23,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
   List<LiveSourceConfig> _sources = [];
   bool _loading = true;
   String? _error;
+  bool _sortMode = false;
 
   @override
   void initState() {
@@ -247,6 +248,11 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         title: const Text('直播'),
         actions: [
           IconButton(
+            icon: Icon(_sortMode ? Icons.check : Icons.sort),
+            tooltip: _sortMode ? '完成排序' : '排序',
+            onPressed: () => setState(() => _sortMode = !_sortMode),
+          ),
+          IconButton(
             icon: const Icon(Icons.add),
             tooltip: '添加直播源',
             onPressed: () async {
@@ -302,13 +308,43 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
       return _buildEmpty();
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      itemCount: _sources.length,
-      itemBuilder: (context, index) {
-        final source = _sources[index];
-        return _buildSourceCard(source);
-      },
+    return Column(
+      children: [
+        if (_sortMode)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.xs,
+            ),
+            color: AppColors.primary.withValues(alpha: 0.12),
+            child: Text(
+              '按住左侧手柄拖动调整顺序：服务器源与本地源各自分组内排序',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                color: AppColors.primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        Expanded(
+          child: ReorderableListView.builder(
+            buildDefaultDragHandles: false,
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            itemCount: _sources.length,
+            onReorder: (oldIndex, newIndex) async {
+              await LiveSourceStorage.reorderCombined(_sources, oldIndex, newIndex);
+              await _loadSources();
+              LiveSourceRefreshNotifier.instance.notify();
+            },
+            itemBuilder: (context, index) {
+              final source = _sources[index];
+              return _buildSourceCard(source, index);
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -353,31 +389,45 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
     );
   }
 
-  Widget _buildSourceCard(LiveSourceConfig source) {
-    return Card(
-      color: AppColors.bgSurface,
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.xs,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        onTap: () => _onSourceTap(source),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
-          child: Row(
-            children: [
-              // 左侧标识
-            _buildSourceTag(
-              source.isBuiltin ? '服务器' : '本地',
-              source.isBuiltin ? AppColors.primary : AppColors.success,
+  Widget _buildSourceCard(LiveSourceConfig source, int index) {
+    return Builder(
+      key: ValueKey(source.id),
+      builder: (itemContext) => Card(
+        color: AppColors.bgSurface,
+        margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          onTap: _sortMode ? null : () => _onSourceTap(source),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
             ),
+            child: Row(
+              children: [
+                if (_sortMode)
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.sm),
+                      child: Icon(
+                        Icons.drag_handle,
+                        size: 22,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                // 左侧标识
+                _buildSourceTag(
+                  source.isBuiltin ? '服务器' : '本地',
+                  source.isBuiltin ? AppColors.primary : AppColors.success,
+                ),
               const SizedBox(width: AppSpacing.md),
               // 中间信息
               Expanded(
@@ -449,6 +499,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 }

@@ -85,6 +85,15 @@ class ProfileScreenState extends State<ProfileScreen> {
     await _loadData();
   }
 
+  /// 从顶部导航栏按“下”进入本页内容时，把焦点送进首个可聚焦菜单项。
+  /// 供 [TvShell] 的导航下键路由使用；页面未显示时不应调用。
+  void focusFirstContent() {
+    if (!mounted) return;
+    if (_menuRow1FocusNodes.isNotEmpty) {
+      _menuRow1FocusNodes[0].requestFocus();
+    }
+  }
+
   Future<void> _loadData() async {
     // 首次进入首页时已强制全量刷新并缓存，这里直接读取本地。
     await _loadFavorites();

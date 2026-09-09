@@ -27,20 +27,23 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
   String _activeAccount = 'main';
 
   final _remoteInputService = RemoteInputService();
-  StreamSubscription<Map<String, String>>? _subAccountQrSub;
+  StreamSubscription<void>? _accountsChangedSub;
   bool _qrSubAccountDialogShowing = false;
 
   @override
   void initState() {
     super.initState();
     _loadAccounts();
-    _setupSubAccountQr();
+    // 手机端子账号输入/切换/删除/退出由 tv_shell 统一全应用级处理；
+    // 本页仅订阅账号变化以刷新 UI，避免重复响应与误杀单例服务。
+    _accountsChangedSub = _remoteInputService.onAccountsChanged.listen((_) {
+      if (mounted) _loadAccounts();
+    });
   }
 
   @override
   void dispose() {
-    _subAccountQrSub?.cancel();
-    _remoteInputService.dispose();
+    _accountsChangedSub?.cancel();
     super.dispose();
   }
 
@@ -67,7 +70,7 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
       SnackBar(
         content: Text(
           message,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: AppColors.textPrimary),
         ),
         backgroundColor: backgroundColor ?? AppColors.bgElevated,
         duration: duration,
@@ -612,31 +615,6 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
     passwordController.dispose();
   }
 
-  void _setupSubAccountQr() {
-    _subAccountQrSub = _remoteInputService.onSubAccount.listen((data) async {
-      if (!mounted) return;
-      final username = data['username'] ?? '';
-      final password = data['password'] ?? '';
-      if (username.isEmpty || password.isEmpty) return;
-
-      await UserDataService.saveSubAccount(AccountInfo(
-        username: username,
-        password: password,
-      ));
-      setState(() => _subAccount = AccountInfo(
-            username: username,
-            password: password,
-          ));
-
-      if (_qrSubAccountDialogShowing && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-        setState(() => _qrSubAccountDialogShowing = false);
-      }
-      _showSnackBar('子账号已保存，尝试切换...');
-      await _switchAccount('sub');
-    });
-  }
-
   Future<void> _showSubAccountQrDialog() async {
     if (_qrSubAccountDialogShowing) return;
     setState(() => _qrSubAccountDialogShowing = true);
@@ -644,8 +622,8 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer();
-      url = '$baseUrl?mode=sub_account';
+      await _remoteInputService.startServer();
+      url = _remoteInputService.settingsUrlWithCat('account');
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }

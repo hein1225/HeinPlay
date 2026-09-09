@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 主题模式偏好。
@@ -84,5 +87,18 @@ class ThemeModeService extends ChangeNotifier {
     };
     await prefs.setString(_key, value);
     notifyListeners();
+  }
+
+  /// 主题切换后请求重启应用（仅 Android 走原生 Activity 重建，使新主题彻底生效、
+  /// 无残留浅色；Windows / TV / 手机端不重启，由各 Shell 监听 ThemeModeService
+  /// 原地刷新自身）。与 [ThemeSettingsPage] 内联实现保持一致，供远程（手机）切换复用。
+  static void requestRestart() {
+    if (Platform.isAndroid) {
+      try {
+        const MethodChannel('hain_tv/app').invokeMethod<void>('restart');
+      } catch (e) {
+        debugPrint('请求重启应用失败: $e');
+      }
+    }
   }
 }

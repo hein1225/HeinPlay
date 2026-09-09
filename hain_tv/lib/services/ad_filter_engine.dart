@@ -9,6 +9,7 @@ import 'ad_filter_service.dart';
 import 'local_m3u8_proxy.dart';
 import 'm3u8_ad_filter.dart';
 import 'user_data_service.dart';
+import '../player/player_backend_factory.dart';
 import '../utils/windows_logger.dart';
 
 class AdFilterEngine {
@@ -21,7 +22,19 @@ class AdFilterEngine {
   }) async {
     final enabled = await AdFilterService.isEnabled();
     final isWindows = Platform.isWindows;
-    WindowsLogger.log('AdFilterEngine', '去广告开关=$enabled, Windows=$isWindows');
+    // 去广告后残留的孤立 EXT-X-DISCONTINUITY 会让 fvp/libmpv 重置时间轴、从头重播，
+    // 仅 fvp 后端需要清理；ExoPlayer(安卓/TV 默认) 依赖 discontinuity 避免
+    // UnexpectedDiscontinuityException，必须保留。按"实际生效的后端"判定，而非仅 Windows。
+    final selBackend = await UserDataService.getPlayerBackend();
+    final effectiveBackend =
+        PlayerBackendFactory.availableBackends.contains(selBackend)
+            ? selBackend
+            : PlayerBackendFactory.platformDefault;
+    final useFvp = effectiveBackend == PlayerBackendType.fvp;
+    WindowsLogger.log(
+      'AdFilterEngine',
+      '去广告开关=$enabled, Windows=$isWindows, 后端=$effectiveBackend, 清理断点=$useFvp',
+    );
 
     final lowerUrl = originalUrl.toLowerCase();
     final isM3u8 =
@@ -95,7 +108,11 @@ class AdFilterEngine {
       String content = originalContent;
       if (enabled) {
         final filter = M3u8AdFilter();
-        final filteredContent = filter.purify(originalUrl, originalContent);
+        final filteredContent = filter.purify(
+          originalUrl,
+          originalContent,
+          cleanDiscontinuities: isWindows,
+        );
         if (filteredContent != null && filteredContent != originalContent) {
           content = filteredContent;
           WindowsLogger.log('AdFilterEngine', ' 已过滤 ${filter.currentAdCount} 个片段');
@@ -110,6 +127,9 @@ class AdFilterEngine {
       // 子 M3U8 过滤状态与去广告开关保持一致；
       // Windows 非去广告场景直接播放原始 URL，不再经过本地代理。
       _proxy!.setFilterEnabled(enabled);
+      // fvp/libmpv 需清理去广告后残留的孤立 discontinuity，避免重新播放；
+      // ExoPlayer 必须保留 discontinuity，故仅 fvp 后端开启。
+      if (useFvp) _proxy!.setDiscontinuityCleanup(true);
       final baseUrl = await _proxy!.start();
       WindowsLogger.log('AdFilterEngine', ' 本地代理已启动: $baseUrl');
       // 先把相对 URL 解析为绝对 URL，避免 libmpv/fvp 读到相对路径后向本地代理根目录请求。

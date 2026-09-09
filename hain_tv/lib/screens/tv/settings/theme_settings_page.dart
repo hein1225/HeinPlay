@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
@@ -62,13 +59,7 @@ class _ThemeSettingsPageState extends State<ThemeSettingsPage> {
   /// 由各 Shell（WindowsShell/TvShell/MobileShell）监听 ThemeModeService 原地刷新自身，
   /// 返回首页即显示新主题，且不打断播放中的视频页）。
   void _restartApp() {
-    if (Platform.isAndroid) {
-      try {
-        const MethodChannel('hain_tv/app').invokeMethod<void>('restart');
-      } catch (e) {
-        debugPrint('请求重启应用失败: $e');
-      }
-    }
+    ThemeModeService.requestRestart();
   }
 
   @override

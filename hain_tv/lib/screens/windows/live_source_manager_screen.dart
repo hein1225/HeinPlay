@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/live_source_config.dart';
 import '../../services/cache_service.dart';
 import '../../services/live_service.dart';
+import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
 import '../../theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
@@ -21,7 +22,7 @@ class WindowsLiveSourceManagerScreen extends StatefulWidget {
 
 class _WindowsLiveSourceManagerScreenState
     extends State<WindowsLiveSourceManagerScreen> {
-  List<LiveSourceConfig> _userConfigs = [];
+  List<LiveSourceConfig> _allConfigs = [];
   bool _loading = true;
 
   @override
@@ -31,9 +32,9 @@ class _WindowsLiveSourceManagerScreenState
   }
 
   Future<void> _loadConfigs() async {
-    final configs = await LiveSourceStorage.getConfigs();
+    final configs = await LiveService.getAllSources();
     setState(() {
-      _userConfigs = configs;
+      _allConfigs = configs;
       _loading = false;
     });
   }
@@ -71,13 +72,6 @@ class _WindowsLiveSourceManagerScreenState
     if (config.isBuiltin) return;
     final updated = config.copyWith(enabled: !config.enabled);
     await LiveSourceStorage.saveConfig(updated);
-    await _loadConfigs();
-  }
-
-  Future<void> _reorderConfigs(int oldIndex, int newIndex) async {
-    final item = _userConfigs.removeAt(oldIndex);
-    _userConfigs.insert(newIndex, item);
-    await LiveSourceStorage.reorderConfigs(_userConfigs);
     await _loadConfigs();
   }
 
@@ -166,9 +160,9 @@ class _WindowsLiveSourceManagerScreenState
       );
     }
 
-    final allItems = [LiveService.lunaTvBuiltinSource, ..._userConfigs];
+    final allItems = _allConfigs;
 
-    if (allItems.length <= 1) {
+    if (allItems.isEmpty) {
       return _buildEmpty();
     }
 
@@ -176,11 +170,10 @@ class _WindowsLiveSourceManagerScreenState
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       itemCount: allItems.length,
       buildDefaultDragHandles: false,
-      onReorder: (oldIndex, newIndex) {
-        if (oldIndex == 0) return;
-        final userOldIndex = oldIndex - 1;
-        final userNewIndex = newIndex <= 0 ? 0 : newIndex - 1;
-        _reorderConfigs(userOldIndex, userNewIndex);
+      onReorder: (oldIndex, newIndex) async {
+        await LiveSourceStorage.reorderCombined(_allConfigs, oldIndex, newIndex);
+        await _loadConfigs();
+        LiveSourceRefreshNotifier.instance.notify();
       },
       itemBuilder: (context, index) {
         final config = allItems[index];
@@ -239,7 +232,16 @@ class _WindowsLiveSourceManagerScreenState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 排序图标 / 内置源标签放在源框内首位
+          // 排序手柄：内置源与本地源均可拖拽排序（各自分组内）。
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: EdgeInsets.only(right: AppSpacing.xs),
+              child: Icon(Icons.drag_handle, size: 20, color: AppColors.textMuted),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          // 内置源标签放在源框内首位
           if (config.isBuiltin)
             Container(
               padding: const EdgeInsets.symmetric(
@@ -248,7 +250,7 @@ class _WindowsLiveSourceManagerScreenState
               ),
               decoration: BoxDecoration(
                 color: AppColors.primary.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+                borderRadius: BorderRadius.circular(AppRadius.md),
               ),
               child: Text(
                 '服务器',
@@ -258,14 +260,6 @@ class _WindowsLiveSourceManagerScreenState
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
-              ),
-            )
-          else
-            ReorderableDragStartListener(
-              index: index,
-              child: Padding(
-                padding: EdgeInsets.only(right: AppSpacing.xs),
-                child: Icon(Icons.drag_handle, size: 20, color: AppColors.textMuted),
               ),
             ),
           const SizedBox(width: AppSpacing.sm),

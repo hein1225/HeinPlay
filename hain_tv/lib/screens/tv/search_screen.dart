@@ -57,6 +57,12 @@ class SearchScreenState extends State<SearchScreen> {
     if (_hasQrInput) {
       _setupRemoteInput();
     }
+    // 补触发：若打开前手机已下发过搜索关键词，取出并直接搜索。
+    final pending = _remoteInputService.takePendingSearchKeyword();
+    if (pending != null && pending.isNotEmpty && mounted) {
+      _controller.text = pending;
+      _search(pending);
+    }
     _loadSearchHistory();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -68,6 +74,8 @@ class SearchScreenState extends State<SearchScreen> {
   void _setupRemoteInput() {
     _remoteInputSub = _remoteInputService.onMessage.listen((message) {
       if (mounted) {
+        // 前台收到即清空缓冲，避免下次进入搜索页时误触发旧关键词。
+        _remoteInputService.clearPendingSearchKeyword();
         _controller.text = message;
         _controller.selection = TextSelection.collapsed(
           offset: _controller.text.length,
@@ -96,7 +104,6 @@ class SearchScreenState extends State<SearchScreen> {
     }
     _pageScrollController.dispose();
     _remoteInputSub?.cancel();
-    _remoteInputService.dispose();
     super.dispose();
   }
 
@@ -228,7 +235,8 @@ class SearchScreenState extends State<SearchScreen> {
     String? url;
     String? error;
     try {
-      url = await _remoteInputService.startServer();
+      await _remoteInputService.startServer();
+      url = _remoteInputService.settingsUrlWithCat('search');
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }
@@ -246,7 +254,7 @@ class SearchScreenState extends State<SearchScreen> {
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
           title: Text(
-            '手机扫码输入',
+            '手机控制',
             style: TextStyle(
               fontFamily: 'NotoSansSC',
               fontSize: 18,
@@ -285,7 +293,7 @@ class SearchScreenState extends State<SearchScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Text(
-                    '使用手机扫描上方二维码',
+                    '使用手机扫描上方二维码，进入统一设置页',
                     style: TextStyle(
                       fontFamily: 'NotoSansSC',
                       fontSize: 14,

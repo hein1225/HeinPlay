@@ -28,6 +28,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
 
   final _remoteInputService = RemoteInputService();
   StreamSubscription<Map<String, String>>? _serverConfigSub;
+  StreamSubscription<Map<String, dynamic>>? _serverActionSub;
   bool _qrServerConfigDialogShowing = false;
 
   @override
@@ -35,12 +36,13 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     super.initState();
     _loadSettings();
     _setupServerConfigQr();
+    _setupServerActions();
   }
 
   @override
   void dispose() {
     _serverConfigSub?.cancel();
-    _remoteInputService.dispose();
+    _serverActionSub?.cancel();
     super.dispose();
   }
 
@@ -70,7 +72,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
       SnackBar(
         content: Text(
           message,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: AppColors.textPrimary),
         ),
         backgroundColor: backgroundColor ?? AppColors.bgElevated,
         duration: duration,
@@ -127,6 +129,16 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     }
   }
 
+  void _setupServerActions() {
+    _serverActionSub = _remoteInputService.onServerAction.listen((data) async {
+      if (!mounted) return;
+      final action = data['action']?.toString() ?? '';
+      if (action == 'speedtest') {
+        await _runSpeedTest();
+      }
+    });
+  }
+
   void _setupServerConfigQr() {
     _serverConfigSub = _remoteInputService.onServerConfig.listen((data) async {
       if (!mounted) return;
@@ -159,11 +171,11 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer(
+      await _remoteInputService.startServer(
         currentServerUrl: _primaryServerUrl,
         currentBackupServerUrl: _backupServerUrl,
       );
-      url = '$baseUrl?mode=server_config';
+      url = _remoteInputService.settingsUrlWithCat('server');
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }

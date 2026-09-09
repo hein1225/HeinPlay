@@ -224,8 +224,8 @@ class TvLiveScreenState extends State<TvLiveScreen> {
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer();
-      url = '$baseUrl?mode=live_sources';
+      await _remoteInputService.startServer();
+      url = _remoteInputService.settingsUrlWithCat('live_sources');
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }
@@ -323,7 +323,6 @@ class TvLiveScreenState extends State<TvLiveScreen> {
     _previewFocusNode.dispose();
     _listScrollController.dispose();
     _previewScrollController.dispose();
-    _remoteInputService.dispose();
     super.dispose();
   }
 

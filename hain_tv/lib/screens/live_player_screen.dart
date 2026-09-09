@@ -153,12 +153,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   // Windows 播放控制栏
   bool _controlsVisible = false;
   Timer? _controlsTimer;
-  bool _isMiniPlayer = false;
   bool _isAlwaysOnTop = false;
-  Rect? _previousWindowBounds;
-  TitleBarStyle _previousTitleBarStyle = TitleBarStyle.normal;
-  bool _wasFullScreenBeforeMini = false;
-  bool _togglingMiniPlayer = false;
 
   /// 是否正在执行 Windows 退出播放流程（暂停渲染后延迟 pop），防止重复触发。
   bool _exitingWindowsPlayback = false;
@@ -171,9 +166,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 鼠标无操作多少秒后自动隐藏光标。
   static Duration _kMouseHideDelay = Duration(seconds: 5);
 
-  static Size _kUnboundedSize = Size(100000, 100000);
-  static Size _kNormalMinSize = Size(900, 600);
-  static Size _kMiniMinSize = Size(320, 180);
   static const double _kChannelListWidth = 480;
   static const double _kCategoryColumnWidth = 100;
   static const double _kChannelItemHeight = 102;
@@ -182,7 +174,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   // 手机版紧凑布局参数
   static const double _kMobileChannelListMargin = 8.0;
-  static const double _kMobileCategoryColumnWidth = 72.0;
+  static const double _kMobileCategoryColumnWidth = 88.0;
   static const double _kMobileChannelItemHeight = 64.0;
   static const double _kMobileEpgBannerWidth = 36.0;
 
@@ -297,21 +289,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   Future<void> _initWindowsWindowState() async {
     try {
-      final bounds = await windowManager.getBounds();
-      if (_isValidNormalBounds(bounds)) {
-        _previousWindowBounds = bounds;
-      }
       _isAlwaysOnTop = await windowManager.isAlwaysOnTop();
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Windows 直播播放页初始化窗口状态失败: $e');
     }
-  }
-
-  bool _isValidNormalBounds(Rect? bounds) {
-    if (bounds == null) return false;
-    return bounds.width >= _kNormalMinSize.width &&
-        bounds.height >= _kNormalMinSize.height;
   }
 
   Future<void> _loadChannels() async {
@@ -777,7 +759,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   void _toggleChannelList() {
-    if (_isMiniPlayer) return;
     final willShow = !_showChannelList;
     setState(() {
       _showChannelList = willShow;
@@ -801,21 +782,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   void _toggleControlsAndChannelList() {
-    if (_isMiniPlayer) {
-      _toggleControls();
-      return;
-    }
     if (_showChannelList || _controlsVisible) {
       _hideChannelListAndControls();
     } else {
       _showChannelListAndControls();
     }
-  }
-
-  void _showControls() {
-    if (!DeviceUtils.isDesktop) return;
-    _controlsTimer?.cancel();
-    setState(() => _controlsVisible = true);
   }
 
   void _hideControls() {
@@ -824,20 +795,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (mounted) setState(() => _controlsVisible = false);
   }
 
-  void _toggleControls() {
-    if (!DeviceUtils.isDesktop) return;
-    if (_controlsVisible) {
-      _hideControls();
-    } else {
-      _showControls();
-    }
-  }
-
   /// 显示频道列表并将焦点定位到当前播放频道。
   ///
   /// Windows 版会同时显示控制栏，保持控制栏与列表层级融合。
   void _showChannelListAndControls() {
-    if (_isMiniPlayer) return;
     setState(() {
       _showChannelList = true;
       if (DeviceUtils.isDesktop) _controlsVisible = true;
@@ -863,98 +824,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _rootFocusNode.requestFocus();
   }
 
-  Future<void> _toggleMiniPlayer() async {
-    if (!DeviceUtils.isDesktop || _togglingMiniPlayer) return;
-    _togglingMiniPlayer = true;
-    try {
-      if (_isMiniPlayer) {
-        // 恢复窗口
-        if (DeviceUtils.isLinux) {
-          // Linux/Wayland 下窗口管理器对 setFullScreen/setSize 限制较多，且
-          // setTitleBarStyle.hidden 为 no-op；先强制退出全屏并恢复可移动/可调整，
-          // 再用 setBounds 还原尺寸，避免停留在全屏/最大化状态“变不回来”。
-          await windowManager.setFullScreen(false);
-          await Future.delayed(const Duration(milliseconds: 150));
-          await windowManager.setMinimumSize(_kNormalMinSize);
-          await windowManager.setMaximumSize(_kUnboundedSize);
-          await windowManager.setResizable(true);
-          await windowManager.setMovable(true);
-          await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-          final saved = _previousWindowBounds;
-          if (saved != null && _isValidNormalBounds(saved)) {
-            await windowManager.setBounds(saved);
-          } else {
-            await windowManager.setSize(const Size(900, 600));
-            await windowManager.center();
-          }
-          await windowManager.setAlwaysOnTop(false);
-        } else {
-          await windowManager.setMinimumSize(_kNormalMinSize);
-          await windowManager.setMaximumSize(_kUnboundedSize);
-          await windowManager.setResizable(true);
-          await windowManager.setTitleBarStyle(_previousTitleBarStyle);
-          await WindowsWindowUtils.ensureNormalWindowFrame();
-          final saved = _previousWindowBounds;
-          if (saved != null && _isValidNormalBounds(saved)) {
-            await windowManager.setBounds(saved);
-          } else {
-            await windowManager.setSize(Size(900, 600));
-            await windowManager.center();
-          }
-        }
-        if (_wasFullScreenBeforeMini) {
-          await Future.delayed(Duration(milliseconds: 100));
-          await toggleWindowsFullscreen();
-        }
-        _isMiniPlayer = false;
-      } else {
-        // 进入小窗
-        _wasFullScreenBeforeMini = isWindowsFullScreen;
-        if (isWindowsFullScreen) {
-          await toggleWindowsFullscreen();
-          await Future.delayed(Duration(milliseconds: 100));
-        }
-        if (DeviceUtils.isLinux) {
-          // 先确保真正退出全屏（Wayland 下 setFullScreen 可能延迟生效），
-          // 否则后续 setSize 会被窗口管理器忽略，表现为“小窗变成全屏”。
-          await windowManager.setFullScreen(false);
-          await Future.delayed(const Duration(milliseconds: 150));
-        }
-        final bounds = await windowManager.getBounds();
-        if (_isValidNormalBounds(bounds)) {
-          _previousWindowBounds = bounds;
-        }
-        _previousTitleBarStyle = TitleBarStyle.normal;
-        await windowManager.setMinimumSize(_kMiniMinSize);
-        await windowManager.setMaximumSize(_kUnboundedSize);
-        await windowManager.setResizable(true);
-        await windowManager.setMovable(true);
-        if (DeviceUtils.isLinux) {
-          // Linux 下 setTitleBarStyle.hidden 为 no-op，保留 normal 标题栏，避免 WM
-          // 将无边框窗口当作全屏处理；直接 setSize 缩小并置顶。
-          await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-          await windowManager.setSize(const Size(400, 225));
-        } else {
-          await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
-          await WindowsWindowUtils.ensureNormalWindowFrame();
-          await windowManager.setSize(Size(400, 225));
-        }
-        await windowManager.setAlwaysOnTop(true);
-        _isMiniPlayer = true;
-        _isAlwaysOnTop = true;
-      }
-      if (mounted) {
-        setState(() {});
-        // 小窗切换后重新夺回键盘焦点，确保上下键可换台。
-        _rootFocusNode.requestFocus();
-      }
-    } catch (e) {
-      debugPrint('Windows 直播小窗切换失败: $e');
-    } finally {
-      _togglingMiniPlayer = false;
-    }
-  }
-
   Future<void> _toggleAlwaysOnTop() async {
     if (!DeviceUtils.isDesktop) return;
     try {
@@ -971,8 +840,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (!DeviceUtils.isDesktop) return;
     if (isWindowsFullScreen) {
       await toggleWindowsFullscreen();
-    } else if (_isMiniPlayer) {
-      await _toggleMiniPlayer();
     } else {
       if (mounted) Navigator.of(context).maybePop();
     }
@@ -1728,7 +1595,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               // 回放快进/快退手势标识（居中显示）。
               _buildReplayGestureIndicator(),
               if (_showChannelInfo) _buildChannelInfoOverlay(),
-              if (_showChannelList && !_isMiniPlayer) _buildChannelListOverlay(),
+              if (_showChannelList) _buildChannelListOverlay(),
             // TV 版使用独立浮层面板；Windows 版使用频道列表内嵌面板。
             if (_showEpgList && DeviceUtils.isTv && !DeviceUtils.isDesktop) _buildEpgListOverlay(),
             if (DeviceUtils.isDesktop && _controlsVisible && !_showChannelList) _buildWindowsControls(),
@@ -2003,9 +1870,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   Widget _buildGestureLayer() {
-    if (DeviceUtils.isDesktop && _isMiniPlayer) {
-      return _buildMiniGestureOverlay();
-    }
     return Positioned.fill(
       child: MouseRegion(
         // 鼠标移动时重置无操作定时器（Windows 全屏自动隐藏光标）。
@@ -2092,86 +1956,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       ),
       ),
     );
-  }
-
-  // Windows 小窗模式拖动与单击/双击识别。
-  DateTime? _miniPointerDownAt;
-  Offset? _miniPointerDownPosition;
-  Offset? _miniDragStartPosition;
-  bool _miniIsDragging = false;
-  static const double _miniDragThreshold = 6.0;
-  static const int _miniDoubleTapMaxMillis = 300;
-  static const double _miniDoubleTapMaxDistance = 40.0;
-  static const int _miniSingleTapMaxMillis = 400;
-  static const double _miniSingleTapMaxDistance = 40.0;
-
-  Widget _buildMiniGestureOverlay() {
-    return Positioned.fill(
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: _onMiniPointerDown,
-        onPointerMove: _onMiniPointerMove,
-        onPointerUp: _onMiniPointerUp,
-        child: Container(color: Colors.transparent),
-      ),
-    );
-  }
-
-  void _onMiniPointerDown(PointerDownEvent event) {
-    final now = DateTime.now();
-    final lastAt = _miniPointerDownAt;
-    final lastPos = _miniPointerDownPosition;
-
-    _miniPointerDownAt = now;
-    _miniPointerDownPosition = event.position;
-    _miniDragStartPosition = event.position;
-    _miniIsDragging = false;
-
-    if (lastAt == null || lastPos == null) return;
-    if (now.difference(lastAt).inMilliseconds > _miniDoubleTapMaxMillis) return;
-    if ((event.position - lastPos).distance > _miniDoubleTapMaxDistance) return;
-
-    _onMiniDoubleTap();
-  }
-
-  void _onMiniPointerMove(PointerMoveEvent event) {
-    if (_miniDragStartPosition == null || _miniIsDragging) return;
-    if ((event.position - _miniDragStartPosition!).distance <= _miniDragThreshold) {
-      return;
-    }
-    _miniIsDragging = true;
-    _miniPointerDownAt = null;
-    _miniPointerDownPosition = null;
-    windowManager.startDragging();
-  }
-
-  void _onMiniPointerUp(PointerUpEvent event) {
-    if (_miniIsDragging) {
-      _miniDragStartPosition = null;
-      _miniIsDragging = false;
-      return;
-    }
-    final downAt = _miniPointerDownAt;
-    final downPos = _miniPointerDownPosition;
-    _miniDragStartPosition = null;
-    _miniIsDragging = false;
-    _miniPointerDownAt = null;
-    _miniPointerDownPosition = null;
-
-    if (downAt == null || downPos == null) return;
-    if (DateTime.now().difference(downAt).inMilliseconds > _miniSingleTapMaxMillis) {
-      return;
-    }
-    if ((event.position - downPos).distance > _miniSingleTapMaxDistance) return;
-
-    _rootFocusNode.requestFocus();
-    _toggleControls();
-  }
-
-  void _onMiniDoubleTap() {
-    if (_isMiniPlayer) {
-      _toggleMiniPlayer();
-    }
   }
 
   /// 回放快进/快退与暂停/播放手势标识浮层（居中显示，样式与点播模式一致）。
@@ -2763,13 +2547,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             label: isWindowsFullScreen ? '退出全屏' : '全屏',
           ),
           _buildWindowsControlButton(
-            onTap: _toggleMiniPlayer,
-            icon: _isMiniPlayer
-                ? Icons.picture_in_picture_alt
-                : Icons.picture_in_picture_alt_outlined,
-            label: _isMiniPlayer ? '恢复窗口' : '小窗播放',
-          ),
-          _buildWindowsControlButton(
             onTap: _toggleAlwaysOnTop,
             icon: _isAlwaysOnTop ? Icons.push_pin : Icons.push_pin_outlined,
             label: _isAlwaysOnTop ? '取消置顶' : '置顶窗口',
@@ -3121,13 +2898,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         ),
         child: Text(
           group,
-          maxLines: 1,
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
           style: TextStyle(
             fontFamily: 'NotoSansSC',
             color: selected ? Colors.white : Colors.white70,
-            fontSize: isMobile ? 12 : 13,
+            fontSize: isMobile ? 11 : 13,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            height: isMobile ? 1.1 : null,
           ),
         ),
       ),
@@ -3235,9 +3014,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         ? Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // 第一列：频道名（手机端适当加宽，避免 CCTV 等频道名被截断）
+                              // 第一列：频道名（手机端加宽 + 字体略小，避免 CCTV 等长频道名被截断）
                               SizedBox(
-                                width: isMobile ? 120 : 76,
+                                width: isMobile ? 144 : 76,
                                 child: Text(
                                   channel.name,
                                   maxLines: 1,
@@ -3245,7 +3024,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                                   style: TextStyle(
                                     fontFamily: 'NotoSansSC',
                                     color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.9),
-                                    fontSize: 14,
+                                    fontSize: isMobile ? 13 : 14,
                                     fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                                   ),
                                 ),
@@ -3496,16 +3275,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   Widget _buildWindowsControls() {
     final channel = _currentChannel;
-    if (_isMiniPlayer) {
-      if (!_controlsVisible) return SizedBox.shrink();
-      return Positioned(
-        left: 0,
-        right: 0,
-        bottom: 0,
-        child: _buildMiniPlayerControls(),
-      );
-    }
-
     // 频道列表打开时，控制栏只显示在列表右侧，避免遮挡列表。
     final leftInset = _showChannelList ? _kChannelListWidth : 0.0;
     return Positioned(
@@ -3615,13 +3384,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                         label: isWindowsFullScreen ? '退出全屏' : '全屏',
                       ),
                       _buildWindowsControlButton(
-                        onTap: _toggleMiniPlayer,
-                        icon: _isMiniPlayer
-                            ? Icons.picture_in_picture_alt
-                            : Icons.picture_in_picture_alt_outlined,
-                        label: _isMiniPlayer ? '恢复窗口' : '小窗播放',
-                      ),
-                      _buildWindowsControlButton(
                         onTap: _toggleAlwaysOnTop,
                         icon: _isAlwaysOnTop
                             ? Icons.push_pin
@@ -3634,84 +3396,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMiniPlayerControls() {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.xs,
-        ),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [
-              Color(0xD90A0A0F).withValues(alpha: 0.9),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: AppSpacing.sm,
-            runSpacing: AppSpacing.xs,
-            children: [
-              _buildMiniControlIconButton(
-                onTap: _onWindowsBack,
-                icon: Icons.arrow_back,
-                tooltip: '返回',
-              ),
-              _buildMiniControlIconButton(
-                onTap: toggleWindowsFullscreen,
-                icon: isWindowsFullScreen
-                    ? Icons.fullscreen_exit
-                    : Icons.fullscreen,
-                tooltip: isWindowsFullScreen ? '退出全屏' : '全屏',
-              ),
-              _buildMiniControlIconButton(
-                onTap: _toggleMiniPlayer,
-                icon: Icons.open_in_full,
-                tooltip: '恢复窗口',
-              ),
-              _buildMiniControlIconButton(
-                onTap: _toggleAlwaysOnTop,
-                icon: _isAlwaysOnTop
-                    ? Icons.push_pin
-                    : Icons.push_pin_outlined,
-                tooltip: _isAlwaysOnTop ? '取消置顶' : '窗口置顶',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMiniControlIconButton({
-    required VoidCallback onTap,
-    required IconData icon,
-    required String tooltip,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: Container(
-          padding: EdgeInsets.all(AppSpacing.sm),
-          decoration: BoxDecoration(
-            color: Color(0xFF1C1C2E).withValues(alpha: 0.8),
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          child: Icon(icon, color: Color(0xFFF0F0F5), size: 22),
         ),
       ),
     );

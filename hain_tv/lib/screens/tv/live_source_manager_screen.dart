@@ -7,6 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/live_source_config.dart';
 import '../../services/cache_service.dart';
 import '../../services/live_service.dart';
+import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
 import '../../services/remote_input_service.dart';
 import '../../theme.dart';
@@ -25,6 +26,7 @@ class _TvLiveSourceManagerScreenState
     extends State<TvLiveSourceManagerScreen> {
   List<LiveSourceConfig> _allConfigs = [];
   bool _loading = true;
+  bool _sortMode = false;
 
   List<LiveSourceConfig> get _userConfigs =>
       _allConfigs.where((c) => !c.isBuiltin).toList();
@@ -52,16 +54,10 @@ class _TvLiveSourceManagerScreenState
     });
   }
 
-  Future<void> _reorderConfigs(int oldIndex, int newIndex) async {
-    // 内置源固定置顶，不参与排序。
-    if (oldIndex == 0) return;
-    final userOld = oldIndex - 1;
-    final userNew = newIndex <= 0 ? 0 : newIndex - 1;
-    final userList = List<LiveSourceConfig>.from(_userConfigs);
-    final item = userList.removeAt(userOld);
-    userList.insert(userNew, item);
-    await LiveSourceStorage.reorderConfigs(userList);
+  Future<void> _moveItem(int index, int delta) async {
+    await LiveSourceStorage.moveCombined(_allConfigs, index, delta);
     await _loadConfigs();
+    LiveSourceRefreshNotifier.instance.notify();
   }
 
   Future<void> _clearSourceCache(LiveSourceConfig config) async {
@@ -111,8 +107,8 @@ class _TvLiveSourceManagerScreenState
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer();
-      url = '$baseUrl?mode=live_sources';
+      await _remoteInputService.startServer();
+      url = _remoteInputService.settingsUrlWithCat('live_sources');
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }
@@ -204,7 +200,6 @@ class _TvLiveSourceManagerScreenState
   @override
   void dispose() {
     _liveSourcesChangedSub?.cancel();
-    _remoteInputService.dispose();
     super.dispose();
   }
 
@@ -275,6 +270,40 @@ class _TvLiveSourceManagerScreenState
           ),
           const SizedBox(width: AppSpacing.sm),
           FocusableWidget(
+            onTap: () => setState(() => _sortMode = !_sortMode),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: _sortMode ? AppColors.primary : AppColors.bgSurface,
+                border: Border.all(color: AppColors.border),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.sort,
+                    size: 16,
+                    color: _sortMode ? Colors.white : AppColors.textSecondary,
+                  ),
+                  SizedBox(width: AppSpacing.xs),
+                  Text(
+                    _sortMode ? '完成' : '排序',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      color: _sortMode ? Colors.white : AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          FocusableWidget(
             onTap: () => _showEditDialog(),
             child: Container(
               padding: const EdgeInsets.symmetric(
@@ -314,18 +343,38 @@ class _TvLiveSourceManagerScreenState
       );
     }
 
-    if (_userConfigs.isEmpty) {
+    if (_allConfigs.isEmpty) {
       return _buildEmpty();
     }
 
-    return ReorderableListView.builder(
+    final children = <Widget>[
+      if (_sortMode)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.xs,
+          ),
+          color: AppColors.primary.withValues(alpha: 0.12),
+          child: Text(
+            '排序模式：用每项右侧的 ▲/▼ 在所属分组内移动（服务器源与本地源各自分组）',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              color: AppColors.primary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ..._allConfigs.asMap().entries.map((e) {
+        return _buildConfigCard(e.value, e.key);
+      }),
+    ];
+
+    return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      itemCount: _allConfigs.length,
-      onReorder: _reorderConfigs,
-      itemBuilder: (context, index) {
-        final config = _allConfigs[index];
-        return _buildConfigCard(config, index);
-      },
+      itemCount: children.length,
+      itemBuilder: (context, index) => children[index],
     );
   }
 
@@ -410,9 +459,11 @@ class _TvLiveSourceManagerScreenState
         children: [
           Expanded(
             child: FocusableWidget(
-              onTap: config.isBuiltin
+              onTap: _sortMode
                   ? null
-                  : () => _showEditDialog(config: config),
+                  : (config.isBuiltin
+                      ? null
+                      : () => _showEditDialog(config: config)),
               onFocusChange: (focused) => _ensureVisibleOnFocus(itemContext, focused),
               padding: EdgeInsets.zero,
               child: Row(
@@ -488,36 +539,81 @@ class _TvLiveSourceManagerScreenState
               ),
             ),
           ),
-          FocusableWidget(
-            onTap: () => _clearSourceCache(config),
-            onFocusChange: (focused) => _ensureVisibleOnFocus(itemContext, focused),
-            padding: const EdgeInsets.all(AppSpacing.xs),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm,
-                vertical: AppSpacing.xs,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.delete_sweep,
-                    size: 18,
-                    color: AppColors.textSecondary,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    '清除缓存',
-                    style: TextStyle(
-                      fontFamily: 'NotoSansSC',
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
+          if (_sortMode)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FocusableWidget(
+                  onTap: () => _moveItem(index, -1),
+                  onFocusChange: (focused) =>
+                      _ensureVisibleOnFocus(itemContext, focused),
+                  padding: const EdgeInsets.all(AppSpacing.xs),
+                  child: Container(
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Icon(
+                      Icons.arrow_upward,
+                      size: 18,
+                      color: AppColors.primary,
                     ),
                   ),
-                ],
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                FocusableWidget(
+                  onTap: () => _moveItem(index, 1),
+                  onFocusChange: (focused) =>
+                      _ensureVisibleOnFocus(itemContext, focused),
+                  padding: const EdgeInsets.all(AppSpacing.xs),
+                  child: Container(
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: Icon(
+                      Icons.arrow_downward,
+                      size: 18,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            FocusableWidget(
+              onTap: () => _clearSourceCache(config),
+              onFocusChange: (focused) =>
+                  _ensureVisibleOnFocus(itemContext, focused),
+              padding: const EdgeInsets.all(AppSpacing.xs),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm,
+                  vertical: AppSpacing.xs,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.delete_sweep,
+                      size: 18,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      '清除缓存',
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     ),

@@ -43,16 +43,14 @@ class _LoginScreenState extends State<LoginScreen> {
   late int _focusedIndex = _hasQrLogin ? 0 : 1;
 
   final _remoteInputService = RemoteInputService();
-  StreamSubscription<Map<String, String>>? _qrLoginSub;
   bool _qrDialogShowing = false;
 
   @override
   void initState() {
     super.initState();
     _loadSavedData();
-    if (_hasQrLogin) {
-      _setupQrLogin();
-    }
+    // 注册手机扫码登录页（?mode=login）提交后的处理器，把 TV 端真实登录结果回传手机页。
+    _remoteInputService.setLoginHandler(_handleRemoteLogin);
     // 首帧渲染后设置唯一初始焦点，避免多个 FocusableWidget 同时 autofocus 导致双焦点。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -73,28 +71,30 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void _setupQrLogin() {
-    _qrLoginSub = _remoteInputService.onLogin.listen((data) {
-      if (!mounted) return;
-      final serverUrl = data['serverUrl'] ?? '';
-      final backupServerUrl = data['backupServerUrl'] ?? '';
-      final username = data['username'] ?? '';
-      final password = data['password'] ?? '';
-      if ((serverUrl.isEmpty && backupServerUrl.isEmpty) || password.isEmpty) return;
-
-      _serverController.text = serverUrl;
-      _backupServerController.text = backupServerUrl;
-      _usernameController.text = username;
-      _passwordController.text = password;
-      setState(() => _focusedIndex = 5);
-
-      if (_qrDialogShowing && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-        setState(() => _qrDialogShowing = false);
-      }
-
-      _login();
-    });
+  /// 手机扫码登录页（?mode=login）提交后的处理：填充表单、关闭二维码弹窗、执行登录，
+  /// 并返回 TV 端真实登录结果，供 RemoteInputService 回传给手机页显示错误。
+  Future<Map<String, dynamic>> _handleRemoteLogin(Map<String, dynamic> data) async {
+    if (!mounted) return {'status': 'error', 'error': '登录页已关闭'};
+    final serverUrl = (data['serverUrl'] as String? ?? '').trim();
+    final backupServerUrl = (data['backupServerUrl'] as String? ?? '').trim();
+    final username = (data['username'] as String? ?? '').trim();
+    final password = (data['password'] as String? ?? '').trim();
+    if ((serverUrl.isEmpty && backupServerUrl.isEmpty) || password.isEmpty) {
+      return {'status': 'error', 'error': '缺少服务器地址或密码'};
+    }
+    _serverController.text = serverUrl;
+    _backupServerController.text = backupServerUrl;
+    _usernameController.text = username;
+    _passwordController.text = password;
+    if (_qrDialogShowing && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      setState(() => _qrDialogShowing = false);
+    }
+    await _login();
+    // _login 成功会跳转首页并 dispose 本页；失败则 _error 已设置、仍在登录页。
+    if (!mounted) return {'status': 'ok'};
+    if (_error != null) return {'status': 'error', 'error': _error!};
+    return {'status': 'ok'};
   }
 
   Future<void> _loadSavedData() async {
@@ -115,8 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _qrLoginSub?.cancel();
-    _remoteInputService.dispose();
+    _remoteInputService.setLoginHandler(null);
     _serverController.dispose();
     _backupServerController.dispose();
     _usernameController.dispose();
@@ -615,8 +614,8 @@ class _LoginScreenState extends State<LoginScreen> {
     String? url;
     String? error;
     try {
-      final baseUrl = await _remoteInputService.startServer();
-      url = '$baseUrl?mode=login';
+      await _remoteInputService.startServer();
+      url = _remoteInputService.settingsLoginUrl;
     } catch (e) {
       error = '启动失败，请检查网络权限';
     }
