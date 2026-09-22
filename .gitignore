@@ -22,9 +22,25 @@ build/
 .DS_Store
 Thumbs.db
 
+# 压缩包 / 安装包（手动下载的 JDK、SDK 等），体积大且非源码，不入库。
+# 教训：2026-09-19 的「回退前完整备份」提交把仓库根目录的
+# openjdk-21.0.2_windows-x64_bin.zip（192MB）一并扫入版本控制，
+# 导致推送被 GitHub 的 100MB 单文件上限直接拒绝，白传近 12 分钟。
+*.zip
+*.7z
+*.rar
+*.tar.gz
+*.tar.xz
+
 # Android signing & local config (global)
+# 注意：签名配置必须用「不带路径」的写法，才能同时覆盖 hain_tv/ 与仓库根的
+# 独立工程 hain_tv_legacy/。带前导斜杠的规则只匹配单一目录 —— 之前正因如此，
+# hain_tv_legacy/android/key-*.properties 被误纳入了版本管理。
 *.jks
+*.keystore
 key.properties
+key-mobile.properties
+key-tvlegacy.properties
 local.properties
 
 # =====================
@@ -56,13 +72,17 @@ local.properties
 /hain_tv/unzip_jar.py
 
 # Signing keys and passwords should never be committed
+# （key-tvlegacy.properties 已由上方全局规则覆盖；主工程的 tvlegacy flavor 已迁出）
 /hain_tv/android/key.properties
-/hain_tv/android/key-mobile.properties
-/hain_tv/android/key-tvlegacy.properties
 /hain_tv/android/*.keystore
 /hain_tv/android/*.jks
 
 # Distribution / build outputs
+# 所有平台的最终产物（APK / zip / AppImage / HAP）统一输出到仓库根 dist/，
+# 便于发版时一次取齐；该目录不纳入版本控制。
+# 注意前导斜杠只匹配「仓库根」的 dist/，故各工程目录内的遗留 dist/ 需单独列出 ——
+# `hain_tv/dist/` 里就残留着一个 1.3.5 的 mobile APK（历史产物，保留但不应入库）。
+/dist/
 /hain_tv/dist/
 
 # Windows runtime logs / debug temp files
@@ -100,6 +120,9 @@ hain_tv/probe.txt
 hain_tv/ps_probe.txt
 hain_tv/dart_spawn_test.dart
 hain_tv/hapsig_help.txt
+# hijack/ 目录本身是鸿蒙构建必需的 ohpm shim（build_hap.sh 依赖），但 shim 每次
+# 运行都会把日志追加到 hijack/log.txt，属运行期产物，不入库。
+hain_tv/hijack/*.txt
 
 # media3 source checkouts used only to rebuild the ffmpeg decoder AAR locally.
 # The prebuilt AAR is already committed at
@@ -111,3 +134,34 @@ tools/mediax_src/
 # HarmonyOS: generated Flutter assets produced by `flutter build hap`
 # (regenerate on every build; never edit by hand).
 hain_tv/harmony_haintv/entry/src/main/resources/rawfile/flutter_assets/
+
+# =====================
+# tvLegacy 独立工程：仓库根 hain_tv_legacy/（与 hain_tv/ 平级）
+# 独立 Flutter 3.32.8 / Dart 3.8.1 工具链，目标 Android 5.0+（API 21），fvp-only。
+# 源码纳入版本管理；构建产物、依赖缓存与签名材料不入库。
+# （该工程自带的 .gitignore 已覆盖大部分，这里显式再列一遍以防被改动。）
+# =====================
+hain_tv_legacy/build/
+hain_tv_legacy/.dart_tool/
+hain_tv_legacy/.pub-cache/
+hain_tv_legacy/.flutter-plugins-dependencies
+hain_tv_legacy/logs/
+hain_tv_legacy/dist/
+hain_tv_legacy/android/.gradle/
+hain_tv_legacy/android/.kotlin/
+hain_tv_legacy/android/buildSrc/.gradle/
+hain_tv_legacy/android/local.properties
+
+# --- 构建/部署临时目录（AI 添加）---
+# WSL 构建 wrapper、远程部署/诊断脚本等，属于本机临时状态，不入库。
+.build_tmp/
+
+# --- 临时/诊断产物（AI 添加）---
+analyze_err.txt
+analyze_full.txt
+analyze_out.txt
+analyze_tmp.txt
+proc_dump.txt
+tvlog*.txt
+*.logcat
+.flutter

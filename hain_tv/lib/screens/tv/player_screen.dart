@@ -586,7 +586,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       // 恢复上次播放位置，并限制在新视频总时长范围内。
       // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
-      if (_pendingInitialPositionMs > 0) {
+      //
+      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 接管
+      // （FvpBackend 传 deferStartSeek: true —— 等真正起播稳定后再 seek）。
+      // 若此处赶在 open 后约 200ms 抢先 seek，会在 libmdk 尚未稳定时把它打进冻结：
+      // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
+      // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话
+      // （起播稳定时 position=1520ms）全部一次定位成功。
+      if (_currentPlayerBackend == PlayerBackendType.fvp) {
+        _pendingInitialPositionMs = 0;
+      } else if (_pendingInitialPositionMs > 0) {
         final maxMs = _duration.inMilliseconds > 500
             ? _duration.inMilliseconds - 500
             : _duration.inMilliseconds;
@@ -870,9 +879,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _startControlsTimer() {
+    // 先取消旧计时器：无论本次是否要重新计时，都不能留下一个「到点就隐藏」的
+    // 遗留计时器去打断正在进行的操作。
+    _controlsTimer?.cancel();
     // 弹窗打开时保持控制栏可见，不启动隐藏定时器
     if (_dialogOpen) return;
-    _controlsTimer?.cancel();
     _controlsTimer = Timer(
       Duration(seconds: _controlsAutoHideSeconds),
       () {
@@ -1218,6 +1229,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     // 控制栏显示时，检测焦点是否在控制栏内
     if (_controlsVisible) {
+      // 控制栏可见期间的任何按键都视为「用户仍在操作」，重置自动隐藏倒计时。
+      // 否则用户在控制栏上左右移动焦点挑选选项时，10 秒到点控制栏仍会自动隐藏，
+      // 表现为「还没选完控制栏就没了」——超时必须只在无操作时才开始计算。
+      _startControlsTimer();
       final currentFocus = FocusManager.instance.primaryFocus;
       final isFocusInControls =
           currentFocus != null &&
@@ -1391,10 +1406,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return true;
       case LogicalKeyboardKey.goBack:
       case LogicalKeyboardKey.escape:
-        // TV/Android：返回/ESC 同时会被系统映射为返回手势，若再调用 pop/maybePop
-        // 会与 PopScope 重复响应导致连退两层。此处直接消费 KeyEvent，
-        // 统一交给系统返回手势与 PopScope 处理：控制栏显示时 PopScope 会隐藏控制栏，
-        // 隐藏后再按才返回详情页。
+        // TV/Android：控制栏显示时先隐藏控制栏；隐藏后再按则安全退出播放页
+        //（先摘视频 widget、等一帧再 dispose 后端，避免 fvp surface 竞态闪退）。
+        if (_controlsVisible) {
+          _hideControls();
+        } else {
+          _exitPlayer();
+        }
         return true;
       default:
         return false;
@@ -1633,6 +1651,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// 安全释放播放后端：先摘掉视频 widget（fvp 平台视图从渲染树移除、原生 surface 解绑），
+  /// 等一帧后再 dispose player。否则 `_backend.dispose()` 释放 player 后，平台视图拆树
+  /// 时的 surface 回调会在已释放的 player 上调用 nativeSetSurface → 空指针闪退
+  ///（fault addr 0x0 @ libfvp.so）。详见 MEMORY.md fvp surface 竞态铁律。
+  Future<void> _safeDisposeBackend() async {
+    final backend = _backend;
+    if (backend == null) return;
+    _backend = null;
+    _initialized = false;
+    if (mounted) setState(() {});
+    await WidgetsBinding.instance.endOfFrame;
+    await backend.dispose();
+  }
+
+  /// 安全退出播放页：先拆后端再 pop，避免退出闪退。
+  Future<void> _exitPlayer() async {
+    await _safeDisposeBackend();
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
@@ -1650,7 +1688,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // 立即保存播放记录到 LunaTV
     _savePlayRecordToLunaTV();
 
-    _backend?.dispose();
+    // 正常退出已通过 _safeDisposeBackend() 把 _backend 置空并安全释放；
+    // 此处兜底：若框架在其他路径直接 dispose（如页面被系统回收），同样先摘引用再释放。
+    final backend = _backend;
+    _backend = null;
+    backend?.dispose();
 
     // 退出播放页后允许系统自动休眠/降亮度
     WakelockPlus.disable().catchError((e) {
@@ -1852,7 +1894,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           Row(
             children: [
               IconButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => _exitPlayer(),
                 icon: Icon(
                   Icons.arrow_back,
                   color: Color(0xFFF0F0F5),
@@ -2257,11 +2299,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       // TV 版无窗口全屏概念：控制栏显示时先隐藏控制栏，再按返回才退出播放页。
-      canPop: !_controlsVisible,
+      // canPop 恒为 false：所有退出（系统返回手势 / 滑动返回）统一走 _exitPlayer，
+      // 先摘视频 widget、等一帧再 dispose 后端，避免退出时 fvp surface 竞态闪退。
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_controlsVisible) {
           _hideControls();
+        } else {
+          _exitPlayer();
         }
       },
       child: Focus(

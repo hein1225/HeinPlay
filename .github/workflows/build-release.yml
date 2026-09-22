@@ -61,23 +61,27 @@ jobs:
       - name: Rename artifact
         run: |
           VERSION="$RELEASE_TAG"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-tv-release.apk "dist/heinplay-${VERSION}-tv.apk"
+          # 产物统一输出到「仓库根 dist」（本 job 的 working-directory 是 hain_tv）
+          mkdir -p ../dist
+          cp build/app/outputs/flutter-apk/app-tv-release.apk "../dist/heinplay-${VERSION}-tv.apk"
 
       - name: Upload TV APK
         if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-tv-apk
-          path: hain_tv/dist/heinplay-*-tv.apk
+          path: dist/heinplay-*-tv.apk
           if-no-files-found: error
 
+  # 【独立工程】tvLegacy APK 由仓库根的 hain_tv_legacy/ 构建（与 hain_tv/ 平级）。
+  # 它与主工程不共用工具链：Flutter 3.32.8 / Dart 3.8.1 + Gradle 8.12 + AGP 8.7.3 + JDK 21，
+  # 目标是 Android 5.0+（API 21）、fvp-only。故单独成一个 job，只共用仓库级签名 secrets。
   build-tvlegacy:
     name: Build tvLegacy APK
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: hain_tv
+        working-directory: hain_tv_legacy
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,14 +90,22 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          # 本工程固定 Flutter 3.32.8 + Gradle 8.12 工具链，必须配 JDK 21
+          # （Gradle 8.12 内置的 Kotlin 解析不了更新版本的 JavaVersion）。
+          java-version: '21'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.6'
+          # 3.32.8（Dart 3.8.1）是最后一个原生支持 Android 5.0 / API 21 的稳定版，
+          # 不可升到 3.35+（引擎改按 minSdk 24 构建）。
+          flutter-version: '3.32.8'
           channel: 'stable'
 
+      # 签名 secrets 沿用历史上 tvLegacy job 的同一组（secrets 属于仓库，与 workflow 无关）：
+      #   TVLEGACY_KEYSTORE_BASE64 / TVLEGACY_KEYSTORE_PASSWORD /
+      #   TVLEGACY_KEY_ALIAS / TVLEGACY_KEY_PASSWORD
+      # keystore 里就是 android/app/heinplay-tvlegacy.jks 的那把密钥 —— 换掉它老用户将无法覆盖升级。
       - name: Decode tvLegacy keystore
         run: |
           echo "${{ secrets.TVLEGACY_KEYSTORE_BASE64 }}" | base64 -d > android/app/heinplay-tvlegacy.jks
@@ -107,6 +119,12 @@ jobs:
           keyPassword=${{ secrets.TVLEGACY_KEY_PASSWORD }}
           EOF
 
+      # android/gradle.properties 里的 org.gradle.java.home 是**本机 D 盘绝对路径**
+      # （本机需要它来绕开 Android Studio 自带的 JBR 25.x）。runner 上没有该路径，
+      # Gradle 会直接报 "Java home supplied is invalid" → 这里删掉，改由 JAVA_HOME 决定。
+      - name: Drop local JDK pin
+        run: sed -i '/^org\.gradle\.java\.home=/d' android/gradle.properties
+
       - name: Get Flutter dependencies
         run: flutter pub get
 
@@ -116,15 +134,31 @@ jobs:
       - name: Rename artifact
         run: |
           VERSION="$RELEASE_TAG"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-tvlegacy-release.apk "dist/heinplay-${VERSION}-tvLegacy.apk"
+          # 产物统一输出到「仓库根 dist」（本 job 的 working-directory 是 hain_tv_legacy）
+          mkdir -p ../dist
+          cp build/app/outputs/flutter-apk/app-tvlegacy-release.apk "../dist/heinplay-${VERSION}-tvLegacy.apk"
+
+      # 升级红线自动校验：tvLegacy 的 applicationId 与 keystore 必须与已发布版连续，
+      # 否则老用户无法覆盖升级。证书指纹不属于机密，可硬编码比对。
+      - name: Verify signing certificate
+        run: |
+          EXPECTED="9F:0D:EA:55:84:0B:C4:8B:F6:E5:62:55:98:E1:AA:08:77:9C:72:A8:EA:21:78:04:2E:EC:6B:0E:A3:D2:C8:0C"
+          APK="../dist/heinplay-${RELEASE_TAG}-tvLegacy.apk"
+          ACTUAL=$(keytool -printcert -jarfile "$APK" | grep -i 'SHA256:' | head -1 | tr -d '[:space:]' | sed 's/^[Ss][Hh][Aa]256://')
+          echo "期望指纹: $EXPECTED"
+          echo "实际指纹: $ACTUAL"
+          if [ "${ACTUAL^^}" != "$EXPECTED" ]; then
+            echo "::error::签名证书指纹不一致 —— 该 APK 无法覆盖升级老版本，已中断发布"
+            exit 1
+          fi
+          echo "签名指纹校验通过，可覆盖升级。"
 
       - name: Upload tvLegacy APK
         if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-tvlegacy-apk
-          path: hain_tv/dist/heinplay-*-tvLegacy.apk
+          path: dist/heinplay-*-tvLegacy.apk
           if-no-files-found: error
 
   build-mobile:
@@ -171,15 +205,16 @@ jobs:
       - name: Rename artifact
         run: |
           VERSION="$RELEASE_TAG"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-mobile-release.apk "dist/heinplay-${VERSION}-mobile.apk"
+          # 产物统一输出到「仓库根 dist」（本 job 的 working-directory 是 hain_tv）
+          mkdir -p ../dist
+          cp build/app/outputs/flutter-apk/app-mobile-release.apk "../dist/heinplay-${VERSION}-mobile.apk"
 
       - name: Upload Mobile APK
         if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-mobile-apk
-          path: hain_tv/dist/heinplay-*-mobile.apk
+          path: dist/heinplay-*-mobile.apk
           if-no-files-found: error
 
   build-windows:
@@ -259,25 +294,128 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:RELEASE_TAG
-          $distDir = "dist"
+          # 产物统一输出到「仓库根 dist」（本 job 的 working-directory 是 hain_tv）
+          $distDir = "..\dist"
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           $sourceDir = "build\windows\x64\runner\Release"
           $destZip = "$distDir\heinplay-$version-windows-portable.zip"
           if (Test-Path $destZip) { Remove-Item $destZip -Force }
-          Compress-Archive -Path "$sourceDir\*" -DestinationPath $destZip -Force
+
+          # 分发包只收程序产物，排除运行期数据（登录态 / 日志 / 缓存 / 偏好）。
+          # 否则解压覆盖时会用打包机的数据顶掉用户数据（症状：每次更新后都要重新登录）。
+          $runtimeDataExcludes = @(
+            'data\shared_preferences.json',
+            'data\prefs_big',
+            'data\app_logs',
+            'data\cache',
+            'data\support',
+            'data\temp',
+            'data\documents',
+            'data\downloads',
+            'data\windows_logs',
+            'update'
+          )
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $sourceRoot = (Resolve-Path $sourceDir).Path.TrimEnd('\')
+          $excludedRel = New-Object System.Collections.Generic.List[string]
+          $zipArchive = [System.IO.Compression.ZipFile]::Open(
+              $destZip, [System.IO.Compression.ZipArchiveMode]::Create)
+          try {
+            foreach ($file in Get-ChildItem -Path $sourceRoot -Recurse -File -Force) {
+              $rel = $file.FullName.Substring($sourceRoot.Length + 1)
+              $skip = $false
+              foreach ($ex in $runtimeDataExcludes) {
+                if (($rel -ieq $ex) -or ($rel -ilike "$ex\*")) { $skip = $true; break }
+              }
+              if ($skip) { $excludedRel.Add($rel); continue }
+              $entryName = $rel.Replace('\', '/')
+              [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                  $zipArchive, $file.FullName, $entryName,
+                  [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+            }
+          }
+          finally {
+            $zipArchive.Dispose()
+          }
+
           Write-Output "已生成: $destZip"
+          if ($excludedRel.Count -gt 0) {
+            Write-Output "已排除运行期数据 $($excludedRel.Count) 项（不进入分发包）"
+          }
 
       - name: Upload Windows artifact
         if: ${{ inputs.upload-artifacts != false }}
         uses: actions/upload-artifact@v4
         with:
           name: heinplay-windows-portable
-          path: hain_tv/dist/heinplay-*-windows-portable.zip
+          path: dist/heinplay-*-windows-portable.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: 'stable'
+
+      # 与 hain_tv/scripts/build_linux_appimage.sh 的 ensure_system_deps 检查项一一对应。
+      # 该脚本「缺依赖只打印 apt 命令并退出」，所以这里必须一次装齐：
+      #   pkg-config/libgtk-3-dev/libasound2-dev —— flutter build linux 与 ALSA（音量插件）
+      #   ninja-build/cmake/clang               —— Flutter Linux 工具链
+      #   patchelf/file/squashfs-tools/zsync    —— appimage-builder 打包与 .zsync 生成
+      #   desktop-file-utils/fakeroot           —— appimage-builder 收尾步骤
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libgtk-3-dev libasound2-dev \
+            ninja-build cmake clang \
+            patchelf file squashfs-tools zsync \
+            desktop-file-utils fakeroot
+
+      # 注意：不需要 appimagetool，也不要为它装 FUSE。
+      # appimage-builder 1.1.0 的 CreateAppImageCommand 只实例化
+      # modules/prime 的 AppImagePrimer（自己下载 runtime-x86_64 + 用 mksquashfs 拼包、
+      # 用 zsyncmake 生成 .zsync）；而 modules/appimage.py 的 AppImageCreator /
+      # utils/appimagetool.py 属于「存在但从未被实例化」的遗留代码（create_appimage.py
+      # 只 import 不调用）。因此打包全程不会调用 appimagetool，也不依赖 FUSE。
+      - name: Install appimage-builder
+        run: |
+          # pipx 是最稳的安装方式（appimage-builder 官方推荐）。
+          if ! command -v pipx >/dev/null 2>&1; then
+            python3 -m pip install --user --break-system-packages pipx
+          fi
+          pipx install appimage-builder
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # 脚本自带：拒绝 /mnt 上的 Flutter、校验依赖、副本构建（产物落到仓库根 dist/）、
+      # 抽取 Windows 图标、修补 appimage-builder 的 stripped 二进制架构检测。
+      - name: Build Linux AppImage
+        run: |
+          flutter config --enable-linux-desktop
+          bash scripts/build_linux_appimage.sh
+
+      - name: Upload Linux artifact
+        if: ${{ inputs.upload-artifacts != false }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-linux-appimage
+          path: dist/heinplay-*-linux-x86_64.AppImage
           if-no-files-found: error
 
   release:
     name: Create Release
-    needs: [build-tv, build-tvlegacy, build-mobile, build-windows]
+    needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: ${{ inputs.upload-artifacts != false }}
     permissions:
@@ -300,5 +438,9 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: HeinPlay-${{ env.RELEASE_TAG }}
           body: "更新日志详见 CHANGELOG.md"
-          files: artifacts/*
+          # 除各平台安装包外，一并附上 Steam 库封面素材（仓库内 steamos-covers/），
+          # 便于掌机用户把应用添加为「非 Steam 游戏」后设置库封面与图标。
+          files: |
+            artifacts/*
+            steamos-covers/*.png
           fail_on_unmatched_files: true

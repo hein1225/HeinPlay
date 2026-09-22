@@ -15,6 +15,12 @@ const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
+/// 直播固定使用的 libvlc 缓存毫秒数（不读用户「缓冲模式」档位）。
+///
+/// 直播不需要点播那套缓冲策略：缓存越大起播/换台越慢。这里取 libvlc 的最小
+/// 合理值 1000ms（其自身默认值），既能吸收轻微网络抖动又不拖慢起播。
+const _kLiveCachingMs = 1000;
+
 Map<String, String> _refererFor(String url) {
   try {
     final uri = Uri.parse(url);
@@ -91,6 +97,7 @@ class VlcBackend implements VideoPlayerBackend {
     BufferProfileConfig? bufferConfig,
     bool isLive = false,
     VideoFormat? formatHint,
+    bool preferTextureView = false,
   }) async {
     await dispose();
     _completedReported = false;
@@ -131,9 +138,21 @@ class VlcBackend implements VideoPlayerBackend {
       ...?stripInternalRequestHeaders(headers),
     };
 
-    // 直播流使用较低缓存以减少延迟，点播使用默认缓存。
-    final networkCaching = isLive ? 1000 : 3000;
-    final fileCaching = isLive ? 1000 : 3000;
+    // 点播/回放才跟随「点播设置 → 缓冲模式」（与 fvp / ExoPlayer 同一套档位）：
+    // 标准 3s / 增强 8s / 强力 15s。
+    // 直播不应用任何缓冲档位（全平台一致），固定用 libvlc 的最小合理值，
+    // 保证起播/换台速度不受用户把点播缓冲调大影响。
+    final effectiveConfig =
+        isLive ? null : (bufferConfig ?? await BufferProfileConfig.current());
+    final caching = isLive ? _kLiveCachingMs : effectiveConfig!.vlcCachingMs;
+    final networkCaching = caching;
+    final fileCaching = caching;
+    WindowsLogger.log(
+      'VlcBackend',
+      '缓存配置已下发: network-caching=${networkCaching}ms '
+          'file-caching=${fileCaching}ms'
+          '${isLive ? ' [直播，不应用缓冲档位]' : ' [点播/回放]'}',
+    );
 
     final mediaOptions = [
       ':network-caching=$networkCaching',
@@ -269,6 +288,13 @@ class VlcBackend implements VideoPlayerBackend {
     _valueListener = null;
     if (listener != null) {
       _controller?.removeListener(listener);
+    }
+    // 先暂停，停止原生网络/解码线程，再 release 媒体播放器，
+    // 避免播放中直接 dispose 时 libvlc 等待线程退出阻塞原生/UI 线程，造成“软件未响应”卡死。
+    try {
+      await _controller?.pause().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // 忽略暂停异常（如控制器尚未 attach 到 VlcPlayer widget）。
     }
     _controller?.dispose();
     _controller = null;

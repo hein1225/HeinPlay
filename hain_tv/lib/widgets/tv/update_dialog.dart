@@ -9,11 +9,20 @@ Future<void> showUpdateDialog(
   UpdateInfo info, {
   required Future<void> Function(void Function(double progress) onProgress)
   onDownload,
+  String actionLabel = '立即更新',
+  String? notice,
+  bool manualDownload = false,
 }) async {
   await showDialog(
     context: context,
     barrierDismissible: false,
-    builder: (ctx) => UpdateDialog(info: info, onDownload: onDownload),
+    builder: (ctx) => UpdateDialog(
+      info: info,
+      onDownload: onDownload,
+      actionLabel: actionLabel,
+      notice: notice,
+      manualDownload: manualDownload,
+    ),
   );
 }
 
@@ -22,7 +31,24 @@ class UpdateDialog extends StatefulWidget {
   final Future<void> Function(void Function(double progress) onProgress)
   onDownload;
 
-  const UpdateDialog({super.key, required this.info, required this.onDownload});
+  /// 「下载」按钮的文案。Linux 版无应用内自动更新，改显示为「前往下载」。
+  final String actionLabel;
+
+  /// 对话框内的补充说明（例如解释为何需要手动下载）。
+  final String? notice;
+
+  /// 为 true 表示不展示下载进度：点击按钮直接执行 [onDownload]
+  /// （用于打开外部发布页面），完成后关闭对话框。
+  final bool manualDownload;
+
+  const UpdateDialog({
+    super.key,
+    required this.info,
+    required this.onDownload,
+    this.actionLabel = '立即更新',
+    this.notice,
+    this.manualDownload = false,
+  });
 
   @override
   State<UpdateDialog> createState() => _UpdateDialogState();
@@ -33,6 +59,18 @@ class _UpdateDialogState extends State<UpdateDialog> {
   double _progress = 0.0;
 
   Future<void> _startDownload() async {
+    // 手动下载模式（Linux）：不进入进度态，直接执行回调（打开发布页面）后关闭对话框。
+    if (widget.manualDownload) {
+      try {
+        await widget.onDownload((_) {});
+      } finally {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+      return;
+    }
+
     setState(() {
       _isDownloading = true;
       _progress = 0.0;
@@ -81,6 +119,28 @@ class _UpdateDialogState extends State<UpdateDialog> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 补充说明（例如提示 Linux 版需手动下载）
+                if (widget.notice != null) ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Text(
+                      widget.notice!,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ],
                 // 更新日志滚动区域
                 Expanded(
                   child: Container(
@@ -221,7 +281,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                     enabled: !_isDownloading,
                     onTap: _startDownload,
                     child: _buildButton(
-                      label: _isDownloading ? '下载中...' : '立即更新',
+                      label: _isDownloading ? '下载中...' : widget.actionLabel,
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),

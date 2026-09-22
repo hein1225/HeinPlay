@@ -16,7 +16,7 @@ import '../../theme.dart';
 
 /// 应用启动目标平台。
 enum SplashTarget {
-  /// TV / tvLegacy。
+  /// TV 版（Android TV / 大屏）。
   tv,
 
   /// Windows 桌面版。

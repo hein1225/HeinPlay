@@ -7,7 +7,15 @@ $ErrorActionPreference = "Continue"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $projectDir = Resolve-Path (Join-Path $scriptDir "..")
-$distDir = Join-Path $projectDir "dist"
+# 产物统一输出到「仓库根 dist」——所有平台的最终产物（APK / zip / AppImage / HAP）都归在一处。
+# 若本工程被单独复制出仓库（父目录无 .git），则回退到工程内 dist，保证脚本仍可独立使用。
+$repoRoot = Split-Path -Parent $projectDir
+if (Test-Path (Join-Path $repoRoot ".git")) {
+    $distDir = Join-Path $repoRoot "dist"
+} else {
+    Write-Warning "未在 $repoRoot 检测到仓库根（无 .git），产物将输出到工程内: $projectDir\dist"
+    $distDir = Join-Path $projectDir "dist"
+}
 
 # PUB_CACHE 必须指向项目本地缓存（项目约定），fvp 的 mdk-sdk 已预缓存于此。
 # 若构建进程未继承该环境变量，CMake 会落到全局缓存去下载坏 URL（GitHub latest 的
@@ -129,9 +137,75 @@ foreach ($scriptPath in $manualUpdateScripts) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 打包：只收「程序产物」，绝不收运行期数据。
+#
+# 背景（2026-09-18 定位）：build\windows\x64\runner\Release\data\ 里除了
+# app.so / flutter_assets / icudtl.dat 这些真正的程序产物，还可能残留运行期数据
+# （shared_preferences.json、app_logs、cache 等）——只要有人在该 Release 目录里
+# 直接跑过一次 hain_tv.exe 就会生成。旧实现用 Compress-Archive 整目录打包，会把这些
+# 数据一并塞进分发 zip；分发端解压覆盖时（build_all.ps1 的 Expand-Archive -Force，
+# 或用户手动解压）就用构建机的旧数据顶掉了用户自己的 shared_preferences.json，
+# 典型症状就是「每次构建完都要重新登录」。这里改为逐文件收集并显式跳过运行期数据。
+# ---------------------------------------------------------------------------
+$runtimeDataExcludes = @(
+    'data\shared_preferences.json',
+    'data\prefs_big',
+    'data\app_logs',
+    'data\cache',
+    'data\support',
+    'data\temp',
+    'data\documents',
+    'data\downloads',
+    'data\windows_logs',
+    'update'
+)
+
 if (Test-Path $destZip) {
     Remove-Item $destZip -Force
 }
 
-Compress-Archive -Path "$sourceDir\*" -DestinationPath $destZip -Force
+# 两个程序集都必须显式加载（Windows PowerShell 5.1 实测，2026-09-19）：
+#   System.IO.Compression.FileSystem → ZipFile / ZipFileExtensions
+#   System.IO.Compression            → ZipArchiveMode / CompressionLevel
+# 只 Add-Type 前者时，[System.IO.Compression.ZipArchiveMode] 会抛
+#   Unable to find type [System.IO.Compression.ZipArchiveMode]
+# 导致打包中断、整个 Windows 构建被判定失败（日志只留一行 EXCEPTION）。
+# 旧实现用 Compress-Archive（cmdlet，模块内部完成，不做脚本级类型解析）不会踩到，
+# 改为逐文件 ZipFile 打包后首次暴露。
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
+$sourceRoot = (Resolve-Path $sourceDir).Path.TrimEnd('\')
+$excludedRel = New-Object System.Collections.Generic.List[string]
+# 枚举参数一律用字符串字面量（'Create' / 'Optimal'）：由 PowerShell 参数绑定层
+# 按方法签名反射转换，不依赖脚本对 ZipArchiveMode / CompressionLevel 的类型解析，
+# 即使上面的程序集加载在某台机器上失效，打包仍能正常完成。
+$zipArchive = [System.IO.Compression.ZipFile]::Open($destZip, 'Create')
+try {
+    foreach ($file in Get-ChildItem -Path $sourceRoot -Recurse -File -Force) {
+        $rel = $file.FullName.Substring($sourceRoot.Length + 1)
+        $skip = $false
+        foreach ($ex in $runtimeDataExcludes) {
+            if (($rel -ieq $ex) -or ($rel -ilike "$ex\*")) { $skip = $true; break }
+        }
+        if ($skip) {
+            $excludedRel.Add($rel)
+            continue
+        }
+        $entryName = $rel.Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zipArchive,
+            $file.FullName,
+            $entryName,
+            'Optimal') | Out-Null
+    }
+}
+finally {
+    $zipArchive.Dispose()
+}
+
 Write-Output "已生成: $destZip"
+if ($excludedRel.Count -gt 0) {
+    Write-Output "已排除运行期数据 $($excludedRel.Count) 项（不进入分发包）："
+    foreach ($e in $excludedRel) { Write-Output "  - $e" }
+}

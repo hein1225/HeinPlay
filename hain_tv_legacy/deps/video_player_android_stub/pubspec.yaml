@@ -1,0 +1,27 @@
+name: video_player_android
+description: >
+  tvLegacy 专用占位包（零原生实现）。本工程唯一播放后端是 fvp，
+  此处刻意不注册 ExoPlayer，仅为满足 video_player 对 Android 默认实现的
+  依赖需求，从而避免把 media3（其 AAR 声明 minSdk 23）带进 APK ——
+  这是 tvLegacy 能跑在 Android 5.0/6.0 (API 21~23) 上的前提之一。
+version: 2.11.0
+publish_to: 'none'
+
+environment:
+  # tvLegacy 独立工程使用 Flutter 3.32.8 / Dart 3.8.1。
+  sdk: '>=3.8.0 <4.0.0'
+  flutter: '>=3.32.0'
+
+flutter:
+  plugin:
+    implements: video_player
+    platforms:
+      android:
+        # 仅声明 dartPluginClass（无 pluginClass / 无 android 目录）：
+        # Flutter 会生成 dart 侧注册调用，但不会向 Gradle include 任何原生模块，
+        # 因此 media3 / ExoPlayer 彻底不参与构建。
+        dartPluginClass: AndroidVideoPlayer
+
+dependencies:
+  flutter:
+    sdk: flutter

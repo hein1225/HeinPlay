@@ -19,16 +19,10 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// tvlegacy 强制使用低版本 Media3，避免 1.9.2 在 Android 5.x（API 21/22）上因
-// AudioDeviceCallback（API 23+）类缺失而闪退。该 property 由 video_player_android
-// 插件读取并覆盖默认的 Media3 版本号。
-subprojects {
-    val isTvlegacyBuild = gradle.startParameter.taskNames.any { it.contains("tvlegacy", ignoreCase = true) }
-    if (isTvlegacyBuild && project.name == "video_player_android") {
-        project.extra["heinplay.media3.version"] = "1.1.0"
-        println("[tvlegacy] 强制 video_player_android 使用 Media3 1.1.0")
-    }
-}
+// 注：tvlegacy 专属的「强制低版本 Media3」逻辑已移除 ——
+// 该逻辑是为 Android 5.x（API 21/22）规避 AudioDeviceCallback（API 23+）类缺失而设，
+// 现已随 tvlegacy 迁出到独立工程 hain_tv_legacy/（其 android/build.gradle.kts 内保留对应实现）。
+// 主工程 tv / mobile 均为 API 24+，使用默认 Media3 版本即可。
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)

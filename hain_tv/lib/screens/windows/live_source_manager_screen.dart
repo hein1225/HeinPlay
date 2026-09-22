@@ -126,10 +126,14 @@ class _WindowsLiveSourceManagerScreenState
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
-            tooltip: '返回',
+          // 返回按钮不参与键盘焦点：方向键遍历/回车都不能激活它，
+          // 避免「回车马上返回」；鼠标点击与 ESC / 右键返回不受影响。
+          ExcludeFocus(
+            child: IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
+              tooltip: '返回',
+            ),
           ),
           const SizedBox(width: AppSpacing.sm),
           Expanded(

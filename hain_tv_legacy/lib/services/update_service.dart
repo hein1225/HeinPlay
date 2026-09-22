@@ -1,0 +1,701 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../models/update_info.dart';
+import 'package:hain_tv/widgets/tv/update_dialog.dart';
+import 'app_info_service.dart';
+import 'permission_service.dart';
+import 'user_data_service.dart';
+
+enum UpdateChannel { domestic, github }
+
+class UpdateService {
+  static const String _domesticReleasesUrl =
+      'https://gitcode.com/api/v5/repos/gcw_QbmhmbO8/HeinPlay/releases/latest';
+  static const String _githubReleasesUrl =
+      'https://api.github.com/repos/hein1225/HeinPlay/releases/latest';
+  static String get currentVersion => AppInfoService.version;
+
+  static String _channelName(UpdateChannel channel) {
+    switch (channel) {
+      case UpdateChannel.domestic:
+        return '国内渠道';
+      case UpdateChannel.github:
+        return 'GitHub 渠道';
+    }
+  }
+
+  static Future<UpdateInfo?> checkUpdate({
+    UpdateChannel channel = UpdateChannel.domestic,
+    String platform = 'tv',
+  }) async {
+    final url = channel == UpdateChannel.domestic
+        ? _domesticReleasesUrl
+        : _githubReleasesUrl;
+    debugPrint(
+      'UpdateService: 开始检查更新，当前版本 $currentVersion，平台 $platform，渠道 ${_channelName(channel)}，URL $url',
+    );
+
+    final response = await http
+        .get(
+          Uri.parse(url),
+          headers: {'Accept': 'application/json', 'User-Agent': 'HeinPlay-App'},
+        )
+        .timeout(const Duration(seconds: 10));
+
+    debugPrint(
+      'UpdateService: ${_channelName(channel)} API 状态码 ${response.statusCode}',
+    );
+    if (response.statusCode != 200) {
+      throw Exception(
+        '${_channelName(channel)} API 返回 ${response.statusCode}: ${response.body}',
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final tag = (json['tag_name'] as String? ?? '').trim();
+    final latestVersion = tag.toLowerCase().startsWith('v')
+        ? tag.substring(1)
+        : tag;
+    debugPrint('UpdateService: tag=$tag, latestVersion=$latestVersion');
+
+    if (latestVersion.isEmpty) {
+      debugPrint('UpdateService: tag 为空，放弃');
+      return null;
+    }
+
+    final newer = _isNewer(latestVersion, currentVersion);
+    debugPrint(
+      'UpdateService: latest=$latestVersion, current=$currentVersion, newer=$newer',
+    );
+    if (!newer) return null;
+
+    String? downloadUrl;
+    final assets = json['assets'] as List<dynamic>? ?? [];
+    debugPrint('UpdateService: assets 数量 ${assets.length}');
+    for (final asset in assets) {
+      if (asset is! Map<String, dynamic>) continue;
+      final name = (asset['name'] as String? ?? '').toLowerCase();
+      final url = asset['browser_download_url'] as String?;
+      debugPrint('UpdateService: asset=$name, url=$url');
+      // Windows 版优先匹配便携版 zip，其次回退到 .exe / .msix
+      if (platform.toLowerCase() == 'windows') {
+        if (name.endsWith('windows-portable.zip') &&
+            url != null &&
+            url.isNotEmpty) {
+          downloadUrl = url;
+          break;
+        }
+      } else {
+        // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk，tvLegacy 匹配 tvlegacy.apk。
+        // 为避免文件名同时包含 tv/mobile/tvlegacy 导致误匹配，增加互斥校验。
+        final lowerPlatform = platform.toLowerCase();
+        final matched = lowerPlatform == 'tv'
+            ? name.endsWith('tv.apk') &&
+                !name.contains('mobile') &&
+                !name.contains('tvlegacy')
+            : lowerPlatform == 'mobile'
+                ? name.endsWith('mobile.apk') && !name.contains('tv')
+                : lowerPlatform == 'tvlegacy'
+                    ? name.endsWith('tvlegacy.apk')
+                    : name.endsWith('$lowerPlatform.apk');
+        if (matched && url != null && url.isNotEmpty) {
+          downloadUrl = url;
+          break;
+        }
+      }
+    }
+    // Windows 未找到 zip 时回退到 .exe / .msix（此时走浏览器下载，不支持自动替换）
+    if (platform.toLowerCase() == 'windows' && downloadUrl == null) {
+      for (final asset in assets) {
+        if (asset is! Map<String, dynamic>) continue;
+        final name = (asset['name'] as String? ?? '').toLowerCase();
+        final url = asset['browser_download_url'] as String?;
+        if ((name.endsWith('.exe') || name.endsWith('.msix')) &&
+            url != null &&
+            url.isNotEmpty) {
+          downloadUrl = url;
+          break;
+        }
+      }
+    }
+
+    debugPrint('UpdateService: downloadUrl=$downloadUrl');
+
+    // Android/TV/tvLegacy 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      final lowerPlatform = platform.toLowerCase();
+      if (lowerPlatform == 'tv' ||
+          lowerPlatform == 'mobile' ||
+          lowerPlatform == 'tvlegacy') {
+        debugPrint(
+          'UpdateService: $platform 平台未找到对应 APK，跳过本次更新提示',
+        );
+        return null;
+      }
+    }
+
+    return UpdateInfo(
+      version: latestVersion,
+      tagName: tag,
+      title: json['name'] as String? ?? tag,
+      body: json['body'] as String? ?? '',
+      htmlUrl:
+          json['html_url'] as String? ??
+          'https://github.com/hein1225/HeinPlay/releases',
+      apkUrl: downloadUrl,
+    );
+  }
+
+  static bool _isNewer(String latest, String current) {
+    if (latest.isEmpty || current.isEmpty) return false;
+    final l = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+
+    final length = l.length > c.length ? l.length : c.length;
+    for (int i = 0; i < length; i++) {
+      final lv = i < l.length ? l[i] : 0;
+      final cv = i < c.length ? c[i] : 0;
+      if (lv > cv) return true;
+      if (lv < cv) return false;
+    }
+    return false;
+  }
+
+  static Future<void> openDownloadUrl(UpdateInfo info) async {
+    final url = info.apkUrl ?? info.htmlUrl;
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  /// 下载并安装 APK。
+  /// 先请求安装未知应用权限，下载完成后调用系统安装器。
+  /// [onProgress] 返回 0.0~1.0 的下载进度。
+  static Future<bool> downloadAndInstallApk(
+    BuildContext context,
+    UpdateInfo info, {
+    void Function(double progress)? onProgress,
+  }) async {
+    if (info.apkUrl == null || info.apkUrl!.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('未找到 APK 下载地址')));
+      }
+      return false;
+    }
+
+    // 1. 请求安装未知应用权限
+    if (!await PermissionService.canInstallPackages()) {
+      final granted =
+          await PermissionService.requestInstallPackagesPermission();
+      if (!granted) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('需要开启“允许安装未知应用”权限才能更新')));
+        }
+        return false;
+      }
+    }
+
+    // 2. 下载 APK
+    final dir = await getTemporaryDirectory();
+    final fileName = 'hain_tv_update_${info.version}.apk';
+    final savePath = '${dir.path}/$fileName';
+
+    final dio = Dio();
+    try {
+      await dio.download(
+        info.apkUrl!,
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            onProgress?.call(received / total);
+          }
+        },
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('下载失败: $e')));
+      }
+      return false;
+    }
+
+    // 3. 安装 APK
+    if (!File(savePath).existsSync()) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('APK 文件不存在')));
+      }
+      return false;
+    }
+
+    final result = await OpenFilex.open(
+      savePath,
+      type: 'application/vnd.android.package-archive',
+    );
+    if (result.type == ResultType.done ||
+        result.type == ResultType.noAppToOpen) {
+      return true;
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('打开安装器失败: ${result.message}')));
+      }
+      return false;
+    }
+  }
+
+  /// Windows 便携版自动更新脚本（英文日志，便于 bat 显示）。
+  /// 等待主进程退出后解压 zip，删除旧程序文件，覆盖 data 目录内应用资源并保留用户数据。
+  static const String _windowsUpdaterScript = r'''
+param(
+    [Parameter(Mandatory=$true)]
+    [int]$ParentPid,
+    [Parameter(Mandatory=$true)]
+    [string]$AppDir,
+    [Parameter(Mandatory=$true)]
+    [string]$ExeName
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-Log {
+    param([string]$Message)
+    $logDir = Join-Path $AppDir 'update'
+    if (-not (Test-Path $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+    $logPath = Join-Path $logDir 'update.log'
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    "$timestamp $Message" | Out-File -FilePath $logPath -Append -Encoding utf8
+}
+
+function Get-ExeVersion {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path $Path)) { return $null }
+        $versionInfo = (Get-Item $Path).VersionInfo
+        $ver = $versionInfo.FileVersion
+        if ([string]::IsNullOrWhiteSpace($ver)) { $ver = $versionInfo.ProductVersion }
+        return $ver
+    } catch {
+        return $null
+    }
+}
+
+try {
+    Write-Log "Updater started. Parent PID=$ParentPid, AppDir=$AppDir, ExeName=$ExeName"
+
+    # Wait for parent process to exit, up to 30 seconds
+    $waitStart = Get-Date
+    while ($true) {
+        $parent = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
+        if (-not $parent) {
+            Write-Log "Parent process exited"
+            break
+        }
+        if ((Get-Date) - $waitStart -gt [TimeSpan]::FromSeconds(30)) {
+            Write-Log "Timeout waiting for parent process, continue anyway"
+            break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    # 主进程退出后再等待 2 秒，确保文件句柄释放，避免 exe 被锁导致复制未生效。
+    Start-Sleep -Seconds 2
+
+    $updateDir = Join-Path $AppDir 'update'
+    $extractedDir = Join-Path $updateDir 'extracted'
+    $zipPath = Join-Path $updateDir 'download.zip'
+
+    if (-not (Test-Path $zipPath)) {
+        throw "Update package not found: $zipPath"
+    }
+    Write-Log "Found update package: $zipPath, size=$((Get-Item $zipPath).Length) bytes"
+
+    if (Test-Path $extractedDir) {
+        Write-Log "Cleaning old extracted directory: $extractedDir"
+        Remove-Item -Recurse -Force $extractedDir -ErrorAction SilentlyContinue
+    }
+
+    Write-Log "Extracting update package..."
+    Expand-Archive -Path $zipPath -DestinationPath $extractedDir -Force
+    Write-Log "Extraction completed"
+
+    # If archive root contains only one folder, treat it as wrapper directory
+    $newRoot = $extractedDir
+    $files = Get-ChildItem $extractedDir -File
+    $dirs = Get-ChildItem $extractedDir -Directory
+    if ($files.Count -eq 0 -and $dirs.Count -eq 1) {
+        $newRoot = $dirs[0].FullName
+        Write-Log "Detected wrapper directory, actual root=$newRoot"
+    }
+
+    # Replace data folder: backup user data, remove old data, copy new data, restore user data.
+    $newDataDir = Join-Path $newRoot 'data'
+    $oldDataDir = Join-Path $AppDir 'data'
+    if (Test-Path $newDataDir) {
+        $dataBackupDir = Join-Path $updateDir 'data_backup'
+        $userDataItems = @('shared_preferences.json', 'support', 'documents', 'cache', 'downloads', 'temp', 'windows_logs')
+
+        if (Test-Path $dataBackupDir) { Remove-Item -Recurse -Force $dataBackupDir -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $dataBackupDir -Force | Out-Null
+
+        foreach ($udItem in $userDataItems) {
+            $udSource = Join-Path $oldDataDir $udItem
+            if (Test-Path $udSource) {
+                $udDest = Join-Path $dataBackupDir $udItem
+                Write-Log "Backing up user data: $udItem"
+                Copy-Item -Path $udSource -Destination $udDest -Recurse -Force -ErrorAction Stop
+            }
+        }
+
+        if (Test-Path $oldDataDir) {
+            Write-Log "Removing old data directory: $oldDataDir"
+            $retry = 0
+            $maxRetry = 10
+            while ($retry -lt $maxRetry) {
+                try {
+                    Remove-Item -Recurse -Force $oldDataDir -ErrorAction Stop
+                    break
+                } catch {
+                    $retry++
+                    Write-Log "Remove data failed (retry $retry/$maxRetry): $_"
+                    if ($retry -ge $maxRetry) { throw }
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+        }
+
+        Write-Log "Copying new data directory"
+        Copy-Item -Path $newDataDir -Destination $AppDir -Recurse -Force -ErrorAction Stop
+
+        foreach ($udItem in $userDataItems) {
+            $udSource = Join-Path $dataBackupDir $udItem
+            if (Test-Path $udSource) {
+                $udDest = Join-Path $oldDataDir $udItem
+                Write-Log "Restoring user data: $udItem"
+                Copy-Item -Path $udSource -Destination $udDest -Recurse -Force -ErrorAction Stop
+            }
+        }
+    }
+
+    # Remove old program files, keep data and update folders (data already handled).
+    $keep = @('data', 'update')
+    $existingItems = Get-ChildItem $AppDir -ErrorAction SilentlyContinue
+    foreach ($oldItem in $existingItems) {
+        if ($keep -contains $oldItem.Name) { continue }
+        $oldPath = $oldItem.FullName
+        Write-Log "Removing old item: $oldPath"
+        $retry = 0
+        $maxRetry = 10
+        while ($retry -lt $maxRetry) {
+            try {
+                Remove-Item -Recurse -Force $oldPath -ErrorAction Stop
+                break
+            } catch {
+                $retry++
+                Write-Log "Remove failed (retry $retry/$maxRetry): $_"
+                if ($retry -ge $maxRetry) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
+
+    # Copy new files into app directory, keep update folder; data already handled.
+    $exclude = @('update')
+    $items = Get-ChildItem $newRoot | Where-Object { $exclude -notcontains $_.Name }
+    Write-Log "Copying $($items.Count) items"
+
+    $exePath = Join-Path $AppDir $ExeName
+    $exeUpdated = $false
+
+    foreach ($item in $items) {
+        $dest = Join-Path $AppDir $item.Name
+        Write-Log "Copying $($item.Name) -> $dest"
+
+        $isExe = ($item.Name -eq $ExeName)
+        $oldVersion = $null
+        $backupPath = "$dest.old"
+
+        if ($isExe -and (Test-Path $dest)) {
+            $oldVersion = Get-ExeVersion -Path $dest
+            Write-Log "Old $ExeName version: $oldVersion"
+        }
+
+        $retry = 0
+        $maxRetry = 10
+        while ($retry -lt $maxRetry) {
+            try {
+                Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
+                Write-Log "Copy $($item.Name) succeeded"
+                break
+            } catch {
+                $retry++
+                Write-Log "Copy $($item.Name) failed (retry $retry/$maxRetry): $_"
+                if ($retry -ge $maxRetry) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+
+        if ($isExe) {
+            $newVersion = Get-ExeVersion -Path $dest
+            Write-Log "New $ExeName version: $newVersion"
+            if ([string]::IsNullOrWhiteSpace($newVersion)) {
+                Write-Log "Warning: could not read version from new $ExeName"
+            } elseif ($oldVersion -and $newVersion -eq $oldVersion) {
+                # 新版本 exe 版本号与旧版本相同，说明更新包可能未生效或被系统还原，执行回滚。
+                Write-Log "ERROR: new $ExeName version equals old version ($newVersion), rolling back"
+                if (Test-Path $backupPath) {
+                    Remove-Item -Force $dest -ErrorAction SilentlyContinue
+                    Rename-Item -Path $backupPath -NewName $ExeName -Force -ErrorAction SilentlyContinue
+                    Write-Log "Rolled back to old $ExeName"
+                }
+                throw "主程序版本未变化（$newVersion），更新包未生效，已回滚。"
+            }
+            $exeUpdated = $true
+        }
+    }
+
+    # 更新成功后删除 exe 备份文件
+    if ($exeUpdated -and (Test-Path $backupPath)) {
+        Remove-Item -Force $backupPath -ErrorAction SilentlyContinue
+        Write-Log "Removed old $ExeName backup"
+    }
+
+    Write-Log "All files copied successfully"
+} catch {
+    Write-Log "Update failed: $_"
+    if ($_.ScriptStackTrace) {
+        Write-Log $_.ScriptStackTrace
+    }
+} finally {
+    $updateDir = Join-Path $AppDir 'update'
+    if (Test-Path $updateDir) {
+        # Keep log and batch window script; remove other temp files.
+        # Do NOT delete update.bat here: the cmd progress window is still executing it.
+        $logPath = Join-Path $updateDir 'update.log'
+        Get-ChildItem $updateDir -Exclude 'update.log','update.bat' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Log "Temp files cleaned"
+    }
+}
+
+# Restart app
+$exePath = Join-Path $AppDir $ExeName
+if (Test-Path $exePath) {
+    Write-Log "Restarting app: $exePath"
+    Start-Process -FilePath $exePath -WorkingDirectory $AppDir
+} else {
+    Write-Log "Executable not found: $exePath"
+}
+''';
+
+  /// Windows 更新进度显示批处理脚本。
+  /// 启动后显示更新进度，后台调用 PowerShell 完成实际更新。
+  static const String _windowsUpdaterBatch = r'''
+@echo off
+chcp 65001 >nul
+setlocal enabledelayedexpansion
+
+set "APP_DIR=%~2"
+set "PID=%~1"
+set "EXE_NAME=%~3"
+set "PS_FILE=%APP_DIR%\update\update.ps1"
+set "LOG_FILE=%APP_DIR%\update\update.log"
+
+cls
+echo ========================================
+echo   HeinPlay Updater
+echo ========================================
+echo.
+echo Updating HeinPlay, please wait...
+echo Do not close this window.
+echo.
+
+:: Clean old log
+if exist "%LOG_FILE%" del /f /q "%LOG_FILE%" >nul 2>&1
+
+:: Start PowerShell updater in background
+start /min "" powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "%PS_FILE%" -ParentPid %PID% -AppDir "%APP_DIR%" -ExeName "%EXE_NAME%"
+
+set "LAST_LINE="
+:loop
+if exist "%LOG_FILE%" (
+    for /f "delims=" %%a in ('type "%LOG_FILE%" 2^>nul') do (
+        set "LINE=%%a"
+    )
+    if not "!LINE!"=="!LAST_LINE!" (
+        set "LAST_LINE=!LINE!"
+        echo [Update] !LINE!
+    )
+)
+timeout /t 1 /nobreak >nul
+:: Loop until the update directory is removed (except log)
+if exist "%PS_FILE%" goto loop
+
+echo.
+echo Update process finished.
+echo.
+timeout /t 2 /nobreak >nul
+exit
+''';
+
+  /// Windows 便携版自动更新。
+  ///
+  /// 下载新版 zip，生成 PowerShell 更新脚本与 BAT 进度窗口，启动 bat 后退出当前应用，
+  /// 由 bat 调用 PowerShell 完成文件替换并自动重启。
+  static Future<void> downloadAndUpdateWindows(
+    UpdateInfo info, {
+    required void Function(double progress) onProgress,
+  }) async {
+    final downloadUrl = info.apkUrl;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      throw Exception('未找到 Windows 更新包下载地址');
+    }
+
+    final exeFile = File(Platform.resolvedExecutable);
+    final appDir = exeFile.parent.path;
+    final updateDir = Directory(p.join(appDir, 'update'));
+
+    if (await updateDir.exists()) {
+      await updateDir.delete(recursive: true);
+    }
+    await updateDir.create(recursive: true);
+
+    final zipPath = p.join(updateDir.path, 'download.zip');
+    final scriptPath = p.join(updateDir.path, 'update.ps1');
+    final batchPath = p.join(updateDir.path, 'update.bat');
+
+    final dio = Dio();
+    try {
+      await dio.download(
+        downloadUrl,
+        zipPath,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            onProgress(received / total);
+          }
+        },
+      );
+    } catch (e) {
+      throw Exception('下载更新包失败: $e');
+    }
+
+    // PowerShell 5.1 需要 UTF-8 BOM 才能正确识别含中文路径/参数的脚本。
+    final scriptBytes = Uint8List.fromList([
+      0xEF,
+      0xBB,
+      0xBF,
+      ...utf8.encode(_windowsUpdaterScript),
+    ]);
+    await File(scriptPath).writeAsBytes(scriptBytes);
+    await File(batchPath).writeAsString(_windowsUpdaterBatch);
+
+    final exeName = p.basename(Platform.resolvedExecutable);
+    await Process.start(
+      'cmd.exe',
+      [
+        '/c',
+        'start',
+        '',
+        batchPath,
+        pid.toString(),
+        appDir,
+        exeName,
+      ],
+      workingDirectory: appDir,
+    );
+
+    // 等待 bat 窗口启动后退出当前应用，让脚本接管更新。
+    await Future.delayed(const Duration(seconds: 1));
+    exit(0);
+  }
+
+  static Future<void> checkAndPrompt(
+    BuildContext context, {
+    bool silent = false,
+    bool force = false,
+    UpdateChannel channel = UpdateChannel.domestic,
+    String platform = 'tv',
+  }) async {
+    // 非手动检查且 24 小时内已检查过，则跳过，避免每次启动都请求网络
+    if (!force) {
+      final lastCheck = await UserDataService.getLastUpdateCheckTime();
+      if (lastCheck != null &&
+          DateTime.now().difference(lastCheck) < const Duration(hours: 24)) {
+        debugPrint('UpdateService: 距离上次检查更新不足 24 小时，跳过自动检查');
+        return;
+      }
+    }
+
+    UpdateInfo? info;
+    try {
+      info = await checkUpdate(channel: channel, platform: platform);
+    } catch (e) {
+      debugPrint('UpdateService: 检查更新失败: $e');
+      if (!silent && context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('检查更新失败: $e')));
+      }
+      // 失败时也记录时间，避免网络异常时频繁重试
+      await UserDataService.saveLastUpdateCheckTime(DateTime.now());
+      return;
+    }
+    if (!context.mounted) return;
+
+    // 检查已成功完成，记录本次检查时间
+    await UserDataService.saveLastUpdateCheckTime(DateTime.now());
+
+    if (info == null) {
+      if (!silent) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+      }
+      return;
+    }
+
+    final skipped = await UserDataService.getSkippedVersion();
+    if (skipped == info.version) {
+      if (!silent) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已跳过版本 ${info.version}')));
+      }
+      return;
+    }
+
+    if (platform.toLowerCase() == 'windows') {
+      await showUpdateDialog(
+        context,
+        info,
+        onDownload: (onProgress) =>
+            downloadAndUpdateWindows(info!, onProgress: onProgress),
+      );
+      return;
+    }
+
+    await showUpdateDialog(
+      context,
+      info,
+      onDownload: (onProgress) =>
+          downloadAndInstallApk(context, info!, onProgress: onProgress),
+    );
+  }
+}

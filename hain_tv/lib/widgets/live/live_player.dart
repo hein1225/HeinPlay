@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../platform/device_utils.dart';
 import '../../player/player_backend_factory.dart';
 import '../../player/video_player_backend.dart';
 import '../../theme.dart';
@@ -92,6 +93,17 @@ class _LivePlayerState extends State<LivePlayer> {
   /// 当前 URL 的就绪回调是否已触发，避免 playing/duration 流重复回调。
   bool _readyNotified = false;
 
+  /// 桌面端（Windows/Linux）无缝换台的就绪延后时长。
+  ///
+  /// fvp 在桌面端走 texture 渲染，底层 `play()` 返回时视频纹理往往还没产出第一帧
+  /// （Android 的 platformView 路径不存在该问题）。若此时就让上层撤掉旧画面，
+  /// 会露出「声音已切、画面还是黑的」空档（Linux 电脑版实测换台黑屏数秒）。
+  /// 因此桌面端在底层报告开始播放后再等这段时间，让纹理确实出帧后才通知就绪。
+  static const Duration _kDesktopReadyDelay = Duration(milliseconds: 900);
+
+  /// 桌面端"等待画面上屏"的定时器，见 [_scheduleDesktopReady]。
+  Timer? _desktopReadyTimer;
+
   @override
   void initState() {
     super.initState();
@@ -141,6 +153,48 @@ class _LivePlayerState extends State<LivePlayer> {
     });
   }
 
+  /// 底层报告“已开始播放/拿到时长”。
+  ///
+  /// 该信号用于撤掉加载圈与错误提示；是否算“画面已就绪”按平台区分：
+  /// Android/TV 走 platformView，底层开始播放时画面已可见，保持立即就绪；
+  /// 桌面端（Windows/Linux）走 texture，需要再等纹理出帧（见 [_scheduleDesktopReady]）。
+  void _onPlaybackSignal() {
+    if (mounted && (_initializing || _error != null)) {
+      setState(() {
+        _initializing = false;
+        _error = null;
+      });
+    }
+    if (!DeviceUtils.isDesktop) {
+      _notifyReady();
+      return;
+    }
+    _scheduleDesktopReady();
+  }
+
+  /// 桌面端延后就绪回调，等视频纹理确实产出首帧后再通知上层。
+  ///
+  /// 少这一步时，无缝换台会在底层刚 `play()` 就撤掉旧画面，而新画面还要过几秒
+  /// 才从纹理里出来 —— 表现为“有声音但黑屏”。
+  void _scheduleDesktopReady() {
+    if (!DeviceUtils.isDesktop || _readyNotified) return;
+    _desktopReadyTimer?.cancel();
+    _desktopReadyTimer = Timer(_kDesktopReadyDelay, () {
+      _desktopReadyTimer = null;
+      WindowsLogger.log(
+        'LivePlayer',
+        '桌面端等待画面出帧 ${_kDesktopReadyDelay.inMilliseconds}ms 后通知就绪',
+      );
+      _notifyReady();
+    });
+  }
+
+  /// 取消桌面端延后计时（换 URL / 销毁时调用）。
+  void _cancelDesktopReady() {
+    _desktopReadyTimer?.cancel();
+    _desktopReadyTimer = null;
+  }
+
   /// 定位到指定位置（相对当前打开的流起点）。
   Future<void> _seek(Duration position) async {
     try {
@@ -178,24 +232,12 @@ class _LivePlayerState extends State<LivePlayer> {
           // 直播流通常没有固定时长，只要底层开始播放即视为就绪。
           // 同时清除可能因 transient 异常（如 VLC controller 尚未 attach）
           // 而残留的播放失败提示，避免画面已正常播放却仍显示错误。
-          if (mounted && (_initializing || _error != null)) {
-            setState(() {
-              _initializing = false;
-              _error = null;
-            });
-          }
-          _notifyReady();
+          _onPlaybackSignal();
         }),
       )
       ..add(
         backend.durationStream.listen((_) {
-          if (mounted && (_initializing || _error != null)) {
-            setState(() {
-              _initializing = false;
-              _error = null;
-            });
-          }
-          _notifyReady();
+          _onPlaybackSignal();
         }),
       );
     await _openUrl(widget.url);
@@ -205,6 +247,7 @@ class _LivePlayerState extends State<LivePlayer> {
     if (_backend == null || url.isEmpty) return;
 
     _readyNotified = false;
+    _cancelDesktopReady();
     setState(() {
       _initializing = true;
       _error = null;
@@ -223,6 +266,9 @@ class _LivePlayerState extends State<LivePlayer> {
       } else {
         await _backend!.play();
       }
+      // 桌面端兜底：即使底层没有推送播放信号，也要在延时后放行就绪，
+      // 否则无缝换台会一直停在旧画面上不切换。
+      _scheduleDesktopReady();
     } catch (e, stackTrace) {
       debugPrint('LivePlayer 播放失败: $e');
       debugPrint('$stackTrace');
@@ -250,6 +296,7 @@ class _LivePlayerState extends State<LivePlayer> {
   @override
   void dispose() {
     WindowsLogger.log('LivePlayer', 'dispose 开始');
+    _cancelDesktopReady();
     widget.controller?._detach(this);
     for (final sub in _subscriptions) {
       sub.cancel();

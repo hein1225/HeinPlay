@@ -76,6 +76,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   final _epgBannerScrollController = ScrollController();
   final _epgListFocusNode = FocusNode();
   int _selectedEpgIndex = 0;
+  /// 节目单内用确认键（回车/select）进入回放后，标记需吞掉随后的 KeyUp，
+  /// 避免回车抬起被 [_handleSelectKeyEvent] 误判为“回放暂停切换”而立即暂停
+  /// 刚启动的回放（与鼠标点击进入回放的行为保持一致）。
+  bool _epgConfirmPendingRelease = false;
 
   // 回放模式
   bool _isReplayMode = false;
@@ -85,6 +89,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   bool _isReplaySeeking = false;
   /// 当前已加载回放流对应的起始偏移（用于计算流内实时定位）。
   Duration _replayBaseOffset = Duration.zero;
+
   /// 回放按住快进/快退定时器。
   Timer? _replayHoldTimer;
   /// 回放按住是否为快进。
@@ -136,8 +141,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   DateTime? _selectKeyDownAt;
   Timer? _selectLongPressTimer;
 
-  final _categoryScrollController = ScrollController();
-  final _channelListScrollController = ScrollController();
+  ScrollController _categoryScrollController = ScrollController();
+  ScrollController _channelListScrollController = ScrollController();
   final _categoryFocusNode = FocusNode();
   final _channelListFocusNode = FocusNode();
   final _rootFocusNode = FocusNode();
@@ -380,7 +385,24 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           (c.catchup == null || c.catchup!.isEmpty) &&
           (c.catchupSource == null || c.catchupSource!.isEmpty),
     );
-    if (needCatchupFill) {
+
+    // 判断缓存内节目单是否还能覆盖“当前时间”。
+    // 仅看时间戳（12h TTL）是不够的：频道缓存本身有 24h TTL，EPG 可能在写入时
+    // 只包含到当天为止的节目，之后节目单会整体“过期”——此时节目单里没有任何
+    // 正在播放的节目，打开节目单就无法定位到当前节目（表现为停在列表最顶端）。
+    final hasCachedPrograms = channels.any((c) => c.programs.isNotEmpty);
+    final coversNow = channels.any(
+      (c) => c.programs.any((p) => c.isProgramCurrent(p)),
+    );
+    final epgFresh = await LiveService.isEpgCacheFresh(widget.source);
+    final needEpgRefresh = !hasCachedPrograms || !epgFresh || !coversNow;
+
+    // 无可用 EPG 地址时，先拉一次 M3U 头部拿到 url-tvg（内置源通常不单独配置
+    // epgUrl，EPG 地址只能从 M3U 头解析），否则下面的 fetchEpg 会因没有地址
+    // 直接返回 false，节目单将永远停留在缓存里的旧数据上。
+    final hasEpgUrl = (widget.source.epgUrl ?? '').trim().isNotEmpty ||
+        (LiveService.lastEpgUrl ?? '').trim().isNotEmpty;
+    if (needCatchupFill || (needEpgRefresh && !hasEpgUrl)) {
       final fillUrl =
           LiveService.extractSourceUrlFromChannels(channels) ?? widget.source.url;
       if (fillUrl.isNotEmpty) {
@@ -390,16 +412,25 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
 
     // 节目单刷新周期固定（12 小时），节目单每天内容都会变化需定期更新。
-    // 缓存内节目单仍在刷新周期内时复用，并按当前时间刷新当前节目信息，
-    // 避免重复拉取 EPG，减少网络请求与积分消耗。
-    final hasCachedPrograms = channels.any((c) => c.programs.isNotEmpty);
-    if (hasCachedPrograms && await LiveService.isEpgCacheFresh(widget.source)) {
+    // 缓存内节目单仍在刷新周期内、且仍能覆盖当前时间时复用，并按当前时间刷新
+    // 当前节目信息，避免重复拉取 EPG，减少网络请求与积分消耗。
+    if (hasCachedPrograms && epgFresh && coversNow) {
+      LiveService.refreshCurrentPrograms(channels);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // 节目单需要刷新、但近期刚尝试过（多为 EPG 地址不可用导致失败）：
+    // 本次不再重复拉取，直接用现有节目单（打开节目单时会退化为定位到
+    // 最接近当前时间的一条），避免每次进入直播页都拉一次 M3U/EPG。
+    if (hasCachedPrograms && LiveService.epgAttemptThrottled()) {
       LiveService.refreshCurrentPrograms(channels);
       if (mounted) setState(() {});
       return;
     }
 
     // 拉取最新 EPG；解析失败时不修改频道（保留已有节目单），不影响正常显示。
+    LiveService.lastEpgAttemptAt = DateTime.now();
     final ok = await LiveService.fetchEpg(channels, epgUrl: widget.source.epgUrl);
     // EPG 拉取后，把包含节目单的完整频道数据写回缓存，
     // 下次进入直播页即可直接恢复节目单，无需再次请求。
@@ -485,6 +516,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     setState(() {
       _currentIndex = index;
       _currentChannel = _channels[index];
+      if (_isReplayMode) {
+        // 换台会退出回放；若回放刚进入就被换台打断，这行日志会指认出来源。
+        WindowsLogger.log(
+          'LivePlayerScreen',
+          '换台重置回放 index=$index ← '
+              '${StackTrace.current.toString().split('\n').take(5).join(' | ')}',
+        );
+      }
       _isReplayMode = false;
       _currentReplayProgram = null;
       _replayOffset = Duration.zero;
@@ -635,6 +674,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (_selectedChannelIndexInGroup < 0) _selectedChannelIndexInGroup = 0;
   }
 
+  /// 打开频道列表前调用：重建滚动控制器并定位到当前频道位置，
+  /// 使列表首帧即停在当前频道，避免打开时选框/滚动从顶部跳到当前频道。
+  void _prepareChannelListScroll() {
+    _syncSelectionToCurrentChannel();
+    const catItemHeight = 48.0;
+    final catTarget = _selectedGroupIndex * catItemHeight;
+    final chTarget = _selectedChannelIndexInGroup * _channelItemHeight;
+    _categoryScrollController.dispose();
+    _channelListScrollController.dispose();
+    _categoryScrollController = ScrollController(initialScrollOffset: catTarget);
+    _channelListScrollController = ScrollController(initialScrollOffset: chTarget);
+    _channelListScrollController.addListener(_syncEpgBannerScroll);
+  }
+
   void _moveCategory(int delta) {
     final newIndex = (_selectedGroupIndex + delta).clamp(0, _groups.length - 1);
     if (newIndex == _selectedGroupIndex) return;
@@ -766,14 +819,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _showEpgList = false;
         _epgListChannel = null;
       } else {
-        _syncSelectionToCurrentChannel();
+        _prepareChannelListScroll();
         _focusOnCategories = false;
       }
     });
     if (willShow) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToCategory();
-        _scrollToChannelInGroup();
+        if (_epgBannerScrollController.hasClients &&
+            _channelListScrollController.hasClients) {
+          _epgBannerScrollController.jumpTo(_channelListScrollController.offset);
+        }
         _channelListFocusNode.requestFocus();
       });
     } else {
@@ -789,9 +844,26 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     }
   }
 
+  /// 控制栏自动隐藏倒计时（Windows）。
+  ///
+  /// 此前 `_controlsTimer` 只有 cancel、从未被赋值启动过，所以控制栏一旦显示就
+  /// 永久驻留（用户反馈「进入回放后控制栏不会自动消失，必须鼠标点击」）。
+  /// 频道列表打开时控制栏属于列表的附属控件，不参与自动隐藏。
+  void _startControlsTimer() {
+    if (!DeviceUtils.isDesktop) return;
+    _controlsTimer?.cancel();
+    _controlsTimer = null;
+    if (_showChannelList || !_controlsVisible) return;
+    _controlsTimer = Timer(const Duration(seconds: 5), () {
+      _controlsTimer = null;
+      if (mounted) _hideControls();
+    });
+  }
+
   void _hideControls() {
     if (!DeviceUtils.isDesktop) return;
     _controlsTimer?.cancel();
+    _controlsTimer = null;
     if (mounted) setState(() => _controlsVisible = false);
   }
 
@@ -802,14 +874,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     setState(() {
       _showChannelList = true;
       if (DeviceUtils.isDesktop) _controlsVisible = true;
-      _syncSelectionToCurrentChannel();
+      _prepareChannelListScroll();
       _focusOnCategories = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToCategory();
-      _scrollToChannelInGroup();
+      if (_epgBannerScrollController.hasClients &&
+          _channelListScrollController.hasClients) {
+        _epgBannerScrollController.jumpTo(_channelListScrollController.offset);
+      }
       _channelListFocusNode.requestFocus();
     });
+    // 列表已打开时计时器内部会直接跳过；此处只是保证「控制栏被单独显示」的
+    // 任何路径都不会漏掉自动隐藏（见 _startControlsTimer 说明）。
+    _startControlsTimer();
   }
 
   void _hideChannelListAndControls() {
@@ -864,6 +941,59 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     });
   }
 
+  /// 直播页按键绑定：把回车/小键盘回车/ESC 改绑到本页 Intent，避免被 Flutter
+  /// 默认的 ActivateIntent / DismissIntent 拿去「激活焦点上的任意按钮」
+  /// （频道列表返回按钮 = 退出播放，正是「回车把回放秒退」的元凶）。
+  static const Map<ShortcutActivator, Intent> _liveKeyShortcuts =
+      <ShortcutActivator, Intent>{
+    SingleActivator(LogicalKeyboardKey.enter): _LiveConfirmIntent(),
+    SingleActivator(LogicalKeyboardKey.numpadEnter): _LiveConfirmIntent(),
+    SingleActivator(LogicalKeyboardKey.escape): _LiveBackIntent(),
+  };
+
+  Map<Type, Action<Intent>> get _liveKeyActions => <Type, Action<Intent>>{
+        _LiveConfirmIntent: CallbackAction<_LiveConfirmIntent>(
+          onInvoke: (_) {
+            _onShortcutConfirm();
+            return null;
+          },
+        ),
+        _LiveBackIntent: CallbackAction<_LiveBackIntent>(
+          onInvoke: (_) {
+            _onShortcutBack();
+            return null;
+          },
+        ),
+      };
+
+  /// 这里**故意不执行任何动作**，只消费回车。
+  ///
+  /// [HardwareKeyboard] 的 handler（[_handleHardwareKeyEvent] → [_handleSelectKeyEvent]）
+  /// 在焦点树之前收到按键，确认逻辑已在那里完成（含长按/短按区分）。
+  /// 本 Shortcuts 仅用于把回车从 Flutter 默认的 `ActivateIntent` 上摘掉
+  /// （否则回车会去激活焦点上的返回按钮，表现为“一按回车就退出播放”）。
+  ///
+  /// 若此处再确认一次，长按弹出频道列表后，按住不放产生的按键重复
+  /// （SingleActivator 默认响应 repeat）会立刻再走一遍“播放选中频道并关闭列表”，
+  /// 即用户看到的「频道列表刚出来就被关掉、还顺带切了台」。
+  void _onShortcutConfirm() {
+    // 仅消费，不执行动作。
+  }
+
+  /// 这里**故意不执行任何动作**，只消费 ESC（与 [_onShortcutConfirm] 同源）。
+  ///
+  /// ESC 的返回动作由 [app_windows] 的全局 handler 统一发起
+  /// （`HardwareKeyboard` handler 在焦点树之前收到按键 → `maybePop` →
+  /// 本页 `PopScope.onPopInvokedWithResult` 按优先级决策）。
+  ///
+  /// 若此处再调一次 `maybePop`，同一次 ESC 就会连退两层：日志实证——回放模式
+  /// 按一次 ESC 出现**两条** `PopScope 被触发`，第一条 `回放=true` 执行
+  /// `_exitReplayMode()`，紧接着第二条 `回放=false` 直接走 `_exitWindowsPlayback()`
+  /// 退出播放页（用户看到的就是「回放模式按 ESC 直接退回到直播源列表」）。
+  void _onShortcutBack() {
+    // 仅消费，不执行动作。
+  }
+
   bool _handleHardwareKeyEvent(KeyEvent event) {
     // 页面销毁后 handler 可能仍在收到按键（如 ESC 的 KeyUp 落在 pop 销毁窗口），
     // 访问 defunct context 会抛异常导致闪退，先做 mounted 防护。
@@ -871,9 +1001,41 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
 
+    // 节目单（回放列表）打开时，所有按键优先交给节目单处理（含回车/小键盘回车/
+    // select），确保键盘确认键能稳定激活回放，不依赖长按/KeyUp 计时，也不受后续
+    // 直播模式确认键逻辑干扰。放在最顶端，覆盖下面所有按键分支。
+    if (_showEpgList) {
+      // 只在 KeyDown 执行一次：KeyRepeat（按住不放）与 KeyUp（松手）都必须吞掉，
+      // 否则长按回车会在节目单里连续触发多次“进入回放”。
+      if (event is KeyUpEvent || event is KeyRepeatEvent) {
+        if (event is KeyRepeatEvent &&
+            (event.logicalKey == LogicalKeyboardKey.select ||
+                event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+          // 长按期间保持静默（计时器/长按语义在节目单里不适用）。
+        }
+        return true;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.select ||
+          event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+        debugPrint('节目单确认键触发回放: key=${event.logicalKey}');
+        _handleEpgListKey(LogicalKeyboardKey.enter);
+        return true;
+      }
+      return _handleEpgListKey(event.logicalKey);
+    }
+
     // 确认键需要单独处理 KeyDown/KeyUp 以支持长按检测。
+    // 同时覆盖 Enter（主键盘/小键盘）与 select，避免 Windows 桌面端回车键无响应。
+    //
+    // Windows 与 TV 使用同一套「长按/短按」语义（用户设定，两端一致）：
+    //   长按 ≥600ms → 显示频道列表（与鼠标左键点击画面等价）
+    //   短按        → 显示当前频道的台标与播放信息
+    // 因此这里不做桌面端特例分支；桌面端过去的“立即执行”分支会吃掉长按语义。
     if (event.logicalKey == LogicalKeyboardKey.select ||
-        event.logicalKey == LogicalKeyboardKey.enter) {
+        event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
       return _handleSelectKeyEvent(event);
     }
 
@@ -885,11 +1047,6 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _showChannelListAndControls();
       }
       return true;
-    }
-
-    // 节目单列表打开时，方向键用于选择节目。
-    if (_showEpgList) {
-      return _handleEpgListKey(event.logicalKey);
     }
 
     // TV 版在频道列表打开时使用“分类 ←→ 频道”两列焦点导航。
@@ -915,10 +1072,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         }
         return true;
       case LogicalKeyboardKey.arrowLeft:
-        if (_isReplayMode) {
-          _seekReplay(Duration(seconds: -30));
-          return true;
-        }
+        // 频道列表可见时方向键用于列表导航，不再做回放快退（即使处于回放模式）。
         if (_showChannelList) {
           if (DeviceUtils.isTv && !_focusOnCategories) {
             setState(() => _focusOnCategories = true);
@@ -928,13 +1082,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           _toggleChannelList();
           return true;
         }
+        if (_isReplayMode) {
+          _seekReplay(Duration(seconds: -30));
+          return true;
+        }
         _switchToPrevBackupUrl();
         return true;
       case LogicalKeyboardKey.arrowRight:
-        if (_isReplayMode) {
-          _seekReplay(Duration(seconds: 30));
-          return true;
-        }
+        // 频道列表可见时方向键用于列表导航，不再做回放快进（即使处于回放模式）。
         if (_showChannelList) {
           if (DeviceUtils.isTv && _focusOnCategories) {
             setState(() => _focusOnCategories = false);
@@ -945,46 +1100,28 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           _openEpgListForCurrentChannel();
           return true;
         }
+        if (_isReplayMode) {
+          _seekReplay(Duration(seconds: 30));
+          return true;
+        }
         _switchToNextBackupUrl();
         return true;
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.goBack:
-        if (_showEpgList) {
-          _closeEpgList();
-          return true;
-        }
-        if (_showChannelList) {
-          if (DeviceUtils.isDesktop) {
-            // Windows：频道列表显示时返回键直接退出播放（返回直播管理页），
-            // 返回 false 交给全局 handler（app_windows._handleEscKey）执行 pop。
-            return false;
-          } else {
-            _toggleChannelList();
-          }
-          return true;
-        }
-        if (_isReplayMode) {
-          _exitReplayMode();
-          return true;
-        }
-        if (DeviceUtils.isDesktop) {
-          // Windows：ESC 统一交给全局 handler（app_windows._handleEscKey）执行
-          // maybePop，由本页 PopScope 决定：全屏先退出全屏、否则返回直播管理页。
-          // HardwareKeyboard 会调用所有注册的 handler，若这里也处理 ESC 会与全局
-          // handler 同时触发异步窗口操作导致并发卡死/闪退，因此返回 false 不消费。
-          return false;
-        }
-        // 非 Windows 平台返回 false，让 PopScope/系统返回键处理退出播放。
+        // ESC 统一交给全局 handler（app_windows._handleEscKey）→ navigator.maybePop
+        // → 本页 PopScope.onPopInvokedWithResult，按“全屏→回放→节目单→频道列表→退出播放”
+        // 的优先级决策。本页不再重复消费 ESC，避免与全局 handler 并发触发双动作/卡死。
         return false;
       default:
         return false;
     }
   }
 
-  /// 处理 TV 版确认键（select/enter）的短按/长按。
+  /// 处理确认键（select/enter/小键盘回车）的短按/长按。
   ///
+  /// Windows 与 TV 使用同一套语义（用户设定，两端一致）：
   /// - 短按：直播模式显示台标与播放信息；回放模式切换播放/暂停或恢复播放。
-  /// - 长按（≥600ms）或菜单键：显示频道列表。
+  /// - 长按（≥600ms）：显示频道列表（与鼠标左键点击画面等价）。
   bool _handleSelectKeyEvent(KeyEvent event) {
     // 后台关闭播放后，确认键/OK 键直接继续播放。
     if (_liveStopped) {
@@ -995,6 +1132,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       });
       return true;
     }
+
+    // 按住不放产生的按键重复必须在此消费：绝不能漏到焦点树，否则 Shortcuts 里的
+    // SingleActivator 默认响应 repeat，会在长按弹出频道列表后立刻再执行一遍
+    // 「播放选中频道并关闭列表」——表现为「列表刚出来就被关掉、还顺带切了台」。
+    if (event is KeyRepeatEvent) {
+      return true;
+    }
+
     if (event is KeyDownEvent) {
       _selectKeyDownAt = DateTime.now();
       _selectLongPressTimer?.cancel();
@@ -1018,6 +1163,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       final downAt = _selectKeyDownAt;
       _selectKeyDownAt = null;
       if (downAt == null) return true;
+
+      // 节目单确认回放后的 KeyUp：吞掉，避免刚进入回放就被误暂停
+      // （与鼠标点击进入回放的行为保持一致）。
+      if (_epgConfirmPendingRelease) {
+        _epgConfirmPendingRelease = false;
+        return true;
+      }
 
       if (_showEpgList) {
         _handleEpgListKey(LogicalKeyboardKey.select);
@@ -1097,9 +1249,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _closeEpgList();
         return true;
       case LogicalKeyboardKey.arrowRight:
+        // 节目单内右键不进入回放/快进：快进快退只在“回放模式”才可用。
+        // 右键保持节目单停留在浏览状态（左键/Esc 关闭列表，确认键播放选中节目）。
+        return true;
       case LogicalKeyboardKey.select:
       case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
         if (programs.isNotEmpty) {
+          _epgConfirmPendingRelease = true;
           _startReplay(programs[_selectedEpgIndex]);
         }
         return true;
@@ -1113,16 +1270,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   /// 进入指定节目的回放模式。
-  void _startReplay(EpgProgram program) {
+  Future<void> _startReplay(EpgProgram program) async {
     final channel = _epgListChannel ?? _currentChannel;
     if (channel == null) return;
-    debugPrint(
+    WindowsLogger.log(
+      'LivePlayerScreen',
       '回放检查: 频道=${channel.name}, catchup=${channel.catchup}, '
-      'catchupSource=${channel.catchupSource}, catchupDays=${channel.catchupDays}, '
-      'program.stop=${program.stop}, channelNow=${channel.channelNow}',
+          'catchupSource=${channel.catchupSource}, catchupDays=${channel.catchupDays}, '
+          'program.start=${program.start}, program.stop=${program.stop}, '
+          'channelNow=${channel.channelNow}',
     );
     final canReplay = _canReplay(channel, program);
+    WindowsLogger.log('LivePlayerScreen', '回放可播判定 canReplay=$canReplay');
     if (!canReplay) {
+      WindowsLogger.log('LivePlayerScreen', '该节目不支持回放，已中止进入回放');
       _showReplayHint('该节目不支持回放');
       return;
     }
@@ -1151,12 +1312,29 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _showEpgList = false;
       _showChannelList = false;
       _epgListChannel = null;
+      // 必须显式收起控制栏：长按回车打开频道列表时会把 _controlsVisible 置 true，
+      // 若不清掉，确认进入回放后控制栏会残留显示（且无人给它计时隐藏）——
+      // 正是用户看到的「回车进入回放后控制栏一直挡在画面上」。
+      _controlsVisible = false;
     });
+    _controlsTimer?.cancel();
+    _controlsTimer = null;
+    WindowsLogger.log(
+      'LivePlayerScreen',
+      '[_startReplay] 完成 isReplayMode=$_isReplayMode '
+          'replayProg=${_currentReplayProgram?.title} curCh=${_currentChannel?.name}',
+    );
     _showChannelInfoBriefly();
   }
 
   /// 退出回放模式，返回当前频道直播。
   void _exitReplayMode() {
+    // 记录调用来源：回放刚进入就被退回直播，通常是这里被某个非预期路径触发。
+    // 取前几帧堆栈即可定位（AppLogger 落盘，不受 debugPrint 节流影响）。
+    WindowsLogger.log(
+      'LivePlayerScreen',
+      '退出回放模式 ← ${StackTrace.current.toString().split('\n').take(6).join(' | ')}',
+    );
     _replayHoldTimer?.cancel();
     _replayHoldTimer = null;
     _commitSeamlessSwitch('cancel');
@@ -1350,7 +1528,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         (channel.catchupSource != null && channel.catchupSource!.isNotEmpty) ||
             (channel.catchup != null && channel.catchup!.isNotEmpty);
     if (!hasCatchup) return false;
-    return channel.isProgramPast(program);
+    // 已结束或正在播放的节目均可回放：catchup=append/default 等类型支持从节目
+    // 起点回拖，因此“正在播放”的节目也应允许回放（与安卓端行为一致）。
+    return channel.isProgramPast(program) || channel.isProgramCurrent(program);
   }
 
   /// 获取频道按时间排序的节目单（当前节目优先，往期倒序）。
@@ -1369,7 +1549,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final programs = _epgProgramsFor(channel);
     // 默认选中频道所在时区当前正在播放的节目。
     final now = channel.channelNow;
-    var initialIndex = 0;
+    var initialIndex = -1;
     for (var i = 0; i < programs.length; i++) {
       final start = channel.toChannelTimezone(programs[i].start);
       final stop = channel.toChannelTimezone(programs[i].stop);
@@ -1378,13 +1558,38 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         break;
       }
     }
+    // 节目单是否覆盖了“当前时间”。为 false 说明 EPG 数据已过期/未刷新，
+    // 此时无法定位到真正的当前节目，只能退化为最接近的一条。
+    final coveredNow = initialIndex >= 0;
+    if (!coveredNow) {
+      // 节目单数据未覆盖当前时间（EPG 尚未刷新或已过期，如缓存里只有昨天及之前的
+      // 节目）。此时不能退回 0 —— 那会让节目单每次都停在列表最顶端（最早的一条），
+      // 表现为「没有定位到当前正确时间的节目单」。
+      // 退化为定位到时间上最接近 now 的一条：最后一个已结束的节目（列表按开始时间
+      // 升序，故取最后一个 stop <= now）；若全部节目都在未来，则取第一条。
+      initialIndex = 0;
+      for (var i = 0; i < programs.length; i++) {
+        if (!channel.toChannelTimezone(programs[i].stop).isAfter(now)) {
+          initialIndex = i;
+        } else {
+          break;
+        }
+      }
+    }
+    // 落盘定位结果：节目单定位是否正确可由此行直接判定（debugPrint 会被节流丢弃）。
+    WindowsLogger.log(
+      'LivePlayerScreen',
+      '打开节目单：频道=${channel.name} 节目数=${programs.length} '
+          '选中index=$initialIndex 覆盖当前时间=$coveredNow '
+          '频道当前时间=${now.toString().substring(0, 16)}',
+    );
     setState(() {
       _showEpgList = true;
       _epgListChannel = channel;
       _selectedEpgIndex = initialIndex;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToEpgItem();
+      _scrollToEpgItem(animate: false);
       _epgListFocusNode.requestFocus();
     });
   }
@@ -1397,19 +1602,28 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     _channelListFocusNode.requestFocus();
   }
 
-  void _scrollToEpgItem() {
+  void _scrollToEpgItem({bool animate = true}) {
     if (!_epgListScrollController.hasClients) return;
-    const itemHeight = 56.0;
+    final itemHeight = DeviceUtils.isMobile ? 44.0 : 56.0;
     final targetOffset = _selectedEpgIndex * itemHeight;
     final viewport = _epgListScrollController.position.viewportDimension;
     final currentOffset = _epgListScrollController.offset;
     if (targetOffset < currentOffset ||
         targetOffset + itemHeight > currentOffset + viewport) {
-      _epgListScrollController.animateTo(
-        targetOffset.clamp(0.0, _epgListScrollController.position.maxScrollExtent),
-        duration: Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
+      if (animate) {
+        // 列表内方向键导航时平滑滚动，保持选中项可见。
+        _epgListScrollController.animateTo(
+          targetOffset.clamp(0.0, _epgListScrollController.position.maxScrollExtent),
+          duration: Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      } else {
+        // 打开节目单时直接定位（无跳转动画），与频道列表 _prepareChannelListScroll
+        // 用 initialScrollOffset 直接定位的做法一致，焦点落在正在播放的节目。
+        _epgListScrollController.jumpTo(
+          targetOffset.clamp(0.0, _epgListScrollController.position.maxScrollExtent),
+        );
+      }
     }
   }
 
@@ -1447,6 +1661,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         return true;
       case LogicalKeyboardKey.select:
       case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
         if (_focusOnCategories) {
           setState(() => _focusOnCategories = false);
           _focusFirstVisibleChannel();
@@ -1523,7 +1738,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    // 全安卓平台（手机 / Android TV / tvLegacy）需要：最小化/待机时直接关闭直播播放。
+    // 全安卓平台（手机 / Android TV）需要：最小化/待机时直接关闭直播播放。
     // 桌面端（Windows / Linux）无此生命周期，跳过。
     if (!DeviceUtils.isAndroid) return;
     switch (state) {
@@ -1560,29 +1775,59 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         !isTogglingWindowsFullscreen &&
         !_isReplayMode &&
         !_showEpgList &&
+        !_controlsVisible &&
         (DeviceUtils.isDesktop ? false : !_showChannelList);
     return PopScope(
       canPop: canPop,
       onPopInvokedWithResult: (didPop, result) {
+        // 记录每一次返回请求及其当时的状态：回放模式若被误退回直播，日志能直接指认。
+        WindowsLogger.log(
+          'LivePlayerScreen',
+          'PopScope 被触发 didPop=$didPop 全屏=$isWindowsFullScreen '
+              '回放=$_isReplayMode 节目单=$_showEpgList 频道列表=$_showChannelList '
+              '控制栏=$_controlsVisible',
+        );
         if (didPop) return;
+        // 返回键优先级（与用户约定一致，由外到内逐层收起）：
+        //   全屏 → 退出全屏
+        //   节目单 → 关闭节目单
+        //   频道列表 → 关闭频道列表（同时收起控制栏）
+        //   控制栏 → 收起控制栏
+        //   回放 → 退回直播
+        //   都没有 → 退出播放页返回直播源列表
+        // 注意顺序：回放必须排在控制栏之后——回放模式先按一次 ESC 只收控制栏，
+        // 再按一次才退回直播，而不是一次 ESC 直接退出回放并连带退出播放页。
         if (isWindowsFullScreen) {
           handleWindowsEsc();
-        } else if (_isReplayMode) {
-          _exitReplayMode();
         } else if (_showEpgList) {
           _closeEpgList();
         } else if (_showChannelList) {
           if (DeviceUtils.isDesktop) {
-            // Windows：频道列表显示时返回键直接退出播放。
-            _exitWindowsPlayback();
+            _hideChannelListAndControls();
           } else {
             _toggleChannelList();
           }
+        } else if (_controlsVisible) {
+          _hideControls();
+        } else if (_isReplayMode) {
+          _exitReplayMode();
         } else if (DeviceUtils.isDesktop) {
           _exitWindowsPlayback();
         }
       },
-      child: Focus(
+      // 关键修复（与点播页同源）：把回车/小键盘回车/ESC 从 Flutter 默认的
+      // ActivateIntent / DismissIntent 中摘出来，改绑为本页 Intent。
+      //
+      // 直播页「频道列表左上角返回」按钮的 onPressed 就是 handleWindowsEsc（退出
+      // 播放）。用户点过它之后焦点会停在该按钮上，此后按回车会被默认 ActivateIntent
+      // 当成「点击退出播放」——日志实证：回车进入回放后立刻出现
+      // `NavigatorState.maybePop` → PopScope → `_exitReplayMode()`，回放被秒退。
+      // 覆盖后回车不再产生 ActivateIntent，任何按钮都不会被回车误激活。
+      child: Shortcuts(
+        shortcuts: _liveKeyShortcuts,
+        child: Actions(
+          actions: _liveKeyActions,
+          child: Focus(
         focusNode: _rootFocusNode,
         autofocus: true,
         child: Scaffold(
@@ -1603,6 +1848,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           ),
         ),
       ),
+          ),
+        ),
     );
   }
 
@@ -1741,6 +1988,13 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 返回 null 表示回放模式下无法生成回放地址。
   _HoldoverPlayerSpec? _computeActivePlayerSpec() {
     final channel = _currentChannel;
+    if (_isReplayMode || _currentReplayProgram != null) {
+      WindowsLogger.log(
+        'LivePlayerScreen',
+        '[_spec] isReplayMode=$_isReplayMode '
+            'replayProg=${_currentReplayProgram?.title} ch=${channel?.name}',
+      );
+    }
     if (channel == null) return null;
 
     String playUrl;
@@ -1768,6 +2022,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         ? <String, String>{'x-heinplay-proxy-url': sourceProxy}
         : null;
 
+    WindowsLogger.log(
+      'LivePlayerScreen',
+      '[_spec] 产出 isReplay=${_isReplayMode && _currentReplayProgram != null} '
+          'url=$playUrl',
+    );
     return _HoldoverPlayerSpec(
       playerKey: '${channel.name}_$playUrl#$_livePlayerNonce',
       url: playUrl,
@@ -2474,7 +2733,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         children: [
           IconButton(
             // Windows 频道列表左上角返回直接退出播放。
-            onPressed: handleWindowsEsc,
+            onPressed: () {
+              // 落盘诊断：若日志出现本行，说明「回车/确认」被焦点树误激活到本
+              // 返回按钮上（表现为回放刚进入就被秒退）。修复后不应再出现。
+              WindowsLogger.log('LivePlayerScreen', '频道列表返回按钮被激活：退出播放');
+              handleWindowsEsc();
+            },
             icon: Icon(Icons.arrow_back, color: Colors.white),
             tooltip: '退出播放',
           ),
@@ -2777,14 +3041,25 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     final canReplay = hasCatchup && isPast;
     final isMobile = DeviceUtils.isMobile;
 
-    return GestureDetector(
-      onTap: () {
-        setState(() => _selectedEpgIndex = index);
-        if (canReplay) {
-          _startReplay(program);
-        }
+    // 鼠标悬停同步选中态：节目单项默认无键盘焦点机制，鼠标移到某项时把
+    // _selectedEpgIndex 同步到该项并滚动到可见，使“回车确认键”回放的始终是
+    // 鼠标所在的那一项（回车 = 鼠标左键 = 确认，全局语义一致）。
+    return MouseRegion(
+      onEnter: (_) {
+        if (mounted) setState(() => _selectedEpgIndex = index);
+        _scrollToEpgItem();
       },
-      child: Container(
+      onHover: (_) {
+        if (mounted) setState(() => _selectedEpgIndex = index);
+      },
+      child: GestureDetector(
+        onTap: () {
+          setState(() => _selectedEpgIndex = index);
+          if (canReplay) {
+            _startReplay(program);
+          }
+        },
+        child: Container(
         height: isMobile ? 44 : 56,
         margin: EdgeInsets.symmetric(
           horizontal: isMobile ? AppSpacing.xs : AppSpacing.sm,
@@ -2862,6 +3137,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -3459,4 +3735,17 @@ class _HoldoverPlayerSpec {
     required this.formatHint,
     this.headers,
   });
+}
+
+/// 直播页「确认键」Intent（回车 / 小键盘回车）。
+///
+/// 唯一目的：把回车从 Flutter 默认的 `ActivateIntent` 上摘下来，使其不会去
+/// 激活「当前拥有焦点的按钮」（频道列表的返回按钮 = 退出播放）。
+class _LiveConfirmIntent extends Intent {
+  const _LiveConfirmIntent();
+}
+
+/// 直播页「返回键」Intent（ESC）。同理摘掉默认 `DismissIntent`。
+class _LiveBackIntent extends Intent {
+  const _LiveBackIntent();
 }

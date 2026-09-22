@@ -1,0 +1,99 @@
+name: hain_tv
+description: "海因影视 TV 版"
+publish_to: 'none'
+version: 1.4.0+24
+
+environment:
+  # 【tvLegacy 独立工程】专用 Flutter 3.32.8 (Dart 3.8.1)，
+  # 这是最后一个原生支持 Android 5.0 (API 21) 的稳定版（3.35 起引擎按 API 24 构建）。
+  # 本副本不再兼容鸿蒙/桌面基线，仅用于构建 tvlegacy flavor。
+  sdk: '>=3.8.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.5.0
+  shared_preferences: ^2.5.3
+  cached_network_image: ^3.4.1
+  # Dart 3.8 兼容版（video_player 2.11+ 要求 Dart >=3.10）
+  video_player: ^2.10.0
+  video_player_android: ^2.11.0
+  path_provider: ^2.1.5
+  path_provider_platform_interface: ^2.1.2
+  shared_preferences_platform_interface: ^2.4.1
+  permission_handler: ^12.0.3
+  dio: ^5.11.0
+  open_filex: ^4.4.0
+  visibility_detector: ^0.4.0+2
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.1
+  # Dart 3.8 兼容版（xml 7.x 要求 Dart >=3.11）
+  xml: ^6.6.1
+  # Dart 3.8 兼容版（1.5.0+ 要求 Dart >=3.9）
+  wakelock_plus: ^1.4.0
+  screen_brightness: ^2.1.1
+  # Dart 3.8 兼容版（3.5+ 要求 Dart >=3.9）
+  volume_controller: ^3.4.4
+  flutter_js: ^0.8.2
+  window_manager: ^0.5.2
+  # Dart 3.8 兼容版（10.x 要求 Dart >=3.9）
+  package_info_plus: ^9.0.1
+  # Dart 3.8 兼容版（win32 6.0+ 要求 Dart >=3.10）
+  win32: ^5.15.0
+  # Windows 手柄（XInput）轮询：用 dart:ffi 直接调用系统自带的 xinput*.dll，
+  # 把 A/B/方向键映射为确认/返回/方向（见 services/gamepad_input_service.dart）。
+  ffi: ^2.1.0
+  fvp: 0.37.0
+  # 【已移除】vlc_player: 仅有 Windows 实现，tvLegacy 只构建 Android，无意义。
+  # 【已移除】ExoPlayer 走 fvp-only（见下方 dependency_overrides 的占位包）。
+
+dependency_overrides:
+  # permission_handler_windows 0.2.1 使用已废弃的 /await 与
+  # <experimental/coroutine> 在新版 MSVC 中构建失败，使用本地修正副本。
+  permission_handler_windows:
+    path: deps/permission_handler_windows
+  # 【tvLegacy fvp-only】video_player 会强制依赖 video_player_android 作为
+  # Android 默认实现，而它会把 media3 一族（AAR 声明 minSdk 23）带进构建，
+  # 在 Android 5.0/6.0 上存在 NoClassDefFoundError 风险。
+  # 这里覆盖为**零原生占位包**：只保留空的 dart 注册入口、不含 android 模块，
+  # 因此 Gradle 不会 include 任何 media3 代码；播放器实例由
+  # PlayerBackendFactory 调用 fvp.registerWith() 接管。
+  # 原定制副本 deps/video_player_android（反射下发 ExoPlayer 缓冲配置）已不再需要。
+  video_player_android:
+    path: deps/video_player_android_stub
+  # audio_video_progress_bar 0.11.0 仍使用 Flutter 3.x 已移除的 textTheme.bodyText1，
+  # 强制覆盖到 2.0.3 以兼容 Flutter 3.44.6 的新 TextTheme API。
+  audio_video_progress_bar: ^2.0.3
+  # 【已移除】鸿蒙专属覆盖：主工程需把 shared_preferences / shared_preferences_ohos
+  # 指向 atomgit 上的 OpenHarmony TPC git 版（使其 pubspec 含 ohos 段，
+  # 否则鸿蒙构建启动即抛 MissingPluginException）。
+  # tvLegacy 只构建 Android，用 pub.dev 官方版即可；留着反而要访问 atomgit，拖慢 pub get。
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/splash/splash_tv.jpeg
+    - assets/images/splash/splash_mobile.jpeg
+
+flutter_launcher_icons:
+  image_path: "../plan/ico.png"
+  android:
+    generate: true
+    adaptive_icon_background: "#00000000"
+    adaptive_icon_foreground: "../plan/mo_ico.png"
+  windows:
+    generate: true
+    image_path: "../plan/mo_ico.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "../plan/ico.png"
+  web:
+    generate: true
+    image_path: "../plan/ico.png"
+    background_color: "#0A0A0F"
+    theme_color: "#00C8E0"

@@ -10,7 +10,7 @@ import 'package:win32/win32.dart';
 class AppInfoService {
   /// 兜底版本号，与 pubspec.yaml 的 version 主版本保持一致。
   /// 当 package_info_plus 与 Windows EXE 均读取失败时，至少保证 UI 能显示版本。
-  static const String _fallbackVersion = '1.3.5';
+  static const String _fallbackVersion = '1.4.0';
 
   static String _version = '';
   static String _rawVersion = '';
@@ -20,14 +20,16 @@ class AppInfoService {
   /// 应用版本号（例如 1.1.6），读取失败时返回兜底版本号。
   static String get version => _version.isEmpty ? _fallbackVersion : _version;
 
-  /// 原始版本名（可能包含 flavor 后缀，例如 "1.1.6-tvlegacy"）。
+  /// 原始版本名（可能包含 flavor 后缀，例如 "1.1.6-tv"）。
   static String get rawVersion => _rawVersion.isEmpty ? _fallbackVersion : _rawVersion;
 
   /// 当前平台标识，用于更新检测匹配对应 APK：
-  /// - windows
-  /// - tvLegacy（versionName 包含 -tvlegacy）
+  /// - windows / linux
   /// - mobile（versionName 包含 -mobile）
   /// - tv（默认）
+  ///
+  /// 注：tvLegacy（Android 5.0+ / API 21）已迁出为独立工程 hain_tv_legacy/，
+  /// 该版本由独立工程自行构建并自行处理更新匹配，主工程不再产出 -tvlegacy 包。
   static String get platform {
     if (_platform.isNotEmpty) return _platform;
     if (Platform.isWindows) return 'windows';
@@ -78,7 +80,6 @@ class AppInfoService {
     if (Platform.isWindows) return 'windows';
     if (Platform.isLinux) return 'linux';
     final lower = rawVersion.toLowerCase();
-    if (lower.contains('-tvlegacy')) return 'tvLegacy';
     if (lower.contains('-mobile')) return 'mobile';
     return 'tv';
   }

@@ -94,8 +94,10 @@ class UpdateService {
           break;
         }
       } else {
-        // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk，tvLegacy 匹配 tvlegacy.apk。
-        // 为避免文件名同时包含 tv/mobile/tvlegacy 导致误匹配，增加互斥校验。
+        // 根据平台下载对应 APK：tv 版匹配 tv.apk，手机版匹配 mobile.apk。
+        // 为避免文件名同时包含 tv/mobile 导致误匹配，增加互斥校验。
+        // （tvLegacy 已迁出为独立工程 hain_tv_legacy/，不再由本工程产出与匹配；
+        //   下面的 !contains('tvlegacy') 保留，用于排除 Release 里独立工程发布的 tvLegacy 资产。）
         final lowerPlatform = platform.toLowerCase();
         final matched = lowerPlatform == 'tv'
             ? name.endsWith('tv.apk') &&
@@ -103,9 +105,7 @@ class UpdateService {
                 !name.contains('tvlegacy')
             : lowerPlatform == 'mobile'
                 ? name.endsWith('mobile.apk') && !name.contains('tv')
-                : lowerPlatform == 'tvlegacy'
-                    ? name.endsWith('tvlegacy.apk')
-                    : name.endsWith('$lowerPlatform.apk');
+                : name.endsWith('$lowerPlatform.apk');
         if (matched && url != null && url.isNotEmpty) {
           downloadUrl = url;
           break;
@@ -129,12 +129,10 @@ class UpdateService {
 
     debugPrint('UpdateService: downloadUrl=$downloadUrl');
 
-    // Android/TV/tvLegacy 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
+    // Android/TV 平台若未找到对应 APK，则不提示更新，避免用户下载错误版本。
     if (downloadUrl == null || downloadUrl.isEmpty) {
       final lowerPlatform = platform.toLowerCase();
-      if (lowerPlatform == 'tv' ||
-          lowerPlatform == 'mobile' ||
-          lowerPlatform == 'tvlegacy') {
+      if (lowerPlatform == 'tv' || lowerPlatform == 'mobile') {
         debugPrint(
           'UpdateService: $platform 平台未找到对应 APK，跳过本次更新提示',
         );
@@ -487,9 +485,10 @@ try {
 } finally {
     $updateDir = Join-Path $AppDir 'update'
     if (Test-Path $updateDir) {
-        # Keep log for diagnosis, remove other temp files
+        # Keep log and batch window script; remove other temp files.
+        # Do NOT delete update.bat here: the cmd progress window is still executing it.
         $logPath = Join-Path $updateDir 'update.log'
-        Get-ChildItem $updateDir -Exclude 'update.log' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem $updateDir -Exclude 'update.log','update.bat' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         Write-Log "Temp files cleaned"
     }
 }
@@ -551,6 +550,7 @@ echo.
 echo Update process finished.
 echo.
 timeout /t 2 /nobreak >nul
+exit
 ''';
 
   /// Windows 便携版自动更新。
@@ -685,6 +685,24 @@ timeout /t 2 /nobreak >nul
         info,
         onDownload: (onProgress) =>
             downloadAndUpdateWindows(info!, onProgress: onProgress),
+      );
+      return;
+    }
+
+    // Linux 版：AppImage 是单文件、运行期间自身处于只读挂载点，
+    // 无法像 Windows 便携版那样退出后原地替换文件，故不做应用内自动更新，
+    // 改为引导用户前往当前渠道的发布页面手动下载新版覆盖。
+    if (platform.toLowerCase() == 'linux') {
+      await showUpdateDialog(
+        context,
+        info,
+        actionLabel: '前往下载',
+        manualDownload: true,
+        notice:
+            'Linux 版为单文件 AppImage，暂不支持应用内自动更新。'
+            '点击「前往下载」会打开当前渠道的发布页面，下载新版 AppImage 覆盖原文件即可升级；'
+            '若是用安装脚本部署的，重新执行一次安装脚本也会自动拉取新版。',
+        onDownload: (onProgress) => openDownloadUrl(info!),
       );
       return;
     }

@@ -1,9 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- tvlegacy 需要支持 Android 5.0 (API 21)，但部分 Flutter 插件声明 minSdk=24，
-         使用 tools:overrideLibrary 强制合并，由 tvlegacy  flavor 将应用 minSdk 设为 21。 -->
-    <uses-sdk tools:overrideLibrary="io.flutter.plugins.sharedpreferences,io.flutter.plugins.urllauncher,androidx.media3.common,androidx.media3.container,androidx.media3.database,androidx.media3.datasource,androidx.media3.decoder,androidx.media3.exoplayer,androidx.media3.exoplayer.dash,androidx.media3.exoplayer.hls,androidx.media3.exoplayer.rtsp,androidx.media3.exoplayer.smoothstreaming,androidx.media3.extractor" />
+    <!-- 部分 Flutter 插件声明的 minSdk 高于应用基线，用 tools:overrideLibrary 强制合并。
+         名单须与各库 manifest 里的 package 名**精确一致**（AGP 不认前缀：
+         `androidx.media3.decoder` 压不住 `androidx.media3.decoder.ffmpeg`）。
+         注：Android 5.0+（API 21）的 tvlegacy 已迁出为独立工程 hain_tv_legacy/，
+         其 AndroidManifest 内保留同份名单（那边 minSdk=21 必须依赖它）；
+         本工程 tv / mobile 均为 API 24+，此处保留是防止后续引入高 minSdk 插件时构建中断。 -->
+    <uses-sdk tools:overrideLibrary="io.flutter.plugins.sharedpreferences,io.flutter.plugins.urllauncher,dev.fluttercommunity.plus.wakelock,androidx.media3.common,androidx.media3.container,androidx.media3.database,androidx.media3.datasource,androidx.media3.datasource.okhttp,androidx.media3.decoder,androidx.media3.decoder.ffmpeg,androidx.media3.effect,androidx.media3.exoplayer,androidx.media3.exoplayer.dash,androidx.media3.exoplayer.hls,androidx.media3.exoplayer.rtsp,androidx.media3.exoplayer.smoothstreaming,androidx.media3.extractor,androidx.media3.inspector,androidx.media3.muxer,androidx.media3.transformer" />
 
     <!-- 联网权限 -->
     <uses-permission android:name="android.permission.INTERNET" />

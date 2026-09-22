@@ -3,7 +3,12 @@ AppDir:
   path: ./build/linux/x64/release/bundle
   app_info:
     id: com.heinplay.hain_tv
-    name: 海因影视
+    # 电脑版命名铁律：AppImage 的文件名、目录名、元数据一律用英文，绝不用中文。
+    # 这里的 name 会写进 AppImage 内嵌 desktop 条目的 X-AppImage-Name，桌面集成器
+    # （Gear Lever / AppImageLauncher）会拿它当文件名用 → 用中文就会在用户目录里
+    # 生成「海因影视.appimage」这类中文路径。桌面显示的漂亮名字由安装脚本写入的
+    # desktop 条目 Name 字段负责，与此处无关。
+    name: HeinPlay
     # 注意：icon 必须是「图标名」（不带路径/扩展名），appimage-builder 的 IconBundler
     # 只在 AppDir 的 usr/share/icons、usr/share/pixmaps 等标准目录按名搜索，
     # 不会把此值当作相对/绝对路径去解析。真正的图标文件由构建脚本在打包前

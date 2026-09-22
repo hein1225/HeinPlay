@@ -6,7 +6,15 @@ $ErrorActionPreference = "Continue"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $projectDir = Resolve-Path (Join-Path $scriptDir "..")
-$distDir = Join-Path $projectDir "dist"
+# 产物统一输出到「仓库根 dist」——所有平台的最终产物（APK / zip / AppImage / HAP）都归在一处。
+# 若本工程被单独复制出仓库（父目录无 .git），则回退到工程内 dist，保证脚本仍可独立使用。
+$repoRoot = Split-Path -Parent $projectDir
+if (Test-Path (Join-Path $repoRoot ".git")) {
+    $distDir = Join-Path $repoRoot "dist"
+} else {
+    Write-Warning "未在 $repoRoot 检测到仓库根（无 .git），产物将输出到工程内: $projectDir\dist"
+    $distDir = Join-Path $projectDir "dist"
+}
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 

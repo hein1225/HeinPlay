@@ -49,6 +49,8 @@ class PlayerBackendFactory {
       fvp.registerWith(options: {
         'platforms': ['ohos'],
         'lowLatency': 1,
+        // 同 Android：补 KeyFrame(=Fast) 标志，避免 libmdk 精确 seek 逐帧解码卡死。
+        'fastSeek': true,
         // MDK 全局选项。avformat 值语法为 key1=val1:key2=val2...（冒号分隔），
         // 之前误用逗号导致选项未生效。lowLatency=1 已由 fvp 内部自动设置
         // avformat.fflags=+nobuffer、fpsprobesize=0、analyzeduration=100000。

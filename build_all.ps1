@@ -1,9 +1,17 @@
 ﻿#Requires -Version 5.1
 # HeinPlay 全平台构建脚本
 # 功能：菜单选择 flutter doctor、依赖检查、Windows 插件检查、Android 签名完整性检查
-#       构建 TV / tvLegacy / 手机 / Windows / Linux(AppImage) / 鸿蒙(HAP) / 全部版本，汇总结果、日志路径与产物路径
+#       构建 TV / 手机 / Windows / Linux(AppImage) / 鸿蒙(HAP) / 全部版本，汇总结果、日志路径与产物路径
+#       注意：tvLegacy 已独立为仓库根的 hain_tv_legacy\（与 hain_tv\ 平级，独立 Flutter 3.32.8 工程，支持 Android 5.0+）。
+#       本脚本不再直接构建它，而是以「独立子进程」转发到 hain_tv_legacy\scripts\build_tvlegacy.ps1：
+#       · 必须用独立进程 —— 该脚本内部以 exit 返回退出码，同进程 & 调用会直接终止 build_all 本身；
+#         独立进程同时隔离 PUB_CACHE / PATH，避免两套 Flutter（3.47 / 3.32.8）互相污染。
+#       · 冷构建含 MDK 的 CMake 编译，实测约 70 分钟，故命令行下不默认开启，
+#         需显式 -IncludeTvlegacy；交互菜单中已并入「1. 构建全部」与「11. 除 Linux 外构建全部」，
+#         另有独立的「4. 仅构建 tvLegacy」。
 # 说明：Linux 版为 AppImage，需在 Linux 环境或 WSL2 中构建（Flutter 不支持 Windows 交叉编译 Linux）。
 #       在 Windows 上运行时会自动尝试通过 WSL2 执行 build_linux_appimage.sh；未安装 WSL 则跳过并提示。
+#       【已并入「1. 构建全部」】（2026-09-22 起）；不需要时改选菜单 11「除 Linux 外构建全部」或加 -SkipLinux。
 #       鸿蒙版走 scripts/build_hap.sh（Git Bash + DevEco SDK），需要 DevEco 命令行工具链与本机签名材料；
 #       【默认不参与「1.构建全部」】，需通过菜单 11/12 或 -IncludeHap 显式启用。
 
@@ -12,7 +20,11 @@ param(
     [switch]$SkipDoctor,
     [switch]$SkipMobile,
     [switch]$SkipTv,
+    # 跳过 tvLegacy 构建（一般无需使用；仅在同时给出 -IncludeTvlegacy、临时想排除它时才有意义）。
     [switch]$SkipTvlegacy,
+    # 显式启用 tvLegacy 构建（转发到独立工程 hain_tv_legacy）。
+    # 冷构建含 MDK 的 CMake 编译，实测约 70 分钟，故命令行下不默认开启。
+    [switch]$IncludeTvlegacy,
     [switch]$SkipWindows,
     [switch]$SkipLinux,
     [switch]$IncludeHap,
@@ -23,7 +35,7 @@ $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $hainDir = Join-Path $rootDir 'hain_tv'
 $androidDir = Join-Path $hainDir 'android'
 $androidAppDir = Join-Path $androidDir 'app'
-$distDir = Join-Path $hainDir 'dist'
+$distDir = Join-Path $rootDir 'dist'
 $logsDir = Join-Path $hainDir 'logs'
 
 function Write-Section($title) {
@@ -275,12 +287,25 @@ function Test-AndroidSigning {
 
     $script:tvKeyOk = Test-OneKey 'TV 版' 'key.properties'
     $script:mobileKeyOk = Test-OneKey '手机版' 'key-mobile.properties'
-    $script:tvlegacyKeyOk = Test-OneKey 'tvLegacy 版' 'key-tvlegacy.properties'
 
-    if (-not ($tvKeyOk -and $mobileKeyOk -and $tvlegacyKeyOk)) {
+    if (-not ($tvKeyOk -and $mobileKeyOk)) {
         Write-Warn 'Android 签名文件不完整，将跳过相关 Android 构建。请按 BUILD_GUIDE.md 第 4.1 节配置签名。'
     }
-    return ($tvKeyOk -and $mobileKeyOk -and $tvlegacyKeyOk)
+    return ($tvKeyOk -and $mobileKeyOk)
+}
+
+function Get-LegacyProjectVersion {
+    # tvLegacy 是仓库根下的独立工程，其产物版本号以 hain_tv_legacy\pubspec.yaml 为准
+    # （正常应与主工程一致；此处不做强制同步校验，产物名按各自 pubspec 生成）。
+    $pubspecPath = Join-Path (Join-Path $rootDir 'hain_tv_legacy') 'pubspec.yaml'
+    if (-not (Test-Path $pubspecPath)) {
+        throw "未找到 tvLegacy 工程 pubspec.yaml: $pubspecPath"
+    }
+    $pubspec = Get-Content -Path $pubspecPath -Raw
+    if ($pubspec -notmatch 'version:\s*([^\s]+)') {
+        throw '无法从 hain_tv_legacy/pubspec.yaml 读取 version'
+    }
+    return $Matches[1].Split('+')[0]
 }
 
 function Get-ProjectVersion {
@@ -290,6 +315,76 @@ function Get-ProjectVersion {
         throw '无法从 pubspec.yaml 读取 version'
     }
     return $Matches[1].Split('+')[0]
+}
+
+function Invoke-ChildProcessCaptured {
+    # 统一的「子进程执行 + 退出码 + 输出捕获」执行器。
+    #
+    # 为什么不用 Start-Process -PassThru（重要，踩过）：
+    #   PowerShell 5.1 下，Start-Process -PassThru 返回的 Process 对象在子进程退出后，
+    #   读取 .ExitCode 会抛 InvalidOperationException，而 PS 将其视为非终止错误并返回
+    #   $null。于是 `if ($proc.ExitCode -ne 0)` 恒为真 ——【构建成功会被误判为失败】。
+    #   实测 WaitForExit(ms) / Refresh() / WaitForExit() 三种补救全部无效（仍为 null）。
+    #   改用 .NET Process + ReadToEndAsync：退出码可靠，且 stdout/stderr 并行读取不会死锁。
+    #
+    # 返回 @{ ExitCode = int|null; TimedOut = bool; StdOut = string; StdErr = string }
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [string]$WorkingDirectory,
+        [int]$TimeoutMs = 0,             # <= 0 表示不限时
+        [hashtable]$Environment = $null  # 需额外注入的环境变量
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $quotedArgs = foreach ($a in $Arguments) {
+        if ($a -match '\s') { '"' + $a + '"' } else { $a }
+    }
+    $psi.Arguments = ($quotedArgs -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $psi.CreateNoWindow = $true
+    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+    if ($Environment) {
+        foreach ($k in $Environment.Keys) { $psi.EnvironmentVariables[$k] = [string]$Environment[$k] }
+    }
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    $proc.Start() | Out-Null
+    # 两个流用异步读取并行消费，避免任一管道缓冲区填满导致子进程阻塞（经典死锁）。
+    $taskOut = $proc.StandardOutput.ReadToEndAsync()
+    $taskErr = $proc.StandardError.ReadToEndAsync()
+
+    $timedOut = $false
+    if ($TimeoutMs -gt 0) {
+        if (-not $proc.WaitForExit($TimeoutMs)) {
+            $timedOut = $true
+            # 杀整棵进程树：构建脚本会派生 cmake / ninja / clang / java，
+            # 只 Kill 主进程会留下孤儿进程继续占用 CPU 与文件锁。
+            cmd /c "taskkill /PID $($proc.Id) /T /F" | Out-Null
+            $proc.WaitForExit(15000) | Out-Null
+        }
+    }
+    $proc.WaitForExit()
+
+    $exitCode = $null
+    try { $exitCode = $proc.ExitCode } catch { $exitCode = $null }
+    $stdOut = ''
+    $stdErr = ''
+    try { $stdOut = $taskOut.Result } catch { $stdOut = '' }
+    try { $stdErr = $taskErr.Result } catch { $stdErr = '' }
+
+    return @{
+        ExitCode = $exitCode
+        TimedOut = $timedOut
+        StdOut   = $stdOut
+        StdErr   = $stdErr
+    }
 }
 
 function Invoke-BuildScript($name, $scriptPath) {
@@ -357,17 +452,19 @@ function Invoke-BuildScript($name, $scriptPath) {
                             $wslRan = $true
                         }
                         else {
-                            # 用 Start-Process 重定向原生输出到日志，避免 PowerShell 编解码产生乱码/空字节；
-                            # 同时实时回显到控制台。
-                            $tmpOut = Join-Path $env:TEMP ("hein_linux_out_$(Get-Random).txt")
-                            $tmpErr = Join-Path $env:TEMP ("hein_linux_err_$(Get-Random).txt")
-                            $proc = Start-Process -FilePath 'wsl' -ArgumentList '-e', 'bash', $wslScript -NoNewWindow -Wait -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr -PassThru
-                            if (Test-Path $tmpOut) { [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpOut, [System.Text.Encoding]::UTF8), $utf8Bom) }
-                            if (Test-Path $tmpErr) { [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpErr, [System.Text.Encoding]::UTF8), $utf8Bom) }
-                            Get-Content -Path $tmpOut -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-                            Get-Content -Path $tmpErr -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-                            Remove-Item $tmpOut, $tmpErr -Force -ErrorAction SilentlyContinue
-                            $ok = ($proc.ExitCode -eq 0)
+                            # 走统一执行器：可靠获取退出码 + 捕获原生输出（UTF-8）。
+                            # 注意：不能用 Start-Process -PassThru 读 ExitCode —— PS 5.1 下其 ExitCode
+                            # 恒为 null，会让 Linux 构建【每次都判定失败】（产物其实已生成）。
+                            $res = Invoke-ChildProcessCaptured -FilePath 'wsl' -Arguments @('-e', 'bash', $wslScript)
+                            if ($res.StdOut) {
+                                [System.IO.File]::AppendAllText($logPath, $res.StdOut, $utf8Bom)
+                                foreach ($l in ($res.StdOut -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
+                            }
+                            if ($res.StdErr) {
+                                [System.IO.File]::AppendAllText($logPath, $res.StdErr, $utf8Bom)
+                                foreach ($l in ($res.StdErr -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
+                            }
+                            $ok = ($null -ne $res.ExitCode -and $res.ExitCode -eq 0)
                             $wslRan = $true
                         }
                     }
@@ -419,8 +516,108 @@ function Invoke-BuildScript($name, $scriptPath) {
             Write-Host '--- 日志结束 ---' -ForegroundColor Yellow
         }
     }
-                        return @{ Success = $ok; Skipped = $skipped; LogPath = $logPath }
-                    }
+    return @{ Success = $ok; Skipped = $skipped; LogPath = $logPath }
+}
+
+function Invoke-BuildTvlegacy {
+    # tvLegacy（Android 5.0 / API 21+）构建。
+    # 说明：
+    #   1) 实际构建由独立工程 hain_tv_legacy 承担（Flutter 3.32.8 / Dart 3.8.1）。
+    #      本脚本只做转发，不参与其依赖准备 —— pub get、android\local.properties 的
+    #      flutter.sdk 同步、JDK 21 钉死（org.gradle.java.home）均已在该工程内完成。
+    #   2) 必须用「独立子进程」（powershell.exe -File）而非同进程 & 调用：
+    #      该脚本内部以 exit 返回退出码，同进程调用时 exit 会连带终止 build_all 自身，
+    #      导致后续平台不再构建、且 build_all.bat 收到错误的汇总结果。
+    #   3) 独立进程同时隔离环境：主工程的 PUB_CACHE 与新版 Flutter(3.47) 工具链不会渗入，
+    #      反之 tvlegacy 的 .pub-cache 也不会污染主工程。
+    #   4) 不响应 -Clean：主工程的 flutter clean 只作用于主工程。tvlegacy 若要清理，
+    #      请单独到该工程执行（其 build 目录含 MDK 原生构建产物，重建代价高，不建议清）。
+
+    $name = 'tvLegacy 版'
+    Write-Section "$name 构建"
+    New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+    $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $logPath = Join-Path $logsDir "build_tvLegacy_${timestamp}.log"
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::AppendAllText($logPath, "`n=== $name 构建开始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`n", $utf8Bom)
+
+    # 【独立工程】tvLegacy 已迁到仓库根 hain_tv_legacy\，与主工程 hain_tv\ 平级，
+    # 不再位于主工程内部的 tvlegacy\ 子目录。
+    $legacyProject = Join-Path $rootDir 'hain_tv_legacy'
+    $legacyScript = Join-Path $legacyProject 'scripts\build_tvlegacy.ps1'
+    if (-not (Test-Path $legacyProject)) {
+        Write-Err "tvLegacy 独立工程不存在: $legacyProject"
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
+    if (-not (Test-Path $legacyScript)) {
+        Write-Err "tvLegacy 构建脚本不存在: $legacyScript"
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
+
+    # 提前给出可诊断的提示（不阻断构建，最终以子脚本自身退出码为准）
+    $legacyKey = Join-Path $legacyProject 'android\key-tvlegacy.properties'
+    if (-not (Test-Path $legacyKey)) {
+        Write-Warn "未找到 tvLegacy 签名配置: $legacyKey，构建可能因签名缺失而失败。"
+    }
+
+    # 超时保护：冷构建（含 MDK 的 CMake 编译）实测约 70 分钟，给 150 分钟余量。
+    $tvlegacyTimeoutMs = 150 * 60 * 1000
+
+    try {
+        Write-Host '转发到独立工程构建（Flutter 3.32.8 / 目标 Android 5.0+）；首次或改动原生依赖时较慢，请耐心等待...' -ForegroundColor Cyan
+        $res = Invoke-ChildProcessCaptured -FilePath 'powershell.exe' `
+            -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $legacyScript) `
+            -WorkingDirectory $legacyProject -TimeoutMs $tvlegacyTimeoutMs
+
+        # 落盘 + 回显（子进程输出已按 UTF-8 解码，无二次转码损失）
+        if ($res.StdOut) {
+            [System.IO.File]::AppendAllText($logPath, $res.StdOut, $utf8Bom)
+            foreach ($l in ($res.StdOut -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
+        }
+        if ($res.StdErr) {
+            [System.IO.File]::AppendAllText($logPath, $res.StdErr, $utf8Bom)
+            foreach ($l in ($res.StdErr -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
+        }
+
+        if ($res.TimedOut) {
+            throw "build_tvlegacy.ps1 执行超时（超过 $([int]($tvlegacyTimeoutMs / 60000)) 分钟），已终止其进程树"
+        }
+        if ($null -eq $res.ExitCode) {
+            throw 'build_tvlegacy.ps1 退出码不可读（子进程状态异常）'
+        }
+        if ($res.ExitCode -ne 0) {
+            throw "build_tvlegacy.ps1 退出码 $($res.ExitCode)"
+        }
+
+        # 产物由 build_tvlegacy.ps1 自行拷至「仓库根 dist」（与其它平台产物同一个目录）。
+        # 这里按【精确版本文件名】校验（与 TV/手机/Windows 一致）—— 曾因按通配
+        # '*tvLegacy*.apk' 取「最新」而误报成功：build_tvlegacy.ps1 的 dist 目录推导写错一级，
+        # 产物落进工程内 dist/，此处便把仓库根里上一版的旧 APK 当成本次产物，
+        # 于是「构建成功」但拿到的是旧版本包。
+        $legacyDist = $distDir
+        $apkPath = Join-Path $legacyDist "heinplay-$(Get-LegacyProjectVersion)-tvLegacy.apk"
+        if (-not (Test-Path $apkPath)) {
+            $found = @(Get-ChildItem -Path $legacyDist -Filter '*tvLegacy*.apk' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Name })
+            $hint = if ($found.Count -gt 0) { "；目录内现有: $($found -join ', ')" } else { '；目录内无任何 tvLegacy APK' }
+            throw "未在 $legacyDist 找到本次 tvLegacy 产物 $(Split-Path -Leaf $apkPath)$hint"
+        }
+        Write-Ok "$name 构建成功"
+        Write-LocalLink "$name 产物:" $apkPath
+        return @{ Success = $true; Skipped = $false; LogPath = $logPath }
+    }
+    catch {
+        $errLine = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') EXCEPTION: $_"
+        [System.IO.File]::AppendAllText($logPath, "$errLine`n", $utf8Bom)
+        Write-Err "$name 构建失败: $_"
+        if (Test-Path $logPath) {
+            Write-Host "`n--- 最近 30 行日志 ---" -ForegroundColor Yellow
+            Get-Content -Path $logPath -Tail 30 | ForEach-Object { Write-Host $_ }
+            Write-Host '--- 日志结束 ---' -ForegroundColor Yellow
+        }
+        return @{ Success = $false; Skipped = $false; LogPath = $logPath }
+    }
+}
 
 function Invoke-BuildHap {
     # 鸿蒙(HarmonyOS NEXT) HAP 构建。
@@ -492,34 +689,32 @@ function Invoke-BuildHap {
                 Write-Host "已移除环境变量 $dup（避免与大写版冲突）" -ForegroundColor DarkGray
             }
         }
-        # 用 Start-Process 重定向输出到临时文件再落盘/回显，规避 PowerShell 管道编码问题
-        $tmpOut = Join-Path $env:TEMP ("hein_hap_out_$(Get-Random).txt")
-        $tmpErr = Join-Path $env:TEMP ("hein_hap_err_$(Get-Random).txt")
         # 转 POSIX 路径传给 Git Bash（Windows 反斜杠路径会被转成 E:codeHeinPlay... 而 127）
         $drive = $buildScript.Substring(0, 1).ToLower()
         $posixScript = '/' + $drive + $buildScript.Substring(2).Replace('\', '/')
-        # 注意：不要用 -Wait！PS 5.1 的 -Wait 在子进程树持有重定向句柄时会无限挂起
-        #（实测：hvigor 12s 失败后外层仍卡 25min）。改用 WaitForExit(ms) 带超时，
-        # 超时则强杀整棵进程树并报错，避免构建卡死拖住整个 build_all。
-        $hapTimeoutMs = 60 * 60 * 1000   # 冷构建可能很久（含 native 编译），给 60 分钟
-        $proc = Start-Process -FilePath $bashExe -ArgumentList '-c', $posixScript -NoNewWindow -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr -PassThru
-        if (-not $proc.WaitForExit($hapTimeoutMs)) {
-            Write-Err "build_hap.sh 执行超过 60 分钟，判定超时，强制终止进程树 (PID $($proc.Id))..."
-            cmd /c "taskkill /PID $($proc.Id) /T /F" | Out-Null
-            throw "build_hap.sh 执行超时"
+        # 超时保护：冷构建含 native 编译，给 60 分钟；超时则杀整棵进程树，避免卡死拖住整个 build_all。
+        $hapTimeoutMs = 60 * 60 * 1000
+        # 注意：绝不能用 Start-Process -PassThru 读 ExitCode —— PS 5.1 下其 ExitCode 恒为 null，
+        # 会把成功的鸿蒙构建误判为失败（详见 Invoke-ChildProcessCaptured 的注释）。
+        $res = Invoke-ChildProcessCaptured -FilePath $bashExe -Arguments @('-c', $posixScript) -TimeoutMs $hapTimeoutMs
+        if ($res.StdOut) {
+            [System.IO.File]::AppendAllText($logPath, $res.StdOut, $utf8Bom)
+            foreach ($l in ($res.StdOut -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
         }
-        if (Test-Path $tmpOut) {
-            [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpOut, [System.Text.Encoding]::UTF8), $utf8Bom)
-            Get-Content -Path $tmpOut -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        if ($res.StdErr) {
+            [System.IO.File]::AppendAllText($logPath, $res.StdErr, $utf8Bom)
+            foreach ($l in ($res.StdErr -split "`r?`n")) { if ($l.Trim()) { Write-Host $l } }
         }
-        if (Test-Path $tmpErr) {
-            [System.IO.File]::AppendAllText($logPath, [System.IO.File]::ReadAllText($tmpErr, [System.Text.Encoding]::UTF8), $utf8Bom)
-            Get-Content -Path $tmpErr -Encoding utf8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-        }
-        Remove-Item $tmpOut, $tmpErr -Force -ErrorAction SilentlyContinue
 
-        if ($proc.ExitCode -ne 0) {
-            throw "build_hap.sh 退出码 $($proc.ExitCode)"
+        if ($res.TimedOut) {
+            Write-Err 'build_hap.sh 执行超过 60 分钟，判定超时，已终止其进程树'
+            throw 'build_hap.sh 执行超时'
+        }
+        if ($null -eq $res.ExitCode) {
+            throw 'build_hap.sh 退出码不可读（子进程状态异常）'
+        }
+        if ($res.ExitCode -ne 0) {
+            throw "build_hap.sh 退出码 $($res.ExitCode)"
         }
 
         # 产物：flutter build hap 输出到 ohos/entry/build/...（junction 指向 harmony_haintv）
@@ -562,6 +757,7 @@ function Invoke-SelectedBuilds {
         [switch]$SkipMobile,
         [switch]$SkipTv,
         [switch]$SkipTvlegacy,
+        [switch]$IncludeTvlegacy,
         [switch]$SkipWindows,
         [switch]$SkipLinux,
         [switch]$IncludeHap,
@@ -600,7 +796,7 @@ function Invoke-SelectedBuilds {
         Test-WindowsPlugin | Out-Null
     }
 
-    if ((-not $SkipMobile) -or (-not $SkipTv) -or (-not $SkipTvlegacy)) {
+    if ((-not $SkipMobile) -or (-not $SkipTv)) {
         Test-AndroidSigning | Out-Null
     }
 
@@ -641,19 +837,18 @@ function Invoke-SelectedBuilds {
         }
     }
 
-    if (-not $SkipTvlegacy) {
-        if ($tvlegacyKeyOk) {
-            $r = Invoke-BuildScript 'tvLegacy 版' (Join-Path $hainDir 'scripts\build_tvlegacy.ps1')
-            $results += [PSCustomObject]@{
-                Platform     = 'tvLegacy 版'
-                Status       = if ($r.Success) { '成功' } else { '失败' }
-                ArtifactPath = Join-Path $distDir "heinplay-${version}-tvLegacy.apk"
-                LogPath      = $r.LogPath
-            }
-        }
-        else {
-            Write-Warn '跳过 tvLegacy 版构建：签名文件不完整'
-            $results += [PSCustomObject]@{ Platform = 'tvLegacy 版'; Status = '跳过'; ArtifactPath = 'N/A'; LogPath = 'N/A' }
+    # tvLegacy（Android 5.0 / API 21+）：转发到独立工程 hain_tv_legacy 构建。
+    # 冷构建含 MDK 的 CMake 编译、实测约 70 分钟，故仅在显式要求时执行；
+    # 交互菜单的「1. 构建全部」「11. 除 Linux 外构建全部」与「4. 仅构建 tvLegacy」会传入 -IncludeTvlegacy。
+    if ($IncludeTvlegacy -and -not $SkipTvlegacy) {
+        $r = Invoke-BuildTvlegacy
+        $legacyApkPath = Join-Path $distDir "heinplay-$(Get-LegacyProjectVersion)-tvLegacy.apk"
+        $legacyStatus = if ($r.Skipped) { '跳过' } elseif ($r.Success) { '成功' } else { '失败' }
+        $results += [PSCustomObject]@{
+            Platform     = 'tvLegacy 版'
+            Status       = $legacyStatus
+            ArtifactPath = if ($r.Success -and (Test-Path $legacyApkPath)) { $legacyApkPath } else { 'N/A' }
+            LogPath      = $r.LogPath
         }
     }
 
@@ -667,8 +862,54 @@ function Invoke-SelectedBuilds {
             if (-not (Test-Path $artifactDir)) {
                 New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
             }
-            Write-Ok "覆盖解压 Windows 产物到 $artifactDir（保留目录内现有数据）"
-            Expand-Archive -Path $artifactZip -DestinationPath $artifactDir -Force
+
+            # 双保险：解压覆盖程序产物前，先把便携目录里的「运行期数据」整体挪走，解压后再原样挪回。
+            # 分发包已在 build_windows.ps1 里排除了这些数据，正常情况下不会冲突；
+            # 但一旦 zip 被误污染（例如在 Release 目录跑过 exe 后打的包），
+            # Expand-Archive -Force 会直接顶掉用户的 shared_preferences.json，
+            # 表现为「每次构建完都要重新登录」。这里兜住这种意外。
+            # 暂存目录放在同盘（项目内），保证 Move-Item 是同卷改名、不复制大文件。
+            $runtimeDataRels = @(
+                'data\shared_preferences.json',
+                'data\prefs_big',
+                'data\app_logs',
+                'data\cache',
+                'data\support',
+                'data\temp',
+                'data\documents',
+                'data\downloads',
+                'data\windows_logs'
+            )
+            $stashDir = Join-Path $hainDir '.build_tmp\userdata_stash'
+            if (Test-Path $stashDir) { Remove-Item -Recurse -Force $stashDir -ErrorAction SilentlyContinue }
+            $stashedRels = New-Object System.Collections.Generic.List[string]
+            foreach ($rel in $runtimeDataRels) {
+                $srcPath = Join-Path $artifactDir $rel
+                if (Test-Path $srcPath) {
+                    $dstPath = Join-Path $stashDir $rel
+                    New-Item -ItemType Directory -Force -Path (Split-Path $dstPath -Parent) | Out-Null
+                    Move-Item -Path $srcPath -Destination $dstPath -Force -ErrorAction SilentlyContinue
+                    if (Test-Path $dstPath) { $stashedRels.Add($rel) }
+                }
+            }
+
+            try {
+                Write-Ok "覆盖解压 Windows 产物到 $artifactDir（仅程序文件，用户数据已暂存）"
+                Expand-Archive -Path $artifactZip -DestinationPath $artifactDir -Force
+            }
+            finally {
+                foreach ($rel in $stashedRels) {
+                    $srcPath = Join-Path $stashDir $rel
+                    $dstPath = Join-Path $artifactDir $rel
+                    New-Item -ItemType Directory -Force -Path (Split-Path $dstPath -Parent) | Out-Null
+                    if (Test-Path $dstPath) { Remove-Item -Recurse -Force $dstPath -ErrorAction SilentlyContinue }
+                    Move-Item -Path $srcPath -Destination $dstPath -Force -ErrorAction SilentlyContinue
+                }
+                Remove-Item -Recurse -Force $stashDir -ErrorAction SilentlyContinue
+                if ($stashedRels.Count -gt 0) {
+                    Write-Ok "已恢复用户数据 $($stashedRels.Count) 项（登录态 / 日志 / 缓存均未被覆盖）"
+                }
+            }
         }
         $results += [PSCustomObject]@{
             Platform     = 'Windows 版'
@@ -740,13 +981,13 @@ function Show-MainMenu {
     Clear-Host
     Write-Host "`nHeinPlay 全平台构建菜单" -ForegroundColor Cyan
     Write-Host '========================' -ForegroundColor Cyan
-    Write-Host '1. 构建全部版本 (手机 / TV / tvLegacy / Windows)'
+    Write-Host '1. 构建全部版本 (手机 / TV / tvLegacy / Windows / Linux)'
     Write-Host '2. 仅构建手机版'
     Write-Host '3. 仅构建 TV 版'
-    Write-Host '4. 仅构建 tvLegacy 版'
+    Write-Host '4. 仅构建 tvLegacy 版 (Android 5.0+，含原生编译，较慢)'
     Write-Host '5. 仅构建 Windows 版'
     Write-Host '6. 仅构建 Linux 版 (AppImage)'
-    Write-Host '10. 仅构建安卓版 (手机 / TV / tvLegacy)'
+    Write-Host '10. 仅构建安卓版 (手机 / TV)'
     Write-Host '11. 除 Linux 外构建全部（含鸿蒙 HAP）'
     Write-Host '12. 仅构建鸿蒙版 (HAP)'
     Write-Host '7. 运行 flutter doctor'
@@ -754,11 +995,20 @@ function Show-MainMenu {
     Write-Host '9. 清理构建缓存 (flutter clean)'
     Write-Host '0. 退出'
     Write-Host ''
+    Write-Host '注：tvLegacy 由独立工程 hain_tv_legacy\ 构建（与 hain_tv\ 平级；Flutter 3.32.8 / Dart 3.8.1，fvp 播放器，支持 Android 5.0+）。' -ForegroundColor DarkGray
+    Write-Host '    本脚本以独立子进程转发调用；冷构建约 70 分钟（含 MDK 原生编译）。' -ForegroundColor DarkGray
+    Write-Host '    产物统一归入仓库根 dist\（与手机 / TV / Windows / Linux / 鸿蒙产物同目录）。' -ForegroundColor DarkGray
+    Write-Host '    也可到 hain_tv_legacy\ 直接双击 build_tvlegacy.bat 单独构建。' -ForegroundColor DarkGray
+    Write-Host '    菜单 1「构建全部」已含 Linux(AppImage)：Windows 上自动经 WSL2 构建；无 WSL / 未装发行版会自动跳过并提示。' -ForegroundColor DarkGray
+    Write-Host '    不需要 Linux 时请改选菜单 11「除 Linux 外构建全部」，或在命令行加 -SkipLinux。' -ForegroundColor DarkGray
+    Write-Host ''
     Write-Host '命令行参数示例:' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -SkipWindows          跳过 Windows 构建' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -SkipLinux            跳过 Linux 构建（Windows 上默认尝试 WSL2，无 WSL 则跳过）' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -IncludeHap           额外构建鸿蒙 HAP（默认不参与「构建全部」）' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux -IncludeHap   仅构建鸿蒙 HAP' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -IncludeTvlegacy      额外构建 tvLegacy（Android 5.0+，默认不参与，冷构建约 70 分钟）' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux -IncludeTvlegacy   仅构建 tvLegacy' -ForegroundColor DarkGray
+    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux -IncludeHap   仅构建鸿蒙 HAP' -ForegroundColor DarkGray
     Write-Host '  build_all.bat -Clean                构建前执行 flutter clean' -ForegroundColor DarkGray
     Write-Host ''
     return Read-Host '请输入选项编号'
@@ -773,10 +1023,10 @@ function Exit-Script($code = 0) {
     [Environment]::Exit($code)
 }
 
-$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipTvlegacy -or $SkipWindows -or $SkipLinux -or $IncludeHap -or $Clean
+$nonInteractive = $SkipDoctor -or $SkipMobile -or $SkipTv -or $SkipTvlegacy -or $IncludeTvlegacy -or $SkipWindows -or $SkipLinux -or $IncludeHap -or $Clean
 
 if ($nonInteractive) {
-    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipTvlegacy:$SkipTvlegacy -SkipWindows:$SkipWindows -SkipLinux:$SkipLinux -IncludeHap:$IncludeHap -Clean:$Clean
+    $buildResult = Invoke-SelectedBuilds -SkipDoctor:$SkipDoctor -SkipMobile:$SkipMobile -SkipTv:$SkipTv -SkipTvlegacy:$SkipTvlegacy -IncludeTvlegacy:$IncludeTvlegacy -SkipWindows:$SkipWindows -SkipLinux:$SkipLinux -IncludeHap:$IncludeHap -Clean:$Clean
     if ($buildResult.Success) { Exit-Script 0 } else { Exit-Script 1 }
 }
 
@@ -784,14 +1034,14 @@ do {
     $choice = Show-MainMenu
     $continueMenu = $true
     switch ($choice) {
-        '1' { Invoke-SelectedBuilds -SkipLinux | Out-Null }
+        '1' { Invoke-SelectedBuilds -IncludeTvlegacy | Out-Null }
         '2' { Invoke-SelectedBuilds -SkipDoctor -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux | Out-Null }
         '3' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTvlegacy -SkipWindows -SkipLinux | Out-Null }
-        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux | Out-Null }
+        '4' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux -IncludeTvlegacy | Out-Null }
         '5' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipLinux | Out-Null }
         '6' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows | Out-Null }
         '10' { Invoke-SelectedBuilds -SkipDoctor -SkipWindows -SkipLinux | Out-Null }
-        '11' { Invoke-SelectedBuilds -SkipDoctor -SkipLinux -IncludeHap | Out-Null }
+        '11' { Invoke-SelectedBuilds -SkipDoctor -SkipLinux -IncludeHap -IncludeTvlegacy | Out-Null }
         '12' { Invoke-SelectedBuilds -SkipDoctor -SkipMobile -SkipTv -SkipTvlegacy -SkipWindows -SkipLinux -IncludeHap | Out-Null }
         '7' { Invoke-FlutterDoctor | Out-Null }
         '8' { Invoke-FlutterPubGet | Out-Null }

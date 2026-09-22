@@ -311,7 +311,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
         backgroundColor: AppColors.bgSurface,
         elevation: 0,
         title: const Text('服务器管理'),
-        leading: DeviceUtils.isWindows
+        leading: DeviceUtils.isComputer
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.of(context).pop(),
@@ -328,7 +328,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
           _buildAutoSpeedTestSwitch(),
           _buildDnsPreferenceTile(),
           _buildManualSpeedTestButton(),
-          if (DeviceUtils.isTv && !DeviceUtils.isWindows)
+          if (DeviceUtils.isTv && !DeviceUtils.isComputer)
             _buildQrModifyServerButton(),
         ],
       ),
@@ -747,7 +747,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
     if (focused) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) {
-          Scrollable.ensureVisible(
+          if (!FocusableWidget.hoverScrollSuppressed) Scrollable.ensureVisible(
             context,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,

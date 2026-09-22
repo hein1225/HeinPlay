@@ -30,8 +30,12 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
   /// 进入全屏前保存的普通窗口边界，退出全屏后用于覆盖插件可能恢复的错误尺寸。
   Rect? _normalWindowBounds;
 
-  /// 当前是否处于窗口全屏状态，供 UI 图标/PopScope 判断使用。
-  bool get isWindowsFullScreen => _isFullScreen;
+  /// 当前是否处于「应用可控制」的窗口全屏状态，供 UI 图标/PopScope 判断使用。
+  ///
+  /// 环境强制全屏（Steam 游戏模式 / gamescope，见 [DeviceUtils.envForcedFullScreen]）
+  /// 时恒返回 false：那种全屏撤不掉，若参与返回决策会让返回键被永久吞掉。
+  bool get isWindowsFullScreen =>
+      _isFullScreen && !DeviceUtils.envForcedFullScreen;
 
   /// 是否正在执行全屏切换/退全屏等异步窗口操作。
   ///
@@ -134,6 +138,12 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
   /// 可能恢复的错误尺寸。
   Future<void> toggleWindowsFullscreen() async {
     if (!DeviceUtils.isDesktop || _togglingFullScreen) return;
+    // 环境强制全屏（游戏模式）下窗口无法真正切换，直接忽略，避免用户点全屏/双击
+    // 之后状态在 true/false 之间来回抖动，也避免与系统抢窗口控制权。
+    if (DeviceUtils.envForcedFullScreen) {
+      debugPrint('桌面端 忽略全屏切换：当前为环境强制全屏（游戏模式），不可切换');
+      return;
+    }
     _togglingFullScreen = true;
     try {
       final pluginFullScreen = await windowManager.isFullScreen();
@@ -254,6 +264,12 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
     try {
       final pluginFullScreen = await windowManager.isFullScreen();
       debugPrint('桌面端 ESC: plugin=$pluginFullScreen local=$_isFullScreen');
+      // 已确认是环境强制全屏（游戏模式）→ 全屏撤不掉，直接走返回，不再空转窗口操作。
+      if (DeviceUtils.envForcedFullScreen) {
+        _togglingFullScreen = false;
+        if (mounted) Navigator.of(context).maybePop();
+        return;
+      }
       if (pluginFullScreen) {
         await windowManager.setFullScreen(false);
         // 退出全屏后恢复窗口尺寸限制，避免仍处于小窗的限制状态。
@@ -296,6 +312,23 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
           await windowManager.setAlwaysOnTop(false);
         }
         await syncWindowsFullscreenState();
+        // 关键复查：若 setFullScreen(false) 之后插件仍报告全屏，说明这是**环境强制、
+        // 应用撤不掉**的全屏（Steam 游戏模式 / gamescope 实测如此）。此时若就此返回，
+        // 用户按返回会「毫无反应」——因为下一次仍会走同一条无效路径。
+        // 因此把该事实记为全局状态（此后所有决策忽略全屏），并在**本次按键内**继续执行返回。
+        var stillFullScreen = false;
+        try {
+          stillFullScreen = await windowManager.isFullScreen();
+        } catch (_) {
+          stillFullScreen = false;
+        }
+        if (stillFullScreen) {
+          DeviceUtils.envForcedFullScreen = true;
+          debugPrint('桌面端 全屏不可撤销（环境强制全屏）→ 已标记，直接返回上一页');
+          _togglingFullScreen = false;
+          if (mounted) Navigator.of(context).maybePop();
+          return;
+        }
       } else if (mounted) {
         Navigator.of(context).maybePop();
         return;

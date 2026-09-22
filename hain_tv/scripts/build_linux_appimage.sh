@@ -70,6 +70,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$PROJECT_DIR/.." && pwd)"
 
+# 产物统一输出到「仓库根 dist」——所有平台的最终产物（APK / zip / AppImage / HAP）都归在一处。
+# 若本工程被单独复制出仓库（父目录无 .git），则回退到工程内 dist，保证脚本仍可独立使用。
+if [ -d "$REPO_DIR/.git" ]; then
+  DIST_DIR="$REPO_DIR/dist"
+else
+  echo "警告：未在 $REPO_DIR 检测到仓库根（无 .git），产物将输出到工程内: $PROJECT_DIR/dist" >&2
+  DIST_DIR="$PROJECT_DIR/dist"
+fi
+
 # PUB_CACHE 指向项目本地缓存（与 Windows 构建约定一致，避免 fvp 的 mdk-sdk 重新下载）。
 export PUB_CACHE="$PROJECT_DIR/.pub-cache"
 
@@ -87,20 +96,30 @@ BUILD_HAIN_DIR="$BUILD_ROOT/hain_tv"
 echo "==> 使用 WSL 原生构建目录: $BUILD_ROOT"
 
 echo "==> 同步项目文件到构建目录"
+# 同步时需要排除的内容：Linux 构建完全用不到，但体积可观
+# （tvlegacy 是独立的 Android 工程副本，约 2.0G；.pub-cache 由 PUB_CACHE 指向
+# 源工程目录，构建副本里再存一份纯属浪费）。
+SYNC_EXCLUDES=(.git build .dart_tool dist logs tvlegacy .pub-cache)
+
 if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete \
-    --exclude='.git' \
-    --exclude='build' \
-    --exclude='.dart_tool' \
-    --exclude='dist' \
-    --exclude='logs' \
-    "$PROJECT_DIR/" "$BUILD_HAIN_DIR/"
+  rsync_args=(-a --delete)
+  for ex in "${SYNC_EXCLUDES[@]}"; do
+    rsync_args+=(--exclude="$ex")
+  done
+  rsync "${rsync_args[@]}" "$PROJECT_DIR/" "$BUILD_HAIN_DIR/"
 else
-  # 无 rsync 时的降级方案：先清空再复制。
+  # 无 rsync 时的降级方案：tar 带排除直接落地。
+  #
+  # ⚠️ 切勿改回 `cp -r "$PROJECT_DIR/"*` —— 那会先把 tvlegacy(2.0G)/build 等大目录
+  # 整份拷进 /tmp（tmpfs 通常只有几 G）之后才删除，实测 cp 阶段可超过 8 分钟，
+  # 并且有撑爆 tmpfs 的风险（本机 WSL Debian 没装 rsync，走的正是这条分支）。
   rm -rf "$BUILD_HAIN_DIR"
   mkdir -p "$BUILD_HAIN_DIR"
-  cp -r "$PROJECT_DIR/"* "$BUILD_HAIN_DIR/" 2>/dev/null || true
-  rm -rf "$BUILD_HAIN_DIR/build" "$BUILD_HAIN_DIR/.dart_tool" "$BUILD_HAIN_DIR/dist" "$BUILD_HAIN_DIR/logs"
+  tar_args=()
+  for ex in "${SYNC_EXCLUDES[@]}"; do
+    tar_args+=(--exclude="./$ex")
+  done
+  tar -C "$PROJECT_DIR" "${tar_args[@]}" -cf - . | tar -C "$BUILD_HAIN_DIR" -xf -
 fi
 
 # AppImageBuilder.yml 的 app_info.icon 为纯图标名 mo_ico（不带路径/扩展名），
@@ -224,8 +243,8 @@ else
   exit 1
 fi
 
-# 将产物统一收集到原项目的 dist 目录，便于 CI 上传 / 本地取用。
-mkdir -p "$PROJECT_DIR/dist"
+# 将产物统一收集到仓库根 dist 目录（与其它平台产物归在一处），便于 CI 上传 / 本地取用。
+mkdir -p "$DIST_DIR"
 
 # === 修正 appimage-builder 对 stripped 二进制的架构检测（关键坑）===
 # appimage-builder 的 AppRun2 运行时在 _find_embed_archs 阶段扫描 AppDir 里的可执行
@@ -350,7 +369,7 @@ if [ "$APP_IMAGE_OK" -eq 1 ]; then
 
   if [ "$AIB_RC" -eq 0 ] && [ ${#GENERATED[@]} -gt 0 ]; then
     for f in "${GENERATED[@]}"; do
-      DEST="$PROJECT_DIR/dist/heinplay-${VERSION}-linux-x86_64.AppImage"
+      DEST="$DIST_DIR/heinplay-${VERSION}-linux-x86_64.AppImage"
       cp -f "$f" "$DEST"
       echo "已生成: $DEST"
     done
@@ -378,7 +397,7 @@ if [ "$APP_IMAGE_OK" -ne 1 ]; then
   # 单文件便捷性，但无需 appimage-builder / FUSE。
   echo "==> 降级打包：将 bundle 打包为 tar.gz（解压后运行 ./hain_tv 即可）"
   chmod +x "$BUNDLE/hain_tv" 2>/dev/null || true
-  TARBALL="$PROJECT_DIR/dist/heinplay-${VERSION}-linux-x86_64.tar.gz"
+  TARBALL="$DIST_DIR/heinplay-${VERSION}-linux-x86_64.tar.gz"
   tar -czf "$TARBALL" -C "$BUNDLE" .
   echo "已生成: $TARBALL"
 fi

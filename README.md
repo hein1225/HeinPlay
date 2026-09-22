@@ -1,6 +1,6 @@
 # 海因影视
 
-基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。同时支持 Web 与 Windows 桌面端，另有 **Linux（重点服务 Steam Deck 等掌机）与 HarmonyOS NEXT 版本正在开发中**。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT 版本正在开发中**。
 
 | TV / Windows 版界面预览 | 手机版界面预览 |
 | :--- | :--- |
@@ -32,6 +32,7 @@
 
 - **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**，适配 HLS、DASH、普通 MP4 等主流网络格式。
 - **Windows**：抛弃长期未更新的 `flutter_mpv`，默认使用 **fvp**，并保留 **vlc_player** 作为备用后端，可在设置中手动切换。
+- **Linux**：使用 **fvp** 播放后端，与 Windows 电脑版共用同一套播放逻辑与设置项。
 - 优化视频缓冲配置与测速优选逻辑，详情页自动对所有播放源测速并按响应速度排序，无播放记录时完成测速后再允许播放。
 
 ### 电视直播与节目回放
@@ -94,6 +95,7 @@
 - **下载进度**：更新对话框实时显示 APK 下载百分比与进度条。
 - **权限申请**：下载完成后先请求「安装未知应用」权限，再调起系统安装器。
 - **防重复点击**：下载过程中按钮禁用，避免用户多次触发。
+- **Linux 版为手动更新**：AppImage 是单文件，且运行期间自身处于只读挂载点，无法在应用内原地替换文件。因此 Linux 版检测到新版本后只作提示，点击「前往下载」会打开**当前渠道**的发布页面，下载新版 AppImage 覆盖原文件即可升级；若用安装脚本部署，重新执行一次安装脚本也会自动拉取新版。
 
 ### TV 遥控优化
 
@@ -107,6 +109,12 @@
   - 确认键：播放/暂停。
   - 返回键：控制栏可见时先隐藏，隐藏后再按返回退出播放。
 - **退出确认**：仅在首页按返回时弹出「确认退出」对话框。
+
+### 游戏手柄操作
+
+- **全端支持**：Android TV、tvLegacy、Windows、Linux 均可直接使用游戏手柄操作，按键映射为 **A 键 = 确认**、**B 键 = 返回**、**十字键 = 方向键**，与遥控器 / 键盘 / 鼠标操作完全一致。
+- **零侵入适配**：手柄按键在进入应用的第一时间即转换为标准按键，各页面焦点逻辑无需改动，因此焦点导航、弹窗、选集、换源等所有界面手柄均可正常操作。
+- **各端差异与限制**：Windows 通过 XInput 读取（覆盖 Xbox 系及绝大多数手柄的 XInput 模式，纯 DirectInput 的老手柄暂不支持）；Linux 直接读取 `/dev/input/js*`（需当前用户具备该设备读取权限，通常将用户加入 `input` 组或配置 udev 规则即可）；Android 侧十字键原生可用，摇杆暂不作为方向键。
 
 ### 其他特性
 
@@ -125,32 +133,59 @@
 | Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
 | Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                    |
 | Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                               |
-| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`                               |
-| Linux            | 测试期    | 桌面 Linux（x86_64）        | 桌面端版本开发中，**重点服务于 Steam Deck 等掌机 / 手持设备**，使用 `fvp` 播放后端。         |
+| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`；与 Linux 共用同一套「电脑版」功能与交互              |
+| Linux            | 已发布    | 桌面 Linux（x86_64）        | 单文件 AppImage，**重点服务 Steam Deck 等掌机 / 手持设备**；功能与 Windows 一致，使用 `fvp` 播放后端 |
 | HarmonyOS NEXT   | 测试期    | HarmonyOS NEXT（手机 / 平板） | 鸿蒙版开发中，仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链。      |
 | iOS              | 计划中    | —                       | 移动端版本后续支持                                                       |
 
-### Linux / HarmonyOS NEXT 版开发进展
+### Linux 版说明（面向掌机）
 
-这两个平台目前处于**开发测试阶段**，尚未进入正式发布与自动构建（CI）：
+Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-linux-x86_64.AppImage`），免安装、双击即用，已纳入自动构建，可直接从 Release 下载。
 
-- **Linux 版**：面向桌面 Linux 发行版（x86_64），**重点服务于 Steam Deck 等掌机 / 手持设备**，也适用于普通 Linux 桌面；播放后端复用桌面端的 `fvp`（libmdk），延续桌面端的播放与交互逻辑。
-- **HarmonyOS NEXT 版**：面向 HarmonyOS NEXT（手机 / 平板），仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链构建；主流程已打通，仍在持续完善中。
+- **目标设备**：**重点服务 Steam Deck 等掌机 / 手持设备**（SteamOS、Bazzite 等），也适用于普通桌面 Linux（x86_64）。已在 ONEXPLAYER（Bazzite）掌机上完成实机验证。
+- **掌机适配**：SteamOS 游戏模式（gamescope）下自动全屏铺满，播放页返回键可正常退出；应用文件名、安装路径与元数据全部使用英文，避免在用户目录生成中文路径，并会自动清理旧版本遗留的中文名启动器。
+- **与 Windows 完全一致**：Windows 与 Linux 统一为「电脑版」，功能相同 —— 同一套键鼠焦点交互、同一套游戏手柄映射、同一套设置项，播放后端同为 `fvp`。仅在平台特有细节上各自实现（如 Windows 的窗口小窗 / 置顶）。
+- **推荐安装方式**：运行仓库内的一键安装脚本 `hain_tv/scripts/install_heinplay_linux.sh`，会安装到 `~/Applications/heinplay.appimage` 并写入图标与桌面条目；重复执行即为升级（原子替换，不影响正在运行的实例）。卸载执行 `install_heinplay_linux.sh --uninstall`。
+- **运行依赖**：AppImage 由 Flutter 应用与系统库共同构成，未内置 glibc 等基础运行时，依赖发行版自身提供较新的 GTK3 / ALSA 等系统库（SteamOS、Bazzite、新版 Ubuntu / Fedora 等可直接运行）。
+- **Steam 库封面素材**：[`steamos-covers/`](steamos-covers) 目录提供已裁切好的标准规格封面图 —— `library_600x900.png`（竖版封面 600×900）、`library_hero.png`（库背景横幅 1920×620）、`icon.png`（图标 512×512），发布时也会一并附在 Release 里。在 Steam 中把 HeinPlay 以「非 Steam 游戏」添加后，右键该条目 → **管理 → 设置自定义艺术作品**，即可分别选用上述图片，让掌机库界面与桌面图标保持统一外观。
 
-两者均可在本地手动构建，但尚未提供 Release 安装包；正式版发布后会补充到上方「Release 文件说明」。
+### HarmonyOS NEXT 版开发进展
+
+面向 HarmonyOS NEXT（手机 / 平板），仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链构建；主流程已打通，仍在持续完善中。目前可在本地手动构建，尚未提供 Release 安装包，正式发布后会补充到上方「Release 文件说明」。
 
 ### Release 文件说明
 
 | 文件名                                   | 适用设备              | 系统要求                  | 说明                                               |
 | ------------------------------------- | ----------------- | --------------------- | ------------------------------------------------ |
-| `heinplay-1.3.5-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。 |
-| `heinplay-1.3.5-tvLegacy.apk`         | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。    |
-| `heinplay-1.3.5-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                               |
-| `heinplay-1.3.5-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                       |
+| `heinplay-1.4.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。 |
+| `heinplay-1.4.0-tvLegacy.apk`         | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。    |
+| `heinplay-1.4.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                               |
+| `heinplay-1.4.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                       |
+| `heinplay-1.4.0-linux-x86_64.AppImage` | Linux 电脑 / 掌机     | 桌面 Linux（x86_64）      | 单文件免安装，双击即用，**面向 Steam Deck 等掌机优化**；建议用安装脚本部署（见上方「Linux 版说明」）。 |
+
+**Steam 封面素材**：仓库 [`steamos-covers/`](steamos-covers) 目录另附一套符合 Steam 标准规格的封面图 —— `library_600x900.png`（竖版库封面）、`library_hero.png`（库背景横幅）、`icon.png`（应用图标），已按比例裁切、可直接使用，每次发布也会随本 Release 一并提供。把 HeinPlay 以「非 Steam 游戏」添加进 Steam 后，右键该条目 → **管理 → 设置自定义艺术作品** 即可套用，详见上方「Linux 版说明」。
 
 ## 更新日志
 
 <details open>
+
+<summary><strong>1.4.0</strong></summary>
+
+### 1.4.0
+
+- **新增 Linux 电脑版（面向掌机）**：桌面端新增 Linux 版，产物为单文件 AppImage（`heinplay-1.4.0-linux-x86_64.AppImage`），免安装、双击即用，**重点服务 Steam Deck 等掌机 / 手持设备**，同时适用于普通桌面 Linux。配套一键安装脚本负责安装、升级与卸载；掌机场景下 SteamOS 游戏模式自动全屏铺满、播放页返回键可正常退出；应用文件名与安装路径全部使用英文，避免在用户目录生成中文路径。已在 ONEXPLAYER（Bazzite）掌机上完成实机验证。
+- **新增游戏手柄操作支持**：Android TV、tvLegacy、Windows、Linux 全面支持游戏手柄 —— **A 键 = 确认、B 键 = 返回、十字键 = 方向键**，与遥控器 / 键盘 / 鼠标完全等效，所有界面（含弹窗、选集、换源）均可用手柄操作。
+- **电脑版（Windows / Linux）统一交互**：Windows 与 Linux 统一为功能一致的「电脑版」，键鼠交互统一为 —— 鼠标悬停即高亮焦点、回车 = 左键 = 确认、ESC = 右键 = 返回，同一时刻只有一处焦点；顶部导航改为方向键逻辑移动（↓ 进入内容区、↑ 返回导航）；首页 / 分类页按 ESC 或右键弹出退出确认；设置中「Windows」分组更名为「电脑版」。
+- **Windows 便携版存储与缓存重构**：偏好主表由约 7.5MB 降至约 39KB（大体积缓存值外置 + 写入去抖），启动维护降至十几毫秒，直播起播不再因重写偏好表卡顿；派生缓存迁至 `data/cache/` 并按「TTL + 7 天」滚动淘汰，海报缓存由 90 天调整为 7 天。同时修复便携版更新后需重新登录、历史日志丢失的问题。
+- **点播源清晰度与排序优化**：源列表排序改为「可用性 > 清晰度 > 速度」，修正此前 360P 源因测速快而排在 1080P 之前的问题；去掉分辨率缓存兜底，避免解析失败时被旧缓存的低清晰度永久锁死。
+- **直播体验优化**：直播不再套用点播缓冲档位（改用播放器低延迟默认值），起播与换台更快；频道列表与完整节目单打开时首帧即停在当前频道，不再有从顶部滚动跳转的动画；节目单找不到覆盖当前时间的节目时退化为「时间上最接近现在」的一条；EPG 缓存改为「仍覆盖当前时间」才复用，过期强制刷新。
+- **播放与交互修复**：修复电脑版关闭去广告后点播黑屏、Windows / Linux fvp「有声音无画面 / 卡死」、VLC 起播慢被误判为播放失败、开启去广告时切换播放器导致软件无响应、Windows 直播回放（catchup=append 类型源）无法回放、电脑版回车 / 小键盘回车无法确认、方向键焦点锁死与顶部导航 ↓ 进不了内容页等问题；修复 Android TV 与 tvLegacy 退出播放时闪退。
+- **点播续播优化**：从上次进度继续播放时改用播放器快速定位，并在起播稳定后再执行定位，避免长距离定位长时间缓冲。
+- **版本号统一**：全项目更新至 `1.4.0`（build +24），Release 产物新增 Linux AppImage。
+
+</details>
+
+<details>
 
 <summary><strong>1.3.5</strong></summary>
 
@@ -409,14 +444,14 @@
 2. 返回出现问题的地方，**复现一次问题**（例如播放失败、页面显示不全、闪退等），让日志记录到出错过程。
 3. 重新进入「我的 → 软件设置 → 获取日志」，按平台方式取出日志：
    - **TV 版**：使用手机扫描页面上显示的二维码，下载日志文件到手机后发送。
-   - **手机版 / Windows 版**：页面会显示日志保存路径，进入对应目录复制 `hain_tv_log_*.txt` 文件。
+   - **手机版 / Windows 版 / Linux 版**：页面会显示日志保存路径，进入对应目录复制 `hain_tv_log_*.txt` 文件。
 4. 反馈时请将日志文件作为附件上传；若文件较大，可压缩为 `.zip` 或 `.rar`。
 
 ### 反馈问题请提供的信息
 
 - **设备型号**：如 Xiaomi TV Box 4、海信 55E3F、Samsung SM-S9360 等。
 - **系统版本**：如 Android 14、Android 10、Android 5.1、Windows 11 等。
-- **应用版本**：如 `1.3.0-tv`、`1.3.0-tvLegacy`、`1.3.0-mobile`、`1.3.0-windows`。
+- **应用版本**：如 `1.4.0-tv`、`1.4.0-tvLegacy`、`1.4.0-mobile`、`1.4.0-windows`、`1.4.0-linux`。
 - **问题描述**：具体现象是什么？能否稳定复现？
 - **复现步骤**：从哪个页面开始，点击了什么，出现了什么结果。
 - **相关截图 / 照片**：TV 版问题建议手机拍摄电视屏幕；界面显示类问题请附图。
@@ -431,7 +466,8 @@
 - **TVBox 订阅源支持**：尝试解析 TVBox 标准订阅源（如 JSON、TXT 格式），将其作为影视播放源导入与切换。
 - **Windows 版本优化**：持续优化桌面端焦点、快捷键与播放体验。
 - **iOS 版本**：后续计划支持 iOS 移动端。
-- **Linux / HarmonyOS NEXT 版**：已进入开发测试阶段，后续将持续完善播放、焦点交互与发布流程（见上方「Linux / HarmonyOS NEXT 版开发进展」）。
+- **Linux 版**：已正式发布，后续将持续完善掌机适配（游戏模式下的界面缩放、手柄与触控板体验）以及 AppImage 增量更新。
+- **HarmonyOS NEXT 版**：仍在开发测试中，后续将持续完善播放、焦点交互与发布流程（见上方「HarmonyOS NEXT 版开发进展」）。
 
 ## 支持我们
 

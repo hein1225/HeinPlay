@@ -428,7 +428,7 @@ class _TvLiveSourceManagerScreenState
     if (focused) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) {
-          Scrollable.ensureVisible(
+          if (!FocusableWidget.hoverScrollSuppressed) Scrollable.ensureVisible(
             context,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,

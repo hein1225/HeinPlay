@@ -32,6 +32,7 @@ class ExoPlayerBackend implements VideoPlayerBackend {
     BufferProfileConfig? bufferConfig,
     bool isLive = false,
     VideoFormat? formatHint,
+    bool preferTextureView = false,
   }) async {
     final effectiveConfig = isLive
         ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
@@ -46,7 +47,10 @@ class ExoPlayerBackend implements VideoPlayerBackend {
       startAt: startAt,
       headers: headers,
       proxyMode: proxyMode,
-      bufferConfig: effectiveConfig,
+      // 不把 exo 参数透传给 impl：impl 里的缓冲应用走的是 fvp 专有的
+      // setBufferRange（fvp 后端才需要），ExoPlayer 的缓冲已在上面经 MethodChannel
+      // 下发到原生，重复透传只会在 Android 上误用 fvp API。
+      // 该「谁传谁负责」的约定同时保证了 Android 选 fvp 后端时缓冲设置照常生效。
       isLive: isLive,
       formatHint: formatHint,
     );

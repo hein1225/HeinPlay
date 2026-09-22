@@ -26,14 +26,20 @@ hain_tv/
 │   ├── focus/                    # TV 焦点策略（手机版不引用）
 │   ├── platform/                 # 平台相关工具
 │   └── theme.dart                # 共享设计 token
-├── android/app/build.gradle.kts  # 已配置 tv / tvlegacy / mobile 三个 flavor
+├── android/app/build.gradle.kts  # 已配置 tv / mobile 两个 flavor（tvlegacy 已迁出，见下）
 ├── windows/                       # Windows 桌面端平台目录
 └── scripts/
     ├── build_tv.ps1              # TV 版 release 打包脚本
-    ├── build_tvlegacy.ps1           # tvLegacy 版 release 打包脚本（Android 5.0+）
     ├── build_mobile.ps1          # 手机版 release 打包脚本
     └── build_windows.ps1         # Windows 桌面端 release 打包脚本
 ```
+
+> **tvLegacy 已独立**：Android 5.0+（API 21+）版本不再是 `hain_tv` 的一个 flavor，
+> 而是仓库根的独立工程 `hain_tv_legacy/`（与 `hain_tv/` 平级；Flutter 3.32.8 / Dart 3.8.1，fvp-only）。
+> 它使用独立的 Flutter SDK 与依赖缓存，不参与主工程的构建流程。
+
+> **产物输出目录**：所有平台的最终产物（APK / 便携版 zip / AppImage / HAP）统一输出到
+> **仓库根** `dist/` 目录（与 `hain_tv/` 平级），便于发版时一次取齐。
 
 ## 2. 运行调试
 
@@ -45,9 +51,11 @@ flutter run -t lib/main_tv.dart --flavor tv
 
 ### tvLegacy 版（Android 5.0+）
 
-tvLegacy 版与 TV 版共用入口，但使用独立的 `tvlegacy` flavor，最低支持 API 21。
+tvLegacy 已独立为仓库根的 `hain_tv_legacy/` 工程（不再是主工程的 flavor），
+需用旧版 Flutter 3.32.8 在其目录内运行调试：
 
 ```powershell
+cd ..\hain_tv_legacy
 flutter run -t lib/main_tv.dart --flavor tvlegacy
 ```
 
@@ -126,7 +134,9 @@ keyPassword=YOUR_KEY_PASSWORD
 
 #### tvLegacy 版
 
-1. 确认 `android/key-tvlegacy.properties` 存在且内容正确：
+> 以下路径均相对于**独立工程** `hain_tv_legacy/`（不再是 `hain_tv/android/`）。
+
+1. 确认 `hain_tv_legacy/android/key-tvlegacy.properties` 存在且内容正确：
 
 ```properties
 storeFile=heinplay-tvlegacy.jks
@@ -135,8 +145,8 @@ keyAlias=your_key_alias
 keyPassword=YOUR_KEY_PASSWORD
 ```
 
-2. 确认 keystore 文件存在于 `android/app/heinplay-tvlegacy.jks`。
-3. tvLegacy 版使用独立包名 `com.heinplay.hain_tv_legacy` 与独立签名，可与 TV 版同时安装；**tvLegacy 版更新时必须使用相同的 heinplay-tvlegacy.jks**。
+2. 确认 keystore 文件存在于 `hain_tv_legacy/android/app/heinplay-tvlegacy.jks`。
+3. tvLegacy 版使用独立包名 `com.heinplay.hain_tv_legacy` 与独立签名，可与 TV 版同时安装；**tvLegacy 版更新时必须使用相同的 heinplay-tvlegacy.jks**，否则已安装用户无法覆盖升级。
 
 #### 手机版
 
@@ -171,9 +181,9 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 ### 4.2 使用脚本打包（推荐）
 
-脚本会自动读取 `pubspec.yaml` 版本号，构建 release APK，并将产物重命名后复制到 `dist/`。
+脚本会自动读取 `pubspec.yaml` 版本号，构建 release APK，并将产物重命名后复制到**仓库根** `dist/`。
 
-> **注意**：Flutter 默认输出文件名固定为 `app-tv-release.apk` / `app-tvlegacy-release.apk` / `app-mobile-release.apk`，不会自动带版本号。使用下方脚本后，带版本号的 APK 会生成在 `dist/` 目录中。
+> **注意**：Flutter 默认输出文件名固定为 `app-tv-release.apk` / `app-tvlegacy-release.apk` / `app-mobile-release.apk`，不会自动带版本号。使用下方脚本后，带版本号的 APK 会生成在仓库根 `dist/` 目录中。
 
 #### TV 版
 
@@ -183,13 +193,17 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 输出：`dist/heinplay-{version}-tv.apk`
 
-#### tvLegacy 版
+#### tvLegacy 版（Android 5.0+）
+
+tvLegacy 是**独立工程** `hain_tv_legacy\`（与 `hain_tv\` 平级；Flutter 3.32.8 / Dart 3.8.1，fvp-only），
+需要旧版 Flutter SDK，主工程的 `scripts\` 不参与其构建。到该目录执行：
 
 ```powershell
-.\scripts\build_tvlegacy.ps1
+cd hain_tv_legacy
+.\build_tvlegacy.bat            # 双击亦可；等价于 .\scripts\build_tvlegacy.ps1
 ```
 
-输出：`dist/heinplay-{version}-tvLegacy.apk`
+输出：`dist/heinplay-{version}-tvLegacy.apk`（仓库根 `dist/`）
 
 > tvLegacy 版与 TV 版功能一致，但 `minSdk=21`，适合 Android 5.0 及以上设备。签名与 TV/手机版完全独立。
 
@@ -209,10 +223,10 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 输出：`dist/heinplay-{version}-windows-portable.zip`，解压后运行 `hain_tv.exe`。
 
-例如当前 `pubspec.yaml` 版本为 `1.2.0+12`，四个脚本会输出：
+例如当前 `pubspec.yaml` 版本为 `1.2.0+12`，各平台脚本会在仓库根 `dist/` 下输出：
 
 - `dist/heinplay-1.2.0-tv.apk`
-- `dist/heinplay-1.2.0-tvLegacy.apk`
+- `dist/heinplay-1.2.0-tvLegacy.apk`（由 `hain_tv_legacy\` 独立工程产出）
 - `dist/heinplay-1.2.0-mobile.apk`
 - `dist/heinplay-1.2.0-windows-portable.zip`
 
@@ -230,11 +244,14 @@ flutter build apk --target lib/main_tv.dart --flavor tv --release
 
 #### tvLegacy 版
 
+> 需在独立工程目录 `hain_tv_legacy\` 内执行（使用其自带的 Flutter 3.32.8）。
+
 ```powershell
+cd hain_tv_legacy
 flutter build apk --target lib/main_tv.dart --flavor tvlegacy --release
 ```
 
-默认产物：`build\app\outputs\flutter-apk\app-tvlegacy-release.apk`
+默认产物：`hain_tv_legacy\build\app\outputs\flutter-apk\app-tvlegacy-release.apk`
 
 #### 手机版
 
@@ -483,7 +500,7 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 .github/workflows/build-release.yml
 ```
 
-包含四个并行任务：
+包含五个并行任务：
 
 | 任务 | 运行环境 | 输出产物 |
 |------|----------|----------|
@@ -491,16 +508,31 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 | build-tvlegacy | ubuntu-latest | `heinplay-{version}-tvLegacy.apk` |
 | build-mobile | ubuntu-latest | `heinplay-{version}-mobile.apk` |
 | build-windows | windows-latest | `heinplay-{version}-windows-portable.zip` |
+| build-linux | ubuntu-latest | `heinplay-{version}-linux-x86_64.AppImage` |
+
+> 五个 job 的产物均输出到**仓库根 `dist/`**，再作为 artifact 上传。
+
+> `build-tvlegacy` 使用**独立工程** `hain_tv_legacy/`（与 `hain_tv/` 平级）：单独的工作目录、
+> 单独的 Flutter 版本（**3.32.8** + JDK 21），不与其它 job 共用工具链，只共用仓库级签名 Secrets。
+> 该 job 末尾会自动校验产物证书指纹，指纹不一致直接失败 —— 防止误用别的密钥导致老用户无法覆盖升级。
+
+> `build-linux` 直接调用工程内的 `hain_tv/scripts/build_linux_appimage.sh`（与本地 WSL 构建同一套脚本）：
+> job 里预装 GTK3/ALSA 开发库与 `appimage-builder`(pipx)，打包全程**不需要 `appimagetool`、也不依赖 FUSE**
+> （appimage-builder 1.1.0 走 `AppImagePrimer` 自行下载 `runtime-x86_64` 并用 `mksquashfs` 拼包；
+> 源码里的 `AppImageToolCommand` 是从未被实例化的遗留代码）。
 
 触发条件：
 
 - 仅支持手动触发（`Actions` → `Build Release` → `Run workflow`）
-- 运行时需要填写 Release tag（例如 `1.1.6`），构建完成后会自动创建/更新该 tag 的 Release，并附带三个产物
+- 运行时需要填写 Release tag（例如 `1.1.6`），构建完成后会自动创建/更新该 tag 的 Release，并附带全部产物
 - 可选择是否上传构建产物（默认上传；只有上传产物时才会创建 Release）
 
 ### 11.2 密钥配置（重要）
 
 **不要把 keystore 文件直接提交到仓库**。GitHub Actions 通过 **Repository Secrets** 安全注入签名信息。
+
+> Secrets 挂在**仓库**上（不是单个 workflow 上），因此 tvLegacy 从 `hain_tv/tvlegacy` 迁到独立工程
+> `hain_tv_legacy/` 后，原有密钥**无需迁移、直接复用**（workflow 里引用的 Secret 名一字未改）。
 
 需要配置的 Secrets 如下：
 
@@ -514,6 +546,9 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 | `TV_KEY_PASSWORD` | 密钥密码 |
 
 #### tvLegacy 版
+
+> 由 `build-tvlegacy` job 使用；keystore 文件本身是 `hain_tv_legacy/android/app/heinplay-tvlegacy.jks`。
+> **必须与已发布版是同一把密钥**，否则老用户无法覆盖升级。
 
 | Secret 名称 | 说明 |
 |-------------|------|
@@ -587,21 +622,22 @@ base64 -i android/app/heinplay-mobile.jks | pbcopy
 4. 选择分支（通常选 `main`）。
 5. 填写 **Tag**（例如 `1.1.6`）。
 6. 确认 `upload-artifacts` 选项（默认开启），点击 `Run workflow`。
-7. 等待四个构建任务完成后，工作流会自动：
+7. 等待五个构建任务完成后，工作流会自动：
    - 创建 tag（如果不存在）
    - 创建/更新对应 tag 的 Release
-   - 把四个产物上传到该 Release 下
+   - 把五个产物上传到该 Release 下
 
 ### 11.6 查看构建产物
 
 工作流运行完成后，产物可在两个地方查看：
 
-- **Release 页面**：直接访问 `https://github.com/<owner>/<repo>/releases/tag/<tag>`，四个产物已作为 Release Assets 上传。
+- **Release 页面**：直接访问 `https://github.com/<owner>/<repo>/releases/tag/<tag>`，五个产物已作为 Release Assets 上传。
 - **Actions 运行详情页**：页面底部 `Artifacts` 区域仍会保留：
   - `heinplay-tv-apk`
   - `heinplay-tvlegacy-apk`
   - `heinplay-mobile-apk`
   - `heinplay-windows-portable`
+  - `heinplay-linux-appimage`
 
 ### 11.7 常见问题
 
@@ -609,7 +645,9 @@ base64 -i android/app/heinplay-mobile.jks | pbcopy
 A：检查 `TV_KEYSTORE_BASE64` / `MOBILE_KEYSTORE_BASE64` 是否完整复制。Base64 字符串通常较长，确保没有遗漏开头或结尾字符。
 
 **Q：构建成功但 APK 无法覆盖安装旧版本？**  
-A：说明云端使用的 keystore 与旧版本不一致。必须上传与旧版本发布时完全相同的 TV 版 keystore。
+A：说明云端使用的 keystore 与旧版本不一致。必须上传与旧版本发布时完全相同的 keystore。
+tvLegacy 版由 `build-tvlegacy` job 在打包后自动比对证书 SHA256 指纹，不一致会直接构建失败并报错，
+不会把「无法升级」的包发出去。
 
 **Q：只想构建其中某一个平台？**  
 A：可以直接在 `.github/workflows/build-release.yml` 中注释掉不需要的 `build-*` job，或复制该文件创建单独的平台工作流。

@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- 普通 TV 版面向较新设备，使用 Flutter 默认渲染后端（Impeller + Vulkan），
+             以获得更好的新设备性能和渲染一致性。不覆盖 EnableImpeller，继承主清单默认值。 -->
+    </application>
+
+</manifest>

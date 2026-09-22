@@ -1,0 +1,2872 @@
+import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:volume_controller/volume_controller.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:hain_tv/widgets/tv/focusable.dart';
+import 'package:hain_tv/models/play_record.dart';
+import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/models/skip_segment.dart';
+import 'package:hain_tv/models/video_detail.dart';
+import 'package:hain_tv/player/player_backend_factory.dart';
+import 'package:hain_tv/player/video_player_backend.dart';
+import 'package:hain_tv/player/switch_gate.dart';
+import 'package:hain_tv/services/ad_filter_engine.dart';
+import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+import 'package:hain_tv/widgets/tv/skip_config_dialog.dart';
+import 'package:hain_tv/platform/device_utils.dart';
+
+class PlayerScreen extends StatefulWidget {
+  final VideoDetail videoDetail;
+  final int episodeIndex;
+  final List<SourceOption>? sources;
+  final ValueNotifier<List<SourceOption>>? sourcesNotifier;
+  final int initialSourceIndex;
+  final PlayerBackendType playerBackend;
+  final int initialPositionMs;
+
+  PlayerScreen({
+    super.key,
+    required this.videoDetail,
+    this.episodeIndex = 0,
+    this.sources,
+    this.sourcesNotifier,
+    this.initialSourceIndex = 0,
+    this.playerBackend = PlayerBackendType.exo,
+    this.initialPositionMs = 0,
+  });
+
+  @override
+  State<PlayerScreen> createState() => _PlayerScreenState();
+}
+
+class _PlayerScreenState extends State<PlayerScreen> {
+  late VideoDetail _currentVideoDetail;
+  late int _currentSourceIndex;
+  // 记录进入播放页时详情页选中的源标识，用于 sourcesNotifier 更新后
+  // 仍能准确找回当前源，避免仅依赖 VideoDetail 的 source/id 匹配失败
+  // 导致播放源被重置到列表首位。
+  String? _initialSourceKey;
+  VideoPlayerBackend? _backend;
+  final PlayerSwitchGate _switchGate = PlayerSwitchGate();
+  late int _currentEpisodeIndex;
+  bool _controlsVisible = true;
+  bool _playing = true;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  Duration _buffered = Duration.zero;
+  bool _initialized = false;
+  String? _error;
+  bool _switchingSource = false;
+  late PlayerBackendType _currentPlayerBackend;
+  BoxFit _videoFit = BoxFit.contain;
+  double _playbackSpeed = 1.0;
+
+  EpisodeSkipConfig? _skipConfig;
+  bool _skipConfigLoading = false;
+  final Set<String> _skippedSegments = {};
+  bool _autoNextTriggered = false;
+
+  /// 记录最近一次触发片头片尾跳过 seek 的时间，避免 seek 后位置未立即更新导致重复触发。
+  DateTime? _lastSkipSeekAt;
+
+  final List<StreamSubscription> _subscriptions = [];
+  Timer? _controlsTimer;
+  Timer? _longPressSeekTimer;
+  Timer? _continuousSeekTimer;
+  Timer? _clockTimer;
+  Timer? _autoSwitchTimer;
+  DateTime _currentTime = DateTime.now();
+
+  // 固定快进快退步长
+  static const int _seekStep = 20;
+  static const int _controlsAutoHideSeconds = 10;
+  late int _pendingInitialPositionMs;
+  bool _isRecordSaveThrottled = false;
+  bool _recordSaveInFlight = false;
+
+  late final FocusScopeNode _bottomControlsFocusNode;
+  late final FocusNode _playPauseFocusNode;
+  late final FocusNode _skipFocusNode;
+  late final FocusNode _rootFocusNode;
+
+  // 标记是否有弹窗打开，打开时禁止控制栏自动隐藏，避免焦点丢失。
+  bool _dialogOpen = false;
+
+  // 触摸手势状态
+  bool _gestureIndicatorVisible = false;
+  String _gestureIndicatorText = '';
+  IconData _gestureIndicatorIcon = Icons.touch_app;
+  Timer? _gestureIndicatorTimer;
+  bool _isLongPressSeeking = false;
+  String _longPressDirection = 'right';
+  double _currentBrightness = 0.5;
+  double _currentVolume = 0.5;
+  double _gestureStartBrightness = 0.5;
+  double _gestureStartVolume = 0.5;
+  Offset? _gestureStartPosition;
+  double _cumulativeDeltaY = 0.0;
+  double _cumulativeDeltaX = 0.0;
+  static const double _verticalGestureSensitivity = 0.005;
+  static const double _horizontalGestureSensitivity = 0.5;
+
+  /// 最近一次切换集数/源的时间，用于跳过片头片尾时避免初始化阶段位置抖动。
+  DateTime? _episodeSwitchAt;
+
+  List<SourceOption> get _sources =>
+      widget.sourcesNotifier?.value ?? widget.sources ?? [];
+  bool get _canSwitchSource => _sources.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _bottomControlsFocusNode = FocusScopeNode();
+    _playPauseFocusNode = FocusNode(debugLabel: 'playPause');
+    _skipFocusNode = FocusNode(debugLabel: 'skip');
+    _rootFocusNode = FocusNode(debugLabel: 'playerRoot');
+    _currentVideoDetail = widget.videoDetail;
+    _currentEpisodeIndex = widget.episodeIndex;
+    _currentSourceIndex = widget.initialSourceIndex.clamp(
+      0,
+      _sources.isEmpty ? 0 : _sources.length - 1,
+    );
+    _initialSourceKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+        ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+        : '${_currentVideoDetail.source}+${_currentVideoDetail.id}';
+    _currentPlayerBackend = widget.playerBackend;
+    // 若传入的后端在当前平台不可用，回退到平台默认。
+    if (!PlayerBackendFactory.availableBackends.contains(
+      _currentPlayerBackend,
+    )) {
+      _currentPlayerBackend = PlayerBackendFactory.platformDefault;
+    }
+    _pendingInitialPositionMs = widget.initialPositionMs;
+    widget.sourcesNotifier?.addListener(_onSourcesChanged);
+    _loadSkipConfig();
+    _initBackend();
+    _initWakelock();
+    if (!DeviceUtils.isDesktop) {
+      _initBrightnessAndVolume();
+    }
+    _startClock();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      }
+    });
+  }
+
+  Future<void> _initWakelock() async {
+    try {
+      await WakelockPlus.enable();
+      debugPrint('PlayerScreen: 已启用屏幕常亮');
+    } catch (e) {
+      debugPrint('PlayerScreen: 启用屏幕常亮失败: $e');
+    }
+  }
+
+  void _startClock() {
+    _currentTime = DateTime.now();
+    _clockTimer = Timer.periodic(Duration(minutes: 1), (_) {
+      if (mounted) {
+        setState(() => _currentTime = DateTime.now());
+      }
+    });
+  }
+
+  String _formatClock(DateTime time) {
+    final h = time.hour.toString().padLeft(2, '0');
+    final m = time.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _initBrightnessAndVolume() async {
+    try {
+      _currentBrightness = await ScreenBrightness().application;
+      debugPrint('PlayerScreen: 当前亮度 $_currentBrightness');
+    } catch (e) {
+      debugPrint('PlayerScreen: 获取亮度失败: $e');
+      _currentBrightness = 0.5;
+    }
+    _gestureStartBrightness = _currentBrightness;
+
+    try {
+      _currentVolume = await VolumeController.instance.getVolume();
+      debugPrint('PlayerScreen: 当前音量 $_currentVolume');
+    } catch (e) {
+      debugPrint('PlayerScreen: 获取音量失败: $e');
+      _currentVolume = 0.5;
+    }
+    _gestureStartVolume = _currentVolume;
+  }
+
+  Future<void> _loadSkipConfig() async {
+    final source = _currentVideoDetail.source;
+    final id = _currentVideoDetail.id;
+    if (source.isEmpty || id.isEmpty) return;
+
+    setState(() => _skipConfigLoading = true);
+    final response = await LunaTVService.getSkipConfigs(
+      source: source,
+      id: id,
+      title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
+      forceRefresh: true,
+    );
+    if (mounted) {
+      setState(() {
+        _skipConfigLoading = false;
+        if (response.success && response.data != null) {
+          _skipConfig = response.data;
+          debugPrint(
+            '跳过配置加载成功: source=$source id=$id segments=${_skipConfig!.segments.length}',
+          );
+          // 配置加载后立即检查当前位置是否处于片头片尾区间，
+          // 避免网络较慢时初始化阶段已经错过了 _openEpisode 的 startAt。
+          _checkSkipSegments(_position);
+        } else {
+          debugPrint(
+            '跳过配置加载失败或为空: source=$source id=$id error=${response.message}',
+          );
+        }
+      });
+    }
+  }
+
+  Future<void> _saveSkipConfig(List<SkipSegment> segments) async {
+    final source = _currentVideoDetail.source;
+    final id = _currentVideoDetail.id;
+    if (source.isEmpty || id.isEmpty) return;
+
+    final response = await LunaTVService.setSkipConfigs(
+      source: source,
+      id: id,
+      title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      doubanId: _currentVideoDetail.doubanId,
+      segments: segments,
+    );
+    if (mounted && response.success && response.data != null) {
+      setState(() {
+        _skipConfig = response.data;
+        _skippedSegments.clear();
+        _lastSkipSeekAt = null;
+        _autoNextTriggered = false;
+      });
+    }
+  }
+
+  void _onDurationUpdate(Duration duration) {
+    if (!mounted) return;
+    setState(() => _duration = duration);
+    // 如果因超时导致界面显示了播放失败提示，但实际视频已初始化成功，
+    // 则取消待执行的自动换源并清除错误。
+    final pendingAutoSwitch =
+        _error == '播放失败，即将进行自动换源' ||
+        _error == '播放失败，请手动更换播放源' ||
+        _error == '播放失败，请尝试切换播放源';
+    if (duration.inMilliseconds > 0 && pendingAutoSwitch && !_initialized) {
+      _autoSwitchTimer?.cancel();
+      _autoSwitchTimer = null;
+      setState(() {
+        _error = null;
+        _initialized = true;
+      });
+    }
+  }
+
+  Future<void> _initBackend() async {
+    final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+    _backend = backend;
+    _backend?.fit = _videoFit;
+    _subscriptions
+      ..add(
+        backend.positionStream.listen((position) {
+          if (mounted) {
+            setState(() => _position = position);
+            _checkSkipSegments(position);
+            _savePlayRecordThrottled();
+          }
+        }),
+      )
+      ..add(backend.durationStream.listen(_onDurationUpdate))
+      ..add(
+        backend.bufferedStream.listen((buffered) {
+          if (mounted) setState(() => _buffered = buffered);
+        }),
+      )
+      ..add(
+        backend.playingStream.listen((playing) {
+          if (mounted) setState(() => _playing = playing);
+        }),
+      )
+      ..add(
+        backend.completedStream.listen((_) {
+          if (mounted &&
+              !_autoNextTriggered &&
+              _currentEpisodeIndex < _currentVideoDetail.episodes.length - 1) {
+            _autoNextTriggered = true;
+            debugPrint('播放器报告播放完成，触发下一集');
+            _nextEpisode();
+          }
+        }),
+      );
+
+    await _openEpisodeImpl(_currentEpisodeIndex);
+  }
+
+  void _safeSeekToSeconds(double targetSeconds) {
+    if (_backend == null || _duration.inMilliseconds <= 0) return;
+    final currentMs = _position.inMilliseconds;
+    var targetMs = (targetSeconds * 1000).toInt();
+    // 避免跳到片尾导致播放器卡死，最多跳到总时长前 500ms
+    final maxMs = _duration.inMilliseconds - 500;
+    if (targetMs > maxMs) targetMs = maxMs;
+    if (targetMs < 0) targetMs = 0;
+    // 目标与当前位置太近时不执行 seek，减少抖动
+    if ((targetMs - currentMs).abs() < 500) return;
+    _backend?.seek(Duration(milliseconds: targetMs));
+  }
+
+  void _checkSkipSegments(Duration position) {
+    // 刚切换集数/源的前 2 秒内不处理跳过/自动下一集，避免初始化阶段位置抖动导致误触发。
+    final switchAt = _episodeSwitchAt;
+    if (switchAt != null &&
+        DateTime.now().difference(switchAt) < Duration(seconds: 2)) {
+      return;
+    }
+
+    final seconds = position.inMilliseconds / 1000.0;
+    final totalSeconds = _duration.inMilliseconds / 1000.0;
+    if (totalSeconds <= 0) return;
+
+    // 跳过 seek 冷却：触发一次跳过后 3 秒内不再重复触发，避免 seek 后画面未更新
+    // 导致位置流仍报告在片头片尾区间内而连续 seek。
+    final skipSeekCooldown = _lastSkipSeekAt != null &&
+        DateTime.now().difference(_lastSkipSeekAt!) < Duration(seconds: 3);
+
+    if (_skipConfig != null && _skipConfig!.segments.isNotEmpty) {
+      for (final segment in _skipConfig!.segments) {
+        final key = '${segment.type}_${segment.start}_${segment.end}';
+        if (!segment.autoSkip) continue;
+
+        // 过滤时长异常/超出总时长的无效 segment
+        if (segment.end - segment.start < 1.0) continue;
+        if (segment.type == 'opening' && segment.end >= totalSeconds - 1.0) {
+          continue;
+        }
+        if (segment.type == 'ending' && segment.start <= 1.0) continue;
+
+        final inSegment = seconds >= segment.start && seconds <= segment.end;
+        final passedSegment = seconds > segment.end + 0.5;
+
+        if (inSegment) {
+          if (skipSeekCooldown) {
+            // 冷却期内仅打印一次日志，避免刷屏
+            if (!_skippedSegments.contains(key)) {
+              debugPrint(
+                '跳过片段冷却中: type=${segment.type} start=${segment.start} end=${segment.end}',
+              );
+              _skippedSegments.add(key);
+            }
+            continue;
+          }
+          // 仅在首次触发时打印日志，但允许重复 seek 直到真正离开片段。
+          if (!_skippedSegments.contains(key)) {
+            debugPrint(
+              '触发跳过片段: type=${segment.type} start=${segment.start} end=${segment.end}',
+            );
+          }
+          // 跳到片段结束后 0.3 秒处，减少跳转到非关键帧导致画面卡住的概率；
+          // 同时仍保留少量缓冲余量，避免解码器停在片尾关键帧上。
+          _lastSkipSeekAt = DateTime.now();
+          _safeSeekToSeconds(segment.end + 0.3);
+          break;
+        } else if (passedSegment && !_skippedSegments.contains(key)) {
+          // 播放器位置已确实越过片段，才标记为已跳过，避免 seek 失效后不再重试。
+          _skippedSegments.add(key);
+          debugPrint(
+            '跳过片段已生效: type=${segment.type} end=${segment.end} current=$seconds',
+          );
+        }
+      }
+    }
+
+    // 总时长过短（如 HLS 直播或解析异常）时不触发片尾下一集
+    if (totalSeconds <= 10) return;
+
+    if (!_autoNextTriggered &&
+        _skipConfig != null &&
+        _skipConfig!.segments.isNotEmpty) {
+      for (final segment in _skipConfig!.segments) {
+        // 只有片尾类型的 segment 才允许触发自动下一集
+        if (segment.type != 'ending' || !segment.autoNextEpisode) continue;
+        var remainingTime = segment.remainingTime;
+        if (remainingTime == null) {
+          remainingTime = totalSeconds - segment.start;
+        }
+        // 限制 remainingTime 不超过实际剩余时长，且不超过总时长一半，
+        // 避免播放器报告错误时长时误触发。
+        final actualRemaining = totalSeconds - segment.start;
+        if (remainingTime > actualRemaining) remainingTime = actualRemaining;
+        // 小于 1 秒视为无效，防止立即触发下一集导致卡死
+        if (remainingTime < 1.0) continue;
+        // 超过总时长一半视为异常配置，不触发
+        if (remainingTime > totalSeconds * 0.5) continue;
+        if (totalSeconds - seconds <= remainingTime) {
+          _autoNextTriggered = true;
+          debugPrint(
+            '触发自动下一集: type=${segment.type} remainingTime=$remainingTime',
+          );
+          _nextEpisode();
+          return;
+        }
+      }
+    }
+
+    // 兜底：即使没有片尾跳过配置，播放到最后 3 秒也自动下一集
+    const fallbackRemaining = 3.0;
+    if (!_autoNextTriggered &&
+        _currentEpisodeIndex < _currentVideoDetail.episodes.length - 1 &&
+        totalSeconds - seconds <= fallbackRemaining) {
+      _autoNextTriggered = true;
+      debugPrint('触发片尾自动下一集: position=$seconds total=$totalSeconds');
+      _nextEpisode();
+    }
+  }
+
+  /// 等待播放器报告有效时长，超时返回 false。
+  Future<bool> _waitForPlayerReady(Duration timeout) async {
+    if (_duration.inMilliseconds > 0) return true;
+    final start = DateTime.now();
+    while (DateTime.now().difference(start) < timeout) {
+      if (_duration.inMilliseconds > 0) return true;
+      await Future.delayed(Duration(milliseconds: 200));
+    }
+    return _duration.inMilliseconds > 0;
+  }
+
+  Future<void> _openEpisode(int index) =>
+      _switchGate.run(() => _openEpisodeImpl(index));
+
+  Future<void> _openEpisodeImpl(int index) async {
+    final episodes = _currentVideoDetail.episodes;
+    if (index < 0 || index >= episodes.length) return;
+
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+
+    setState(() {
+      _initialized = false;
+      _error = null;
+      _skippedSegments.clear();
+      _lastSkipSeekAt = null;
+      _autoNextTriggered = false;
+    });
+
+    // 记录切换时间，用于跳过逻辑冷却。
+    _episodeSwitchAt = DateTime.now();
+
+    // 先加载跳过配置，确保打开播放器前已知片头片尾区间，
+    // 避免异步加载完成前错过 startAt 定位时机。
+    await _loadSkipConfig();
+
+    final timeoutSeconds = await UserDataService.getAutoSwitchSourceTimeout();
+    final openTimeout = Duration(seconds: timeoutSeconds);
+
+    Future<bool> tryOpen(String url, {int initialPositionMs = 0}) async {
+      final startTime = DateTime.now();
+      try {
+        debugPrint('PlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
+        await _backend
+            ?.open(
+              url,
+              proxyMode: _currentVideoDetail.proxyMode,
+              startAt: initialPositionMs > 0
+                  ? Duration(milliseconds: initialPositionMs)
+                  : null,
+            )
+            .timeout(openTimeout);
+
+        // 等待播放器真正就绪（获取到有效时长），总耗时不超过 openTimeout
+        final elapsed = DateTime.now().difference(startTime);
+        final remaining = openTimeout - elapsed;
+        final ready = remaining > Duration.zero
+            ? await _waitForPlayerReady(remaining)
+            : _duration.inMilliseconds > 0;
+        if (!ready) {
+          debugPrint('PlayerScreen 等待播放就绪超时 [$_currentPlayerBackend]');
+          return false;
+        }
+
+        debugPrint('PlayerScreen 播放初始化成功 [$_currentPlayerBackend]');
+        return true;
+      } catch (e, stackTrace) {
+        debugPrint('PlayerScreen 播放失败 [$_currentPlayerBackend]: $url');
+        debugPrint('错误: $e');
+        debugPrint('$stackTrace');
+        if (e is StateError && e.message.isNotEmpty) {
+          _error = e.message;
+        }
+        return false;
+      }
+    }
+
+    final rawUrl = episodes[index];
+    var url = rawUrl.trim();
+    if (url.isEmpty) {
+      setState(() {
+        _error = '播放地址为空';
+        _initialized = true;
+      });
+      return;
+    }
+
+    // 对 M3U8 地址应用本地去广告过滤
+    final filteredUrl = await AdFilterEngine.filterM3u8(
+      sourceType: _currentVideoDetail.source,
+      originalUrl: url,
+    );
+    if (filteredUrl != null && filteredUrl.isNotEmpty) {
+      url = filteredUrl;
+    }
+
+    // 若已配置自动跳过片头，且待恢复位置落在片头区间内，
+    // 则直接从片头结束处开始播放，避免初始化完成后再 seek 失效。
+    final openingSegment = _skipConfig?.segments
+        .where((s) => s.type == 'opening' && s.autoSkip)
+        .firstOrNull;
+    if (openingSegment != null) {
+      final startMs = (openingSegment.start * 1000).toInt();
+      final endMs = (openingSegment.end * 1000).toInt();
+      if (_pendingInitialPositionMs >= startMs &&
+          _pendingInitialPositionMs <= endMs) {
+        _pendingInitialPositionMs = endMs;
+        _skippedSegments.add(
+          '${openingSegment.type}_${openingSegment.start}_${openingSegment.end}',
+        );
+        debugPrint('PlayerScreen 片头起始定位: ${openingSegment.end}s');
+      }
+    }
+
+    bool success = await tryOpen(
+      url,
+      initialPositionMs: _pendingInitialPositionMs,
+    );
+
+    if (!mounted) return;
+
+    // 如果超时判定失败，但当前源实际已就绪（ duration 有效），修正为成功，
+    // 避免初始化较慢的源已经开始播放却仍显示“播放失败”。
+    if (!success &&
+        _backend != null &&
+        _duration.inMilliseconds > 0 &&
+        _error == null) {
+      debugPrint('PlayerScreen 当前源已就绪，修正超时判定为成功');
+      success = true;
+    }
+
+    final autoSwitchSource = await UserDataService.getAutoSwitchSource();
+
+    if (success) {
+      _autoSwitchTimer?.cancel();
+      _autoSwitchTimer = null;
+      setState(() {
+        _currentEpisodeIndex = index;
+        _initialized = true;
+        _error = null;
+      });
+      // 恢复上次播放位置，并限制在新视频总时长范围内。
+      // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
+      //
+      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 接管
+      // （FvpBackend 传 deferStartSeek: true —— 等真正起播稳定后再 seek）。
+      // 若此处赶在 open 后约 200ms 抢先 seek，会在 libmdk 尚未稳定时把它打进冻结：
+      // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
+      // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话
+      // （起播稳定时 position=1520ms）全部一次定位成功。
+      if (_currentPlayerBackend == PlayerBackendType.fvp) {
+        _pendingInitialPositionMs = 0;
+      } else if (_pendingInitialPositionMs > 0) {
+        final maxMs = _duration.inMilliseconds > 500
+            ? _duration.inMilliseconds - 500
+            : _duration.inMilliseconds;
+        final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
+        await Future.delayed(Duration(milliseconds: 200));
+        if (mounted) {
+          _backend?.seek(Duration(milliseconds: clampedMs));
+        }
+        _pendingInitialPositionMs = 0;
+      }
+      _showControlsWithoutFocusShift();
+    } else if (autoSwitchSource && _sources.length > 1) {
+      // 自动换源开启且有其他源时，按设置时间延迟后尝试下一个源。
+      // 若已有具体错误信息，优先保留。
+      final hasSpecificError = _error != null && _error!.isNotEmpty;
+      setState(() {
+        if (!hasSpecificError) {
+          _error = '播放失败，即将进行自动换源';
+        }
+        _initialized = true;
+      });
+      _autoSwitchTimer = Timer(Duration(seconds: timeoutSeconds), () async {
+        if (!mounted) return;
+        bool? _switchedResult;
+        await _switchGate.run(() async {
+          _switchedResult = await _tryAutoSwitchSource(
+            index,
+            timeoutSeconds: timeoutSeconds,
+          );
+        });
+        final switched = _switchedResult ?? false;
+        if (mounted && !switched) {
+          setState(() {
+            if (_error == null || _error!.isEmpty) {
+              _error = '播放失败，请手动更换播放源';
+            }
+            _initialized = true;
+          });
+        }
+      });
+    } else {
+      setState(() {
+        if (_error == null || _error!.isEmpty) {
+          _error = '播放失败，请手动更换播放源';
+        }
+        _initialized = true;
+      });
+    }
+  }
+
+  /// 当前源播放失败时，按详情页已有的测速排序依次尝试其他源。
+  /// 全屏播放期间不再重新测速，仅做播放可用性切换。
+  Future<bool> _tryAutoSwitchSource(
+    int targetEpisodeIndex, {
+    required int timeoutSeconds,
+  }) async {
+    if (_sources.length <= 1) return false;
+
+    final previousPositionMs = _position.inMilliseconds;
+
+    // 直接使用详情页测速后的源顺序（速度快的排在前面）
+    for (var i = 0; i < _sources.length; i++) {
+      if (i == _currentSourceIndex) continue;
+      if (!mounted) break;
+
+      setState(() {
+        _switchingSource = true;
+        _error = null;
+      });
+
+      final option = _sources[i];
+      final response = await LunaTVService.getDetail(
+        source: option.source,
+        id: option.id,
+        title: option.title,
+      );
+
+      if (!mounted) {
+        setState(() => _switchingSource = false);
+        break;
+      }
+
+      if (!response.success || response.data == null) {
+        setState(() => _switchingSource = false);
+        continue;
+      }
+
+      final newEpisodes = response.data!.episodes;
+      if (targetEpisodeIndex >= newEpisodes.length) {
+        setState(() => _switchingSource = false);
+        continue;
+      }
+
+      // 与 _switchSourceImpl 同理：先摘掉后端引用再释放，避免 setState 之后
+      // _buildVideo() 仍把已 dispose 的 controller 送进 widget 树，导致 Android
+      // 重建 platformView 时 surface 回调打在悬垂的 fvp player handle 上闪退。
+      final previousBackend = _backend;
+      _backend = null;
+      await WidgetsBinding.instance.endOfFrame;
+      await previousBackend?.dispose();
+      for (final sub in _subscriptions) {
+        sub.cancel();
+      }
+      _subscriptions.clear();
+
+      setState(() {
+        _currentVideoDetail = response.data!;
+        _currentSourceIndex = i;
+        _currentEpisodeIndex = targetEpisodeIndex;
+        _switchingSource = false;
+        _skipConfig = null;
+        _skippedSegments.clear();
+        _lastSkipSeekAt = null;
+        _autoNextTriggered = false;
+        _initialized = false;
+        _error = null;
+      });
+
+      _loadSkipConfig();
+
+      final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+      _backend = backend;
+      _backend?.fit = _videoFit;
+      _subscriptions
+        ..add(
+          backend.positionStream.listen((position) {
+            if (mounted) {
+              setState(() => _position = position);
+              _checkSkipSegments(position);
+            }
+          }),
+        )
+        ..add(backend.durationStream.listen(_onDurationUpdate))
+        ..add(
+          backend.bufferedStream.listen((buffered) {
+            if (mounted) setState(() => _buffered = buffered);
+          }),
+        )
+        ..add(
+          backend.playingStream.listen((playing) {
+            if (mounted) setState(() => _playing = playing);
+          }),
+        );
+
+      var url = newEpisodes[targetEpisodeIndex].trim();
+      final filteredUrl = await AdFilterEngine.filterM3u8(
+        sourceType: _currentVideoDetail.source,
+        originalUrl: url,
+      );
+      if (filteredUrl != null && filteredUrl.isNotEmpty) {
+        url = filteredUrl;
+      }
+
+      try {
+        debugPrint('自动切换源播放: ${option.title} -> $url');
+        final startTime = DateTime.now();
+        await _backend
+            ?.open(
+              url,
+              proxyMode: _currentVideoDetail.proxyMode,
+              startAt: previousPositionMs > 0
+                  ? Duration(milliseconds: previousPositionMs)
+                  : null,
+            )
+            .timeout(Duration(seconds: timeoutSeconds));
+
+        final elapsed = DateTime.now().difference(startTime);
+        final remaining = Duration(seconds: timeoutSeconds) - elapsed;
+        final ready = remaining > Duration.zero
+            ? await _waitForPlayerReady(remaining)
+            : _duration.inMilliseconds > 0;
+        if (!ready) {
+          debugPrint('自动切换源等待播放就绪超时');
+          continue;
+        }
+
+        if (mounted) {
+          setState(() => _initialized = true);
+          _showControlsWithoutFocusShift();
+          return true;
+        }
+      } catch (e, stackTrace) {
+        debugPrint('自动切换源播放失败: $e');
+        debugPrint('$stackTrace');
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> _switchSource(int index) =>
+      _switchGate.run(() => _switchSourceImpl(index));
+
+  Future<void> _switchSourceImpl(int index) async {
+    if (index < 0 || index >= _sources.length) return;
+    if (index == _currentSourceIndex) return;
+
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+
+    setState(() => _switchingSource = true);
+    final option = _sources[index];
+    final response = await LunaTVService.getDetail(
+      source: option.source,
+      id: option.id,
+      title: option.title,
+    );
+
+    if (!mounted) return;
+
+    if (!response.success || response.data == null) {
+      setState(() {
+        _switchingSource = false;
+        _error = response.message ?? '切换播放源失败';
+      });
+      return;
+    }
+
+    final previousEpisodeIndex = _currentEpisodeIndex;
+    final previousPositionMs = _position.inMilliseconds;
+
+    // ---------------------------------------------------------------------
+    // 换源 = 释放旧后端 + 新建后端，必须「先卸载视频层，再释放原生播放器」。
+    //
+    // 2026-09-19 闪退定位（Android，fvp 唯一后端）：
+    // fvp(Android) 的 FvpVideoView 在 surfaceCreated 里用**构造时缓存的 player
+    // handle** 调 nativeSetSurface；该 handle 在 Dart 侧 controller 被 dispose 的
+    // 那一刻就悬垂。libfvp 的 players[surfaceId] 仍保存着指向已销毁 TexturePlayer
+    // 的 shared_ptr，只要之后还有一次 surface 回调落到这个 surfaceId 上，
+    // mdk::abi::VideoPresenter::updateNativeSurface 就会解引用空的 VideoPresenter
+    // → SIGSEGV（fault addr 0x88，进程直接闪退，无 Dart 异常可捕获）。
+    //
+    // 旧实现的两处缺失（对照 _switchPlayerBackend 已做对）：
+    //   1) dispose 后没有把 _backend 置空；
+    //   2) setState 里没有把 _initialized 置假，而 _initialized 仍是上一次播放
+    //      成功的 true。
+    // 于是 setState 之后 _buildVideo() 的判据 (_initialized && _backend != null)
+    // 依旧成立，会把已释放的旧 controller / 尚未 initialize 完成的新 controller
+    // 立刻送进 widget 树，Android 侧随即重建 platformView 并回调 surfaceCreated，
+    // surface 回调就这样打在悬垂的 player handle 上。
+    //
+    // 修复：先摘掉视频层并等一帧（_buildVideo 走 loading 分支，platformView 卸载），
+    // 再 dispose 旧后端；_initialized 保持假直到新源真正就绪。
+    // ---------------------------------------------------------------------
+    final previousBackend = _backend;
+    _backend = null;
+    setState(() => _initialized = false);
+    await WidgetsBinding.instance.endOfFrame;
+    await previousBackend?.dispose();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+
+    setState(() {
+      _currentVideoDetail = response.data!;
+      _currentSourceIndex = index;
+      _currentEpisodeIndex = previousEpisodeIndex.clamp(
+        0,
+        response.data!.episodes.length - 1,
+      );
+      _initialized = false;
+      _switchingSource = false;
+      _skipConfig = null;
+      _skippedSegments.clear();
+      _lastSkipSeekAt = null;
+      _autoNextTriggered = false;
+    });
+
+    _loadSkipConfig();
+    // 切换源后恢复上次播放位置
+    _pendingInitialPositionMs = previousPositionMs;
+    _initBackend();
+  }
+
+  void _togglePlay() {
+    if (_playing) {
+      _backend?.pause();
+    } else {
+      _backend?.play();
+    }
+    _showControlsWithoutFocusShift();
+  }
+
+  Duration _clampDuration(Duration value) {
+    if (value < Duration.zero) return Duration.zero;
+    if (value > _duration) return _duration;
+    return value;
+  }
+
+  void _seekBy(Duration delta) {
+    final target = _position + delta;
+    _backend?.seek(_clampDuration(target));
+    _showControlsWithoutFocusShift();
+  }
+
+  void _seekToPercent(double percent) {
+    final target = Duration(
+      milliseconds: (_duration.inMilliseconds * percent).toInt(),
+    );
+    _backend?.seek(_clampDuration(target));
+    _showControls();
+  }
+
+  void _nextEpisode() {
+    if (_currentEpisodeIndex < _currentVideoDetail.episodes.length - 1) {
+      _openEpisode(_currentEpisodeIndex + 1);
+    }
+  }
+
+  void _previousEpisode() {
+    if (_currentEpisodeIndex > 0) {
+      _openEpisode(_currentEpisodeIndex - 1);
+    }
+  }
+
+  void _startControlsTimer() {
+    // 先取消旧计时器：无论本次是否要重新计时，都不能留下一个「到点就隐藏」的
+    // 遗留计时器去打断正在进行的操作。
+    _controlsTimer?.cancel();
+    // 弹窗打开时保持控制栏可见，不启动隐藏定时器
+    if (_dialogOpen) return;
+    _controlsTimer = Timer(
+      Duration(seconds: _controlsAutoHideSeconds),
+      () {
+        debugPrint('控制栏自动隐藏定时器触发');
+        _hideControls();
+      },
+    );
+  }
+
+  void _showControls() {
+    debugPrint('显示控制栏（请求焦点）');
+    setState(() => _controlsVisible = true);
+    _startControlsTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controlsVisible) return;
+      // 按下键显示控制栏时，优先聚焦“跳过”按钮；不可用则回退到播放/暂停
+      final hasSkipButton =
+          _currentVideoDetail.source.isNotEmpty &&
+          _currentVideoDetail.id.isNotEmpty;
+      if (hasSkipButton && !_skipFocusNode.hasPrimaryFocus) {
+        _skipFocusNode.requestFocus();
+      } else if (!_playPauseFocusNode.hasPrimaryFocus) {
+        _playPauseFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _showControlsWithoutFocusShift() {
+    debugPrint('显示控制栏（不移动焦点）');
+    setState(() => _controlsVisible = true);
+    _startControlsTimer();
+  }
+
+  void _hideControls() {
+    // 弹窗打开时不隐藏控制栏，避免弹窗焦点被强制移走
+    if (_dialogOpen) return;
+    debugPrint('隐藏控制栏: _controlsVisible=$_controlsVisible');
+    _controlsTimer?.cancel();
+    _controlsTimer = null;
+    // 仅释放控制栏焦点，避免 unfocus 全局焦点后被平台视图夺走
+    _bottomControlsFocusNode.unfocus();
+    setState(() => _controlsVisible = false);
+    // 在下一帧把焦点移回根 Focus，保证隐藏控制栏后按键仍能进入 _handleKeyEvent
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      debugPrint('控制栏隐藏后焦点: ${FocusManager.instance.primaryFocus?.debugLabel}');
+      _rootFocusNode.requestFocus();
+    });
+  }
+
+  void _toggleControls() {
+    if (_controlsVisible) {
+      debugPrint('切换：隐藏控制栏');
+      _hideControls();
+    } else {
+      debugPrint('切换：显示控制栏');
+      _showControls();
+    }
+  }
+
+  void _showSkipConfigDialog() {
+    _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
+    showDialog(
+      context: context,
+      builder: (context) => SkipConfigDialog(
+        segments: _skipConfig?.segments ?? [],
+        getCurrentPosition: () => _position,
+        duration: _duration,
+        onSave: _saveSkipConfig,
+      ),
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
+  }
+
+  void _showSourceSelectorDialog() {
+    _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return _SourceSelectorDialog(
+          sources: _sources,
+          currentIndex: _currentSourceIndex,
+          formatSpeed: _formatSpeed,
+          speedColor: _speedColor,
+          onSelect: (index) {
+            Navigator.of(context).pop();
+            _switchSource(index);
+          },
+        );
+      },
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
+  }
+
+  void _showPlayerBackendSelectorDialog() {
+    _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Color(0xFF14141F),
+          title: Text(
+            '切换播放器',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              color: Color(0xFFF0F0F5),
+            ),
+          ),
+          content: FocusScope(
+            autofocus: true,
+            child: SizedBox(
+              width: 400,
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: PlayerBackendFactory.availableBackends.length,
+                itemBuilder: (context, index) {
+                  final type = PlayerBackendFactory.availableBackends[index];
+                  final selected = type == _currentPlayerBackend;
+                  final String label;
+                  switch (type) {
+                    case PlayerBackendType.exo:
+                      label = 'ExoPlayer';
+                      break;
+                    case PlayerBackendType.fvp:
+                      label = 'FVP';
+                      break;
+                    case PlayerBackendType.vlc:
+                      label = 'VLC';
+                      break;
+                  }
+                  return FocusableWidget(
+                    autofocus: selected,
+                    padding: EdgeInsets.zero,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _switchPlayerBackend(type);
+                    },
+                    child: Container(
+                      margin: EdgeInsets.only(bottom: AppSpacing.sm),
+                      padding: EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppColors.primaryTint
+                            : Color(0xFF1C1C2E),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(
+                          color: selected
+                              ? AppColors.primary
+                              : Color(0x14FFFFFF),
+                        ),
+                      ),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: selected
+                              ? AppColors.primary
+                              : Color(0xFFF0F0F5),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
+  }
+
+  Future<void> _switchPlayerBackend(PlayerBackendType type) async {
+    if (type == _currentPlayerBackend) return;
+
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+
+    setState(() => _switchingSource = true);
+
+    await UserDataService.savePlayerBackendForVideo(
+      _currentVideoDetail.source,
+      _currentVideoDetail.id,
+      type,
+    );
+
+    // 切换播放器前保存当前进度，初始化完成后恢复
+    _pendingInitialPositionMs = _position.inMilliseconds;
+
+    // 必须先 await dispose 旧后端，否则 ExoPlayer 等平台播放器会在后台继续播放。
+    // 前两行同样是「先摘引用、等视频层卸载一帧，再释放」——见 _switchSourceImpl 的
+    // 详细说明（fvp 在 Android 上的 surface 回调会打在已释放的 player handle 上闪退）。
+    final previousBackend = _backend;
+    _backend = null;
+    await WidgetsBinding.instance.endOfFrame;
+    await previousBackend?.dispose();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+
+    setState(() {
+      _currentPlayerBackend = type;
+      _initialized = false;
+      _error = null;
+    });
+
+    await _initBackend();
+    _backend?.fit = _videoFit;
+
+    if (mounted) {
+      setState(() => _switchingSource = false);
+    }
+  }
+
+  void _showEpisodeSelectorDialog() {
+    _showControls();
+    _controlsTimer?.cancel();
+    setState(() => _dialogOpen = true);
+    final titles = _currentVideoDetail.episodesTitles.isNotEmpty
+        ? _currentVideoDetail.episodesTitles
+        : List.generate(
+            _currentVideoDetail.episodes.length,
+            (i) => '第${i + 1}集',
+          );
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return _EpisodeSelectorDialog(
+          titles: titles,
+          currentIndex: _currentEpisodeIndex,
+          onSelect: (index) {
+            Navigator.of(context).pop();
+            _openEpisode(index);
+          },
+        );
+      },
+    ).then((_) {
+      if (mounted) {
+        setState(() => _dialogOpen = false);
+        _startControlsTimer();
+      }
+    });
+  }
+
+  // 遥控器左右键快进/快退时显示手势标识，长按期间持续显示直至松手。
+  void _showKeySeekIndicator(bool forward) {
+    setState(() {
+      _isLongPressSeeking = true;
+      _gestureIndicatorVisible = true;
+      _gestureIndicatorText = forward ? '快进中' : '快退中';
+      _gestureIndicatorIcon = forward ? Icons.fast_forward : Icons.fast_rewind;
+    });
+  }
+
+  // 长按连续快进/快退，支持加速
+  void _startLongPressSeek(String direction) {
+    _longPressSeekTimer?.cancel();
+    _longPressSeekTimer = Timer(Duration(milliseconds: 400), () {
+      _continuousSeekTimer?.cancel();
+      final startTime = DateTime.now();
+      _continuousSeekTimer = Timer.periodic(Duration(milliseconds: 200), (
+        _,
+      ) {
+        final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+        int step;
+        if (elapsedMs < 1000) {
+          step = _seekStep;
+        } else if (elapsedMs < 3000) {
+          step = _seekStep * 2;
+        } else if (elapsedMs < 6000) {
+          step = _seekStep * 4;
+        } else {
+          step = _seekStep * 8;
+        }
+        _seekBy(Duration(seconds: direction == 'left' ? -step : step));
+      });
+    });
+  }
+
+  void _stopLongPressSeek() {
+    _longPressSeekTimer?.cancel();
+    _longPressSeekTimer = null;
+    _continuousSeekTimer?.cancel();
+    _continuousSeekTimer = null;
+  }
+
+  // 播放记录节流保存（15秒内最多保存一次；未真正起播时不落盘，避免覆盖上次进度）
+  void _savePlayRecordThrottled() {
+    if (_isRecordSaveThrottled) return;
+    if (!_isPlaybackReadyForRecord()) return;
+    _isRecordSaveThrottled = true;
+    _savePlayRecordToLunaTV();
+    Timer(const Duration(seconds: 15), () {
+      _isRecordSaveThrottled = false;
+    });
+  }
+
+  /// 仅当播放器已初始化且已取到有效时长时才允许写播放记录：
+  /// 视频未就绪（黑屏卡死、duration 仍为 0）时不落盘，
+  /// 防止用 playTime=0/totalTime=0 覆盖掉上次正常的续播进度。
+  bool _isPlaybackReadyForRecord() {
+    return _initialized && _backend != null && _duration.inMilliseconds > 0;
+  }
+
+  KeyEventResult _handleKeyEvent(KeyEvent event) {
+    // 处理按键释放，停止长按连续seek
+    if (event is KeyUpEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+          event.logicalKey == LogicalKeyboardKey.arrowRight) {
+        _stopLongPressSeek();
+        _isLongPressSeeking = false;
+        // 左右键释放后重新计时，确保操作结束后控制栏不会立刻消失
+        if (_controlsVisible) _startControlsTimer();
+        // 释放后隐藏快进/快退手势标识。
+        if (_gestureIndicatorVisible) {
+          setState(() => _gestureIndicatorVisible = false);
+        }
+      }
+      return KeyEventResult.ignored;
+    }
+
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    debugPrint('按键: ${event.logicalKey}, 控制栏可见=$_controlsVisible');
+
+    // 控制栏显示时，检测焦点是否在控制栏内
+    if (_controlsVisible) {
+      // 控制栏可见期间的任何按键都视为「用户仍在操作」，重置自动隐藏倒计时。
+      // 否则用户在控制栏上左右移动焦点挑选选项时，10 秒到点控制栏仍会自动隐藏，
+      // 表现为「还没选完控制栏就没了」——超时必须只在无操作时才开始计算。
+      _startControlsTimer();
+      final currentFocus = FocusManager.instance.primaryFocus;
+      final isFocusInControls =
+          currentFocus != null &&
+          _bottomControlsFocusNode.hasFocus &&
+          _bottomControlsFocusNode.traversalDescendants.contains(currentFocus);
+
+      switch (event.logicalKey) {
+        // 返回/Esc 在控制栏显示时不在这里处理，统一交给 _handleHardwareKeyEvent
+        // 兜底处理，以保证控制栏显示时先隐藏控制栏，再按一次才返回。
+        case LogicalKeyboardKey.select:
+        case LogicalKeyboardKey.enter:
+        case LogicalKeyboardKey.mediaPlayPause:
+          // 焦点在控制栏内时，交给焦点系统处理按钮选择
+          // 焦点不在控制栏内时，触发播放/暂停
+          if (isFocusInControls) {
+            return KeyEventResult.ignored;
+          } else {
+            _togglePlay();
+            return KeyEventResult.handled;
+          }
+        case LogicalKeyboardKey.mediaPlay:
+          _backend?.play();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.mediaPause:
+          _backend?.pause();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.mediaTrackNext:
+          _nextEpisode();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.mediaTrackPrevious:
+          _previousEpisode();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.contextMenu:
+        case LogicalKeyboardKey.mediaFastForward:
+        case LogicalKeyboardKey.mediaRewind:
+          _toggleControls();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowLeft:
+          // 焦点不在控制栏内时，左键作为快退
+          if (!isFocusInControls) {
+            _seekBy(Duration(seconds: -_seekStep));
+            _startLongPressSeek('left');
+            _showKeySeekIndicator(false);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        case LogicalKeyboardKey.arrowRight:
+          // 焦点不在控制栏内时，右键作为快进
+          if (!isFocusInControls) {
+            _seekBy(Duration(seconds: _seekStep));
+            _startLongPressSeek('right');
+            _showKeySeekIndicator(true);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        case LogicalKeyboardKey.arrowDown:
+          // 无论控制栏是否显示，下键都重新激活控制栏焦点
+          _showControls();
+          return KeyEventResult.handled;
+        default:
+          // 其他方向键交给焦点遍历处理
+          return KeyEventResult.ignored;
+      }
+    }
+
+    // 控制栏隐藏时，方向键用于播放器快捷操作
+    // 返回键统一交给 PopScope 处理，避免与系统返回事件重复响应。
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.select:
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.mediaPlayPause:
+        _togglePlay();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.mediaPlay:
+        _backend?.play();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.mediaPause:
+        _backend?.pause();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowLeft:
+        _seekBy(Duration(seconds: -_seekStep));
+        _startLongPressSeek('left');
+        _showKeySeekIndicator(false);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        _seekBy(Duration(seconds: _seekStep));
+        _startLongPressSeek('right');
+        _showKeySeekIndicator(true);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _showControlsWithoutFocusShift();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _showControls();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.mediaTrackNext:
+        _nextEpisode();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.mediaTrackPrevious:
+        _previousEpisode();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.contextMenu:
+      case LogicalKeyboardKey.mediaFastForward:
+      case LogicalKeyboardKey.mediaRewind:
+        _toggleControls();
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  /// 全局硬件按键兜底处理。
+  ///
+  /// 当控制栏隐藏、平台视图或其他焦点节点夺走焦点时，根 Focus 的 onKeyEvent
+  /// 可能无法收到事件。此 handler 在 HardwareKeyboard 层面监听，确保遥控器
+  /// 按键始终能响应播放控制。
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    // 只处理按下事件，避免重复触发
+    if (event is! KeyDownEvent) return false;
+
+    // 仅在当前页面位于栈顶时处理，避免影响其他页面/对话框
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+
+    // 控制栏显示时交给焦点系统处理按钮选择，但下键与返回/ESC 键始终兜底处理。
+    if (_controlsVisible &&
+        event.logicalKey != LogicalKeyboardKey.arrowDown &&
+        event.logicalKey != LogicalKeyboardKey.goBack &&
+        event.logicalKey != LogicalKeyboardKey.escape) {
+      return false;
+    }
+
+    debugPrint('HardwareKeyboard 兜底: ${event.logicalKey}');
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.select:
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.mediaPlayPause:
+        _togglePlay();
+        return true;
+      case LogicalKeyboardKey.mediaPlay:
+        _backend?.play();
+        return true;
+      case LogicalKeyboardKey.mediaPause:
+        _backend?.pause();
+        return true;
+      case LogicalKeyboardKey.arrowLeft:
+        _seekBy(Duration(seconds: -_seekStep));
+        _startLongPressSeek('left');
+        return true;
+      case LogicalKeyboardKey.arrowRight:
+        _seekBy(Duration(seconds: _seekStep));
+        _startLongPressSeek('right');
+        return true;
+      case LogicalKeyboardKey.arrowUp:
+        _showControlsWithoutFocusShift();
+        return true;
+      case LogicalKeyboardKey.arrowDown:
+        _showControls();
+        return true;
+      case LogicalKeyboardKey.mediaTrackNext:
+        _nextEpisode();
+        return true;
+      case LogicalKeyboardKey.mediaTrackPrevious:
+        _previousEpisode();
+        return true;
+      case LogicalKeyboardKey.contextMenu:
+      case LogicalKeyboardKey.mediaFastForward:
+      case LogicalKeyboardKey.mediaRewind:
+        _toggleControls();
+        return true;
+      case LogicalKeyboardKey.goBack:
+      case LogicalKeyboardKey.escape:
+        // TV/Android：控制栏显示时先隐藏控制栏；隐藏后再按则安全退出播放页
+        //（先摘视频 widget、等一帧再 dispose 后端，避免 fvp surface 竞态闪退）。
+        if (_controlsVisible) {
+          _hideControls();
+        } else {
+          _exitPlayer();
+        }
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // 触摸手势相关方法
+  void _showGestureIndicator(String text, IconData icon) {
+    setState(() {
+      _gestureIndicatorVisible = true;
+      _gestureIndicatorText = text;
+      _gestureIndicatorIcon = icon;
+    });
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() => _gestureIndicatorVisible = false);
+      }
+    });
+  }
+
+  void _onTapScreen() {
+    _toggleControls();
+  }
+
+  void _onDoubleTapScreen() {
+    _togglePlay();
+    _showGestureIndicator(
+      _playing ? '播放' : '暂停',
+      _playing ? Icons.play_arrow : Icons.pause,
+    );
+  }
+
+  void _onLongPressStart(LongPressStartDetails details) {
+    final width = MediaQuery.of(context).size.width;
+    final isRight = details.globalPosition.dx >= width / 2;
+    _isLongPressSeeking = true;
+    _longPressDirection = isRight ? 'right' : 'left';
+    _showGestureIndicator(
+      isRight ? '3X 快进中' : '3X 快退中',
+      isRight ? Icons.fast_forward : Icons.fast_rewind,
+    );
+    _start3xSeek();
+  }
+
+  void _onLongPressEnd(LongPressEndDetails details) {
+    _isLongPressSeeking = false;
+    _stopLongPressSeek();
+    setState(() => _gestureIndicatorVisible = false);
+  }
+
+  void _start3xSeek() {
+    _longPressSeekTimer?.cancel();
+    _continuousSeekTimer?.cancel();
+    _continuousSeekTimer = Timer.periodic(Duration(milliseconds: 200), (
+      _,
+    ) {
+      if (!_isLongPressSeeking || _backend == null) return;
+      final step = _longPressDirection == 'right'
+          ? _seekStep * 3
+          : -_seekStep * 3;
+      final target = _position + Duration(seconds: step);
+      _backend?.seek(_clampDuration(target));
+    });
+  }
+
+  void _onVerticalDragStart(DragStartDetails details) {
+    _gestureStartPosition = details.globalPosition;
+    _gestureStartBrightness = _currentBrightness;
+    _gestureStartVolume = _currentVolume;
+    _cumulativeDeltaY = 0.0;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    if (_gestureStartPosition == null) return;
+    _cumulativeDeltaY -= details.delta.dy;
+    final width = MediaQuery.of(context).size.width;
+    final isLeft = _gestureStartPosition!.dx < width / 2;
+    final delta = _cumulativeDeltaY * _verticalGestureSensitivity;
+
+    if (isLeft) {
+      _currentBrightness = (_gestureStartBrightness + delta).clamp(0.0, 1.0);
+      ScreenBrightness().setApplicationScreenBrightness(_currentBrightness);
+      _showGestureIndicator(
+        '亮度 ${(_currentBrightness * 100).toInt()}%',
+        Icons.brightness_6,
+      );
+    } else {
+      _currentVolume = (_gestureStartVolume + delta).clamp(0.0, 1.0);
+      VolumeController.instance.setVolume(_currentVolume);
+      _showGestureIndicator(
+        '音量 ${(_currentVolume * 100).toInt()}%',
+        _currentVolume > 0 ? Icons.volume_up : Icons.volume_off,
+      );
+    }
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _gestureStartPosition = null;
+    _cumulativeDeltaY = 0.0;
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _gestureIndicatorVisible = false);
+    });
+  }
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    _gestureStartPosition = details.globalPosition;
+    _cumulativeDeltaX = 0.0;
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (_gestureStartPosition == null) return;
+    _cumulativeDeltaX += details.delta.dx;
+    final deltaSeconds = _cumulativeDeltaX * _horizontalGestureSensitivity;
+    final target = _position + Duration(seconds: deltaSeconds.toInt());
+    _showGestureIndicator(
+      '跳转至 ${_formatDuration(_clampDuration(target))}',
+      deltaSeconds >= 0 ? Icons.fast_forward : Icons.fast_rewind,
+    );
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (_gestureStartPosition == null) return;
+    final deltaSeconds = _cumulativeDeltaX * _horizontalGestureSensitivity;
+    final target = _position + Duration(seconds: deltaSeconds.toInt());
+    _backend?.seek(_clampDuration(target));
+    _gestureStartPosition = null;
+    _cumulativeDeltaX = 0.0;
+    _gestureIndicatorTimer?.cancel();
+    _gestureIndicatorTimer = Timer(Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _gestureIndicatorVisible = false);
+    });
+  }
+
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    final twoDigits = (int n) => n.toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
+  }
+
+  String get _episodeTitle {
+    final titles = _currentVideoDetail.episodesTitles;
+    if (titles.isNotEmpty && _currentEpisodeIndex < titles.length) {
+      return titles[_currentEpisodeIndex];
+    }
+    return '第${_currentEpisodeIndex + 1}集';
+  }
+
+  String _formatSpeed(double? speedBps) {
+    if (speedBps == null) return '';
+    if (speedBps == -1.0) return '可用';
+    if (speedBps <= 0) return '不可用';
+    if (speedBps >= 1024 * 1024) {
+      return '${(speedBps / 1024 / 1024).toStringAsFixed(2)} MB/s';
+    }
+    return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
+  }
+
+  Color _speedColor(double? speedBps) {
+    if (speedBps == null || speedBps == 0) return AppColors.error;
+    if (speedBps == -1.0) return AppColors.success;
+    if (speedBps >= 1 * 1024 * 1024) return AppColors.success;
+    if (speedBps >= 256 * 1024) return AppColors.primary;
+    return AppColors.warning;
+  }
+
+  void _cycleVideoFit() {
+    setState(() {
+      switch (_videoFit) {
+        case BoxFit.contain:
+          _videoFit = BoxFit.cover;
+          break;
+        case BoxFit.cover:
+          _videoFit = BoxFit.fill;
+          break;
+        default:
+          _videoFit = BoxFit.contain;
+      }
+    });
+    _backend?.fit = _videoFit;
+    _showControlsWithoutFocusShift();
+  }
+
+  void _cyclePlaybackSpeed() {
+    setState(() {
+      switch (_playbackSpeed) {
+        case 1.0:
+          _playbackSpeed = 1.25;
+          break;
+        case 1.25:
+          _playbackSpeed = 1.5;
+          break;
+        case 1.5:
+          _playbackSpeed = 2.0;
+          break;
+        default:
+          _playbackSpeed = 1.0;
+      }
+    });
+    _backend?.setSpeed(_playbackSpeed);
+    _showControlsWithoutFocusShift();
+  }
+
+  String _playbackSpeedLabel(double speed) {
+    if (speed == 1.0) return '倍速';
+    return '${speed}x';
+  }
+
+  String _videoFitLabel(BoxFit fit) {
+    switch (fit) {
+      case BoxFit.contain:
+        return '原始比例';
+      case BoxFit.cover:
+        return '填充';
+      case BoxFit.fill:
+        return '拉伸';
+      default:
+        return '原始比例';
+    }
+  }
+
+  String _playerBackendLabel(PlayerBackendType type) {
+    switch (type) {
+      case PlayerBackendType.exo:
+        return 'ExoPlayer';
+      case PlayerBackendType.fvp:
+        return 'FVP';
+      case PlayerBackendType.vlc:
+        return 'VLC';
+    }
+  }
+
+  /// 安全释放播放后端：先摘掉视频 widget（fvp 平台视图从渲染树移除、原生 surface 解绑），
+  /// 等一帧后再 dispose player。否则 `_backend.dispose()` 释放 player 后，平台视图拆树
+  /// 时的 surface 回调会在已释放的 player 上调用 nativeSetSurface → 空指针闪退
+  ///（fault addr 0x0 @ libfvp.so）。详见 MEMORY.md fvp surface 竞态铁律。
+  Future<void> _safeDisposeBackend() async {
+    final backend = _backend;
+    if (backend == null) return;
+    _backend = null;
+    _initialized = false;
+    if (mounted) setState(() {});
+    await WidgetsBinding.instance.endOfFrame;
+    await backend.dispose();
+  }
+
+  /// 安全退出播放页：先拆后端再 pop，避免退出闪退。
+  Future<void> _exitPlayer() async {
+    await _safeDisposeBackend();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
+    _longPressSeekTimer?.cancel();
+    _continuousSeekTimer?.cancel();
+    _controlsTimer?.cancel();
+    _gestureIndicatorTimer?.cancel();
+    _clockTimer?.cancel();
+    _autoSwitchTimer?.cancel();
+    _bottomControlsFocusNode.dispose();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+
+    // 立即保存播放记录到 LunaTV
+    _savePlayRecordToLunaTV();
+
+    // 正常退出已通过 _safeDisposeBackend() 把 _backend 置空并安全释放；
+    // 此处兜底：若框架在其他路径直接 dispose（如页面被系统回收），同样先摘引用再释放。
+    final backend = _backend;
+    _backend = null;
+    backend?.dispose();
+
+    // 退出播放页后允许系统自动休眠/降亮度
+    WakelockPlus.disable().catchError((e) {
+      debugPrint('PlayerScreen: 禁用屏幕常亮失败: $e');
+    });
+
+    // 释放本地 M3U8 代理
+    AdFilterEngine.dispose();
+
+    _playPauseFocusNode.dispose();
+    _skipFocusNode.dispose();
+    _rootFocusNode.dispose();
+    widget.sourcesNotifier?.removeListener(_onSourcesChanged);
+
+    super.dispose();
+  }
+
+  /// 详情页在后台搜索/测速到新源或重排后，通过 [sourcesNotifier] 同步到播放页。
+  /// 保持当前正在播放的源仍处于选中状态，确保换源列表实时刷新且不会跳到其他源。
+  void _onSourcesChanged() {
+    if (!mounted) return;
+    setState(() {
+      final candidates = [
+        '${_currentVideoDetail.source}+${_currentVideoDetail.id}',
+        if (_initialSourceKey != null && _initialSourceKey!.isNotEmpty)
+          _initialSourceKey!,
+      ];
+      final currentKey = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+          ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+          : null;
+      if (currentKey != null && currentKey.isNotEmpty && !candidates.contains(currentKey)) {
+        candidates.add(currentKey);
+      }
+
+      var newIndex = -1;
+      for (final key in candidates) {
+        if (key.isEmpty || key == '+') continue;
+        final index = _sources.indexWhere(
+          (s) => '${s.source}+${s.id}' == key,
+        );
+        if (index >= 0) {
+          newIndex = index;
+          break;
+        }
+      }
+
+      if (newIndex >= 0) {
+        _currentSourceIndex = newIndex;
+      } else {
+        _currentSourceIndex = _currentSourceIndex.clamp(
+          0,
+          _sources.isEmpty ? 0 : _sources.length - 1,
+        );
+      }
+    });
+  }
+
+  /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
+  /// 串行化（同一时间只允许一个保存任务）；未真正起播或进度无效时不落盘，
+  /// 进度越界时钳制在 [0, 总时长] 内，防止脏数据导致下次续播 seek 异常。
+  Future<void> _savePlayRecordToLunaTV() async {
+    if (_recordSaveInFlight) return;
+    if (!_isPlaybackReadyForRecord()) return;
+    _recordSaveInFlight = true;
+    try {
+      final totalSec = _duration.inSeconds;
+      final rawPos = _position.inSeconds;
+      final playSec = rawPos < 0 ? 0 : (rawPos > totalSec ? totalSec : rawPos);
+      final record = PlayRecord(
+        id: _currentVideoDetail.id,
+        source: _currentVideoDetail.source,
+        title: _currentVideoDetail.title,
+        sourceName: _currentVideoDetail.source,
+        cover: _currentVideoDetail.poster,
+        year: _currentVideoDetail.year,
+        index: _currentEpisodeIndex + 1, // 1-based
+        totalEpisodes: _currentVideoDetail.episodes.length,
+        playTime: playSec,
+        totalTime: totalSec,
+        saveTime: DateTime.now().millisecondsSinceEpoch,
+        searchTitle: _currentVideoDetail.title,
+        doubanId: _currentVideoDetail.doubanId?.toString(),
+      );
+
+      await PlayRecordService.save(record);
+    } catch (e) {
+      // 保存失败不阻塞退出
+      debugPrint('保存播放记录失败: $e');
+    } finally {
+      _recordSaveInFlight = false;
+    }
+  }
+
+  Widget _buildVideo() {
+    // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
+    if (_switchingSource) {
+      return ColoredBox(color: Colors.black);
+    }
+    if (!_initialized || _backend == null) {
+      return Center(
+        child: TechLoadingIndicator(),
+      );
+    }
+    return Container(color: Colors.black, child: _backend!.buildVideoWidget());
+  }
+
+  Widget _buildError() {
+    if (_error == null) return SizedBox.shrink();
+    return Container(
+      color: Colors.black54,
+      padding: EdgeInsets.all(AppSpacing.md),
+      child: Text(_error!, style: TextStyle(color: AppColors.error)),
+    );
+  }
+
+  Widget _buildSwitchingOverlay() {
+    if (!_switchingSource) return SizedBox.shrink();
+    return Container(
+      color: Colors.black54,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TechLoadingIndicator(),
+            SizedBox(height: AppSpacing.md),
+            Text('切换播放源中...', style: TextStyle(color: Color(0xFFF0F0F5))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGestureIndicator() {
+    if (!_gestureIndicatorVisible) return SizedBox.shrink();
+    return Center(
+      child: Container(
+        padding: EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: Color(0xD90A0A0F),
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_gestureIndicatorIcon, color: Color(0xFFF0F0F5), size: 32),
+            SizedBox(height: AppSpacing.sm),
+            Text(
+              _gestureIndicatorText,
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                color: Color(0xFFF0F0F5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGestureOverlay() {
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _onTapScreen,
+        onDoubleTap: _onDoubleTapScreen,
+        onLongPressStart: DeviceUtils.isDesktop ? null : _onLongPressStart,
+        onLongPressEnd: DeviceUtils.isDesktop ? null : _onLongPressEnd,
+        onVerticalDragStart: DeviceUtils.isDesktop
+            ? null
+            : _onVerticalDragStart,
+        onVerticalDragUpdate: DeviceUtils.isDesktop
+            ? null
+            : _onVerticalDragUpdate,
+        onVerticalDragEnd: DeviceUtils.isDesktop ? null : _onVerticalDragEnd,
+        onHorizontalDragStart: _onHorizontalDragStart,
+        onHorizontalDragUpdate: _onHorizontalDragUpdate,
+        onHorizontalDragEnd: _onHorizontalDragEnd,
+        child: Container(color: Colors.transparent),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xD90A0A0F), Colors.transparent],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => _exitPlayer(),
+                icon: Icon(
+                  Icons.arrow_back,
+                  color: Color(0xFFF0F0F5),
+                ),
+              ),
+              SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _currentVideoDetail.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFF0F0F5),
+                      ),
+                    ),
+                    Text(
+                      _episodeTitle,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 14,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Positioned.fill(
+            child: Center(
+              child: Text(
+                _formatClock(_currentTime),
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFFF0F0F5),
+                  shadows: [
+                    Shadow(
+                      color: Colors.black54,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomControls() {
+    return FocusScope(
+      node: _bottomControlsFocusNode,
+      child: Container(
+        padding: EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [Color(0xD90A0A0F), Colors.transparent],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTapUp: (details) {
+                final box = context.findRenderObject() as RenderBox?;
+                if (box == null) return;
+                final width = box.size.width;
+                final percent = details.localPosition.dx / width;
+                _seekToPercent(percent.clamp(0.0, 1.0));
+              },
+              child: Container(
+                height: 12,
+                color: Colors.transparent,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _buffered.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: Color(0x14FFFFFF),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white24,
+                        ),
+                      ),
+                      LinearProgressIndicator(
+                        value: _duration.inMilliseconds > 0
+                            ? _position.inMilliseconds /
+                                _duration.inMilliseconds
+                            : 0.0,
+                        backgroundColor: Colors.transparent,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                _buildControlIconButton(
+                  focusNode: _playPauseFocusNode,
+                  onTap: _togglePlay,
+                  icon: _playing ? Icons.pause : Icons.play_arrow,
+                ),
+                SizedBox(width: AppSpacing.sm),
+                _buildControlIconButton(
+                  onTap: _previousEpisode,
+                  icon: Icons.skip_previous,
+                ),
+                SizedBox(width: AppSpacing.sm),
+                _buildControlIconButton(
+                  onTap: _nextEpisode,
+                  icon: Icons.skip_next,
+                ),
+                SizedBox(width: AppSpacing.md),
+                Text(
+                  '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    fontSize: 14,
+                    color: Color(0xFFF0F0F5),
+                  ),
+                ),
+                Spacer(),
+                if (_currentVideoDetail.source.isNotEmpty &&
+                    _currentVideoDetail.id.isNotEmpty)
+                  FocusableWidget(
+                    focusNode: _skipFocusNode,
+                    onTap: _showSkipConfigDialog,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            _skipConfig != null &&
+                                _skipConfig!.segments.isNotEmpty
+                            ? AppColors.primaryTint
+                            : Color(0xFF1C1C2E),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: Color(0x14FFFFFF)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_skipConfigLoading)
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: TechLoadingIndicator(
+                                size: 16,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.skip_next,
+                              color:
+                                  _skipConfig != null &&
+                                      _skipConfig!.segments.isNotEmpty
+                                  ? AppColors.primary
+                                  : Color(0xFFF0F0F5),
+                              size: 18,
+                            ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '跳过',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color:
+                                  _skipConfig != null &&
+                                      _skipConfig!.segments.isNotEmpty
+                                  ? AppColors.primary
+                                  : Color(0xFFF0F0F5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _cycleVideoFit,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color(0xFF1C1C2E),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: Color(0x14FFFFFF)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.aspect_ratio,
+                          color: Color(0xFFF0F0F5),
+                          size: 18,
+                        ),
+                        SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _videoFitLabel(_videoFit),
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: Color(0xFFF0F0F5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _showPlayerBackendSelectorDialog,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color(0xFF1C1C2E),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: Color(0x14FFFFFF)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.settings_applications,
+                          color: Color(0xFFF0F0F5),
+                          size: 18,
+                        ),
+                        SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _playerBackendLabel(_currentPlayerBackend),
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: Color(0xFFF0F0F5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(width: AppSpacing.md),
+                FocusableWidget(
+                  onTap: _cyclePlaybackSpeed,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color(0xFF1C1C2E),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: Color(0x14FFFFFF)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.speed,
+                          color: Color(0xFFF0F0F5),
+                          size: 18,
+                        ),
+                        SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _playbackSpeedLabel(_playbackSpeed),
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            color: Color(0xFFF0F0F5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(width: AppSpacing.md),
+                if (_canSwitchSource)
+                  FocusableWidget(
+                    onTap: _showSourceSelectorDialog,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Color(0xFF1C1C2E),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: Color(0x14FFFFFF)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.swap_horiz,
+                            color: Color(0xFFF0F0F5),
+                            size: 18,
+                          ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '换源',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: Color(0xFFF0F0F5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (_canSwitchSource) SizedBox(width: AppSpacing.md),
+                if (_currentVideoDetail.episodes.length > 1)
+                  FocusableWidget(
+                    onTap: _showEpisodeSelectorDialog,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Color(0xFF1C1C2E),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(color: Color(0x14FFFFFF)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.list,
+                            color: Color(0xFFF0F0F5),
+                            size: 18,
+                          ),
+                          SizedBox(width: AppSpacing.xs),
+                          Text(
+                            '选集',
+                            style: TextStyle(
+                              fontFamily: 'NotoSansSC',
+                              fontSize: 13,
+                              color: Color(0xFFF0F0F5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (_currentVideoDetail.episodes.length > 1)
+                  SizedBox(width: AppSpacing.md),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 构建控制栏图标按钮，使用 FocusableWidget 以获得明显的焦点边框。
+  Widget _buildControlIconButton({
+    required VoidCallback onTap,
+    required IconData icon,
+    FocusNode? focusNode,
+    bool autofocus = false,
+  }) {
+    return FocusableWidget(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      child: Icon(icon, color: Color(0xFFF0F0F5), size: 28),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      // TV 版无窗口全屏概念：控制栏显示时先隐藏控制栏，再按返回才退出播放页。
+      // canPop 恒为 false：所有退出（系统返回手势 / 滑动返回）统一走 _exitPlayer，
+      // 先摘视频 widget、等一帧再 dispose 后端，避免退出时 fvp surface 竞态闪退。
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_controlsVisible) {
+          _hideControls();
+        } else {
+          _exitPlayer();
+        }
+      },
+      child: Focus(
+        focusNode: _rootFocusNode,
+        autofocus: true,
+        onKeyEvent: (_, event) => _handleKeyEvent(event),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 最底层：纯黑背景，确保黑边区域由 Flutter 绘制，
+              // 避免 PlatformView 在隐藏控制栏后仍残留影像。
+              Positioned.fill(child: ColoredBox(color: Colors.black)),
+              // 视频层：只覆盖实际画面区域，黑边留给我 Flutter 背景。
+              // IgnorePointer 避免 PlatformView 拦截触摸事件，确保手势层能正常工作。
+              Positioned.fill(child: IgnorePointer(child: _buildVideo())),
+              // 错误提示
+              Center(child: _buildError()),
+              // 切换源遮罩
+              Positioned.fill(child: _buildSwitchingOverlay()),
+              // 触摸手势层：响应点击、双击、长按、滑动等手势。
+              _buildGestureOverlay(),
+              // 控制栏覆盖层：完全不可见时从渲染树/焦点树中彻底移除。
+              Visibility(
+                visible: _controlsVisible || _isLongPressSeeking,
+                maintainState: false,
+                maintainAnimation: false,
+                maintainSize: false,
+                maintainInteractivity: false,
+                child: Positioned.fill(
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: _buildTopBar(),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: _buildBottomControls(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 手势操作提示（亮度/音量/进度）
+              _buildGestureIndicator(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceSelectorDialog extends StatefulWidget {
+  final List<SourceOption> sources;
+  final int currentIndex;
+  final String Function(double?) formatSpeed;
+  final Color Function(double?) speedColor;
+  final ValueChanged<int> onSelect;
+
+  const _SourceSelectorDialog({
+    required this.sources,
+    required this.currentIndex,
+    required this.formatSpeed,
+    required this.speedColor,
+    required this.onSelect,
+  });
+
+  @override
+  State<_SourceSelectorDialog> createState() => _SourceSelectorDialogState();
+}
+
+class _SourceSelectorDialogState extends State<_SourceSelectorDialog> {
+  late final ScrollController _scrollController;
+  late final List<FocusNode> _focusNodes;
+  late final List<GlobalKey> _itemKeys;
+  int _focusedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusedIndex = widget.currentIndex.clamp(0, widget.sources.length - 1);
+    _scrollController = ScrollController();
+    _focusNodes = List.generate(widget.sources.length, (_) => FocusNode());
+    _itemKeys = List.generate(widget.sources.length, (_) => GlobalKey());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+      _focusItem(_focusedIndex);
+    });
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
+    _scrollController.dispose();
+    for (final node in _focusNodes) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+
+    var currentIndex = _focusNodes.indexWhere((node) => node.hasPrimaryFocus);
+    if (currentIndex < 0) currentIndex = _focusedIndex;
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      if (currentIndex + 1 < widget.sources.length) {
+        setState(() => _focusedIndex = currentIndex + 1);
+        _focusItem(_focusedIndex);
+        return true;
+      }
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      if (currentIndex > 0) {
+        setState(() => _focusedIndex = currentIndex - 1);
+        _focusItem(_focusedIndex);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _focusItem(int index) {
+    if (index < 0 || index >= _focusNodes.length) return;
+    _focusNodes[index].requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = _itemKeys[index].currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.5,
+          duration: Duration(milliseconds: 200),
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Color(0xFF14141F),
+      title: Text(
+        '切换播放源',
+        style: TextStyle(
+          fontFamily: 'NotoSansSC',
+          color: Color(0xFFF0F0F5),
+        ),
+      ),
+      content: FocusScope(
+        child: Actions(
+          // 禁用默认方向键焦点遍历，避免与自定义 HardwareKeyboard 处理冲突导致跳格。
+          actions: <Type, Action<Intent>>{
+            DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+              onInvoke: (_) => null,
+            ),
+          },
+          child: SizedBox(
+              width: 640,
+              height: 240,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                controller: _scrollController,
+                child: Row(
+                  children: List.generate(widget.sources.length, (index) {
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        right: index < widget.sources.length - 1
+                            ? AppSpacing.md
+                            : 0,
+                      ),
+                      child: _SourceSelectorCard(
+                        key: _itemKeys[index],
+                        focusNode: _focusNodes[index],
+                        autofocus: index == widget.currentIndex,
+                        source: widget.sources[index],
+                        selected: index == widget.currentIndex,
+                        rank: index + 1,
+                        formatSpeed: widget.formatSpeed,
+                        speedColor: widget.speedColor,
+                        onTap: () => widget.onSelect(index),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+    );
+  }
+}
+
+class _SourceSelectorCard extends StatelessWidget {
+  final SourceOption source;
+  final bool selected;
+  final int rank;
+  final String Function(double?) formatSpeed;
+  final Color Function(double?) speedColor;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+  final bool autofocus;
+
+  const _SourceSelectorCard({
+    super.key,
+    required this.source,
+    required this.selected,
+    required this.rank,
+    required this.formatSpeed,
+    required this.speedColor,
+    required this.onTap,
+    this.focusNode,
+    this.autofocus = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final speedText = formatSpeed(source.speed);
+    final resolutionText = source.resolution?.trim() ?? '';
+
+    return FocusableWidget(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      child: SizedBox(
+        width: 140,
+        child: AspectRatio(
+          aspectRatio: 2 / 3,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: CachedNetworkImage(
+                  imageUrl: source.poster?.isNotEmpty == true
+                      ? source.poster!
+                      : '',
+                  fit: BoxFit.cover,
+                  cacheManager: HainTvCacheManager(),
+                  memCacheWidth: 300,
+                  memCacheHeight: 450,
+                  placeholder: (_, __) => Container(color: Color(0xFF14141F)),
+                  errorWidget: (_, __, ___) => Container(
+                    color: Color(0xFF14141F),
+                    child: Center(
+                      child: Text(
+                        source.title.isNotEmpty
+                            ? source.title.substring(0, 1)
+                            : '',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 24,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // 底部彩色背景 + 标题/源名
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(AppRadius.sm),
+                  ),
+                  child: Container(
+                    padding: EdgeInsets.fromLTRB(
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.sm,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color(0xFF1C1C2E).withValues(alpha: 0.95),
+                      border: Border(
+                        top: BorderSide(
+                          color: AppColors.primary.withValues(alpha: 0.6),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          source.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFFF0F0F5),
+                            height: 1.2,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          source.sourceName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // 排名标识
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Color(0xFF1C1C2E).withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    'No.$rank',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ),
+              if (speedText.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: speedColor(source.speed),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      speedText,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFF0F0F5),
+                      ),
+                    ),
+                  ),
+                ),
+              if (resolutionText.isNotEmpty)
+                Positioned(
+                  top: speedText.isNotEmpty ? 28 : 6,
+                  right: 6,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      resolutionText,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0A0A0F),
+                      ),
+                    ),
+                  ),
+                ),
+              if (selected)
+                Positioned(
+                  top: 28,
+                  left: 6,
+                  child: Icon(
+                    Icons.check_circle,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EpisodeSelectorDialog extends StatefulWidget {
+  final List<String> titles;
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  const _EpisodeSelectorDialog({
+    required this.titles,
+    required this.currentIndex,
+    required this.onSelect,
+  });
+
+  @override
+  State<_EpisodeSelectorDialog> createState() => _EpisodeSelectorDialogState();
+}
+
+class _EpisodeSelectorDialogState extends State<_EpisodeSelectorDialog> {
+  late final ScrollController _scrollController;
+  final _selectedKey = GlobalKey();
+  final _selectedFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _selectedKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.5,
+          duration: Duration(milliseconds: 200),
+        );
+      }
+      _selectedFocusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _selectedFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Color(0xFF14141F),
+      title: Text(
+        '选集',
+        style: TextStyle(
+          fontFamily: 'NotoSansSC',
+          color: Color(0xFFF0F0F5),
+        ),
+      ),
+      content: FocusScope(
+        autofocus: true,
+        child: SizedBox(
+          width: 400,
+          height: 360,
+          child: GridView.count(
+            controller: _scrollController,
+            crossAxisCount: 4,
+            crossAxisSpacing: AppSpacing.md,
+            mainAxisSpacing: AppSpacing.md,
+            childAspectRatio: 2.2,
+            children: List.generate(widget.titles.length, (index) {
+              final selected = index == widget.currentIndex;
+              return FocusableWidget(
+                key: selected ? _selectedKey : null,
+                focusNode: selected ? _selectedFocusNode : null,
+                autofocus: selected,
+                onTap: () => widget.onSelect(index),
+                child: Container(
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppColors.primaryTint
+                        : Color(0xFF1C1C2E),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(
+                      color: selected ? AppColors.primary : Color(0x14FFFFFF),
+                    ),
+                  ),
+                  child: Text(
+                    widget.titles[index],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? AppColors.primary
+                          : Color(0xFFF0F0F5),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}

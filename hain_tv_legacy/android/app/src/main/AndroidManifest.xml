@@ -1,0 +1,86 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- tvlegacy 需要支持 Android 5.0 (API 21)，但部分 Flutter 插件声明 minSdk=24，
+         使用 tools:overrideLibrary 强制合并，由 tvlegacy  flavor 将应用 minSdk 设为 21。
+         名单须覆盖「所有 minSdk > 21 的库」且必须与其 manifest 里的 package 名一致
+         （AGP 为精确匹配，不认前缀：`androidx.media3.decoder` 压不住
+         `androidx.media3.decoder.ffmpeg`）。
+         实测（2026-09-18，:app:processTvlegacyReleaseMainManifest）：
+         minSdk=24 的插件是 shared_preferences / url_launcher / wakelock_plus 三个，
+         前两个原已在列，wakelock_plus（dev.fluttercommunity.plus.wakelock）是漏网项。
+         media3 各模块：tvlegacy 经 heinplay.media3.version 降到 1.1.0（minSdk=16）本不冲突，
+         此处保留/补齐是防止该降级失效时回落到 1.9.x（minSdk=23）导致构建中断。 -->
+    <uses-sdk tools:overrideLibrary="io.flutter.plugins.sharedpreferences,io.flutter.plugins.urllauncher,dev.fluttercommunity.plus.wakelock,androidx.media3.common,androidx.media3.container,androidx.media3.database,androidx.media3.datasource,androidx.media3.datasource.okhttp,androidx.media3.decoder,androidx.media3.decoder.ffmpeg,androidx.media3.effect,androidx.media3.exoplayer,androidx.media3.exoplayer.dash,androidx.media3.exoplayer.hls,androidx.media3.exoplayer.rtsp,androidx.media3.exoplayer.smoothstreaming,androidx.media3.extractor,androidx.media3.inspector,androidx.media3.muxer,androidx.media3.transformer" />
+
+    <!-- 联网权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 应用内更新：请求安装 APK -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- 声明为 TV 应用，但允许在非 TV 设备安装 -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="海因影视"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/banner"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true"
+        android:largeHeap="true"
+        android:extractNativeLibs="true"
+        android:enableOnBackInvokedCallback="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <!-- 手机/平板启动入口 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Android TV 启动入口 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+        <!-- FileProvider：用于分享 APK 文件给系统安装器 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>
