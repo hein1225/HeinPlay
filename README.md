@@ -2,8 +2,8 @@
 
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT 版本正在开发中**。
 
-| TV / Windows 版界面预览 | 手机版界面预览 |
-| :--- | :--- |
+| TV / Windows 版界面预览                                          | 手机版界面预览                                     |
+|:----------------------------------------------------------- |:------------------------------------------- |
 | ![海因影视 TV / Windows 版界面预览](docs/screenshots/tv_windows.png) | ![海因影视手机版界面预览](docs/screenshots/mobile.jpg) |
 
 ## 功能特性
@@ -124,19 +124,18 @@
 - **Leanback 适配**：AndroidManifest 配置 LEANBACK_LAUNCHER、banner、TV 特性声明。
 - **Release 签名**：使用专用密钥库签名，支持应用内增量更新。
 
-
 ## 支持平台
 
-| 平台               | 状态     | 系统要求                    | 说明                                                              |
-| ---------------- | ------ | ----------------------- | --------------------------------------------------------------- |
-| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。      |
-| Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。 |
-| Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                    |
-| Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                               |
-| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`；与 Linux 共用同一套「电脑版」功能与交互              |
+| 平台               | 状态     | 系统要求                    | 说明                                                                       |
+| ---------------- | ------ | ----------------------- | ------------------------------------------------------------------------ |
+| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。               |
+| Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染，适配旧设备/旧安卓版本。          |
+| Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                             |
+| Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                                        |
+| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`；与 Linux 共用同一套「电脑版」功能与交互                |
 | Linux            | 已发布    | 桌面 Linux（x86_64）        | 单文件 AppImage，**重点服务 Steam Deck 等掌机 / 手持设备**；功能与 Windows 一致，使用 `fvp` 播放后端 |
-| HarmonyOS NEXT   | 测试期    | HarmonyOS NEXT（手机 / 平板） | 鸿蒙版开发中，仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链。      |
-| iOS              | 计划中    | —                       | 移动端版本后续支持                                                       |
+| HarmonyOS NEXT   | 测试期    | HarmonyOS NEXT（手机 / 平板） | 鸿蒙版开发中，仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链。               |
+| iOS              | 计划中    | —                       | 移动端版本后续支持                                                                |
 
 ### Linux 版说明（面向掌机）
 
@@ -155,12 +154,12 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 
 ### Release 文件说明
 
-| 文件名                                   | 适用设备              | 系统要求                  | 说明                                               |
-| ------------------------------------- | ----------------- | --------------------- | ------------------------------------------------ |
-| `heinplay-1.4.0-tv.apk`               | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。 |
-| `heinplay-1.4.0-tvLegacy.apk`         | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。    |
-| `heinplay-1.4.0-mobile.apk`           | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                               |
-| `heinplay-1.4.0-windows-portable.zip` | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                       |
+| 文件名                                    | 适用设备              | 系统要求                  | 说明                                                             |
+| -------------------------------------- | ----------------- | --------------------- | -------------------------------------------------------------- |
+| `heinplay-1.4.0-tv.apk`                | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。          |
+| `heinplay-1.4.0-tvLegacy.apk`          | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。                  |
+| `heinplay-1.4.0-mobile.apk`            | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                                             |
+| `heinplay-1.4.0-windows-portable.zip`  | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                                     |
 | `heinplay-1.4.0-linux-x86_64.AppImage` | Linux 电脑 / 掌机     | 桌面 Linux（x86_64）      | 单文件免安装，双击即用，**面向 Steam Deck 等掌机优化**；建议用安装脚本部署（见上方「Linux 版说明」）。 |
 
 **Steam 封面素材**：仓库 [`steamos-covers/`](steamos-covers) 目录另附一套符合 Steam 标准规格的封面图 —— `library_600x900.png`（竖版库封面）、`library_hero.png`（库背景横幅）、`icon.png`（应用图标），已按比例裁切、可直接使用，每次发布也会随本 Release 一并提供。把 HeinPlay 以「非 Steam 游戏」添加进 Steam 后，右键该条目 → **管理 → 设置自定义艺术作品** 即可套用，详见上方「Linux 版说明」。
@@ -214,6 +213,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 - **直播回放拖动 / 长按快进快退优化**：定位节流，长时间按住不再卡死、定位更跟手。
 - **直播网络源加载失败自动重试**：进入频道初始化失败时自动重试最多 3 次（间隔约 400ms），缓解源站调度到异常节点导致的播放失败。
 - **直播默认播放器（Android 版）调整**：直播模式默认播放器由 fvp 改回 ExoPlayer，原因是 ExoPlayer 起播与换台速度更快（并非兼容性最佳）；若个别直播源仍存在播放问题，可在「直播设置 → 直播默认播放器」切回 fvp。其他版本仍使用 fvp。
+- **tvlegacy兼容问题**：优化tvlegacy对于低版本安卓兼容问题。
 - **版本号统一**：全项目更新至 1.3.4（build +22），Release 产物命名同步为 `heinplay-1.3.4-tv.apk`、`heinplay-1.3.4-tvLegacy.apk`、`heinplay-1.3.4-mobile.apk`、`heinplay-1.3.4-windows-portable.zip`。
 
 </details>
@@ -473,8 +473,8 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 
 如果这个软件对你有帮助，欢迎请我们喝杯奶茶！你的支持是我们持续开发的动力。
 
-|   支付宝  |   微信  |
-| :----: | :---: |
+| 支付宝                         | 微信                           |
+|:---------------------------:|:----------------------------:|
 | ![支付宝赞赏码](docs/pay/支付宝.jpg) | ![微信赞赏码](docs/pay/微信赞赏码.png) |
 
 ## 注意事项
