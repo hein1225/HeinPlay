@@ -297,7 +297,15 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     setState(() => _duration = duration);
     // 如果因超时/异常导致界面显示了播放失败提示，但实际视频已初始化成功（获取到有效时长），
     // 则取消待执行的自动换源并清除错误。
-    if (duration.inMilliseconds > 0 && !_initialized) {
+    // 注意：这里**不能**加 `!_initialized` 守卫 —— 超时分支会先把 `_initialized` 置 true，
+    // 加了守卫等于把本「清错误」逻辑自己关掉，于是出现「视频已经在播放、却仍显示播放失败」
+    // （open 实际耗时 > openTimeout，但随后仍成功起播）。改用时长阈值 >1s 规避插件对
+    // 直播/异常流的瞬时假时长（如 1ms）。
+    final pendingAutoSwitch =
+        _error == '播放失败，即将进行自动换源' ||
+        _error == '播放失败，请手动更换播放源' ||
+        _error == '播放失败，请尝试切换播放源';
+    if (duration.inMilliseconds > 1000 && pendingAutoSwitch) {
       _autoSwitchTimer?.cancel();
       _autoSwitchTimer = null;
       setState(() {
@@ -671,8 +679,9 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       // 恢复上次播放位置，并限制在新视频总时长范围内。
       // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
       //
-      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 接管
-      // （FvpBackend 传 deferStartSeek: true —— 等真正起播稳定后再 seek）。
+      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 在
+      // initialize() 完成后**立即**执行（2026-09-22 起不再延后 —— 即「播放记录
+      // 第一时间读取」）。
       // 若此处赶在 open 后约 200ms 抢先 seek，会在 libmdk 尚未稳定时把它打进冻结：
       // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
       // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话

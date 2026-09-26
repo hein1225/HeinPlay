@@ -1455,6 +1455,13 @@ class _MobileDetailScreenState extends State<MobileDetailScreen> {
     // 自动测速择优只在详情页初始化时执行一次，播放时不再调回优选源。
     final sourceIndex = preferredSourceIndex ?? _selectedSourceIndex;
 
+    // 若调用方未显式指定续播位置、且存在与当前集匹配的播放记录，则自动续播。
+    // 否则点「剧集列表 / 主播放按钮」入口会忽略记录、从 0 重播，进而误触发
+    // 跳过片头（2026-09-24 用户复测：某源未读到续播记录 → 回退重播 → 触发跳过片头）。
+    if (initialPlayTime <= 0 && _playRecord != null && (_playRecord!.index - 1) == index) {
+      initialPlayTime = _playRecord!.playTime;
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => MobilePlayerScreen(

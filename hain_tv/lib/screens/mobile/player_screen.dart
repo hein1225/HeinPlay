@@ -54,6 +54,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   // 导致播放源被重置到列表首位。
   String? _initialSourceKey;
   VideoPlayerBackend? _backend;
+  bool _switchingBackend = false; // fvp 续播卡死→原地重建 fvp 后端过程中防重入
+  int _fvpStallRetries = 0; // fvp 续播卡死重建次数（防止无限重建循环）
+  static const int _kMaxFvpStallRetries = 2; // 最多重建 2 次，仍失败则放弃自动恢复
   final PlayerSwitchGate _switchGate = PlayerSwitchGate();
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
@@ -273,7 +276,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
         _error == '播放失败，即将进行自动换源' ||
         _error == '播放失败，请手动更换播放源' ||
         _error == '播放失败，请尝试切换播放源';
-    if (duration.inMilliseconds > 0 && pendingAutoSwitch && !_initialized) {
+    // 注意：这里**不能**加 `!_initialized` 守卫 —— 超时分支会先把 `_initialized` 置 true，
+    // 加了守卫等于把本「清错误」逻辑自己关掉，于是出现「视频已经在播放、却仍显示播放失败」
+    // （open 实际耗时 > openTimeout，但随后仍成功起播）。改用时长阈值 >1s 规避插件对
+    // 直播/异常流的瞬时假时长（如 1ms）；真 VOD 时长是分钟级，不会误判。
+    if (duration.inMilliseconds > 1000 && pendingAutoSwitch) {
       _autoSwitchTimer?.cancel();
       _autoSwitchTimer = null;
       setState(() {
@@ -283,10 +290,103 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     }
   }
 
+  /// fvp 续播卡死且 App 层 seek 重试/回退片头均 no-op（reader 真死）时由后端上抛。
+  /// 在 microtask 中执行，避免在 fvp 自身 position 监听器回调内 dispose 旧后端。
+  /// 原地重建 fvp 后端（仍从续播点）而非切 ExoPlayer：重建等于再给 libmdk 一次
+  /// 「prepare(position:) 从续播点打开」的机会，绕开读取器死寂竞态。有次数上限防循环。
+  void _onFvpStallUnrecoverable() {
+    if (_switchingBackend) return;
+    if (_currentPlayerBackend == PlayerBackendType.exo) return;
+    if (_fvpStallRetries >= _kMaxFvpStallRetries) {
+      // 已重建多次仍卡死，放弃自动恢复（维持 fvp，避免无限循环）。
+      debugPrint(
+        '[FVP-REOPEN] fvp 续播卡死已重建 $_kMaxFvpStallRetries 次仍失败，放弃自动恢复',
+      );
+      return;
+    }
+    _fvpStallRetries++;
+    _switchingBackend = true;
+    Future.microtask(() => _reopenFvpOnStall());
+  }
+
+  /// fvp 救不活时：释放当前 fvp 后端，原地重建 fvp 后端，并从冻结的续播点继续播放
+  /// （不再从片头重启，避免「读取播放记录后自动重新开始」）。保持 fvp 后端，不切 ExoPlayer。
+  /// 重建经由 prepare(position:) 原生定位续播点，绕开读取器死寂竞态。
+  Future<void> _reopenFvpOnStall() async {
+    if (!mounted) {
+      _switchingBackend = false;
+      return;
+    }
+    final resumeMs = _position.inMilliseconds; // 冻结位置即续播点
+    debugPrint(
+      '[FVP-REOPEN] fvp 续播卡死，原地重建 fvp 后端（续播点=$resumeMs ms，第 $_fvpStallRetries/$_kMaxFvpStallRetries 次）',
+    );
+
+    // 注销旧 fvp 后端监听器并释放
+    for (final s in _subscriptions) {
+      s.cancel();
+    }
+    _subscriptions.clear();
+    await _backend?.dispose();
+    _backend = null;
+
+    // 保持 fvp 后端（不切 ExoPlayer），从续播点恢复，不丢进度。
+    _pendingInitialPositionMs = resumeMs;
+
+    final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+    _backend = backend;
+    _backend?.fit = _videoFit;
+    backend.onUnrecoverableStall = _onFvpStallUnrecoverable;
+    _subscriptions
+      ..add(
+        backend.positionStream.listen((position) {
+          if (mounted) {
+            setState(() => _position = position);
+            _checkSkipSegments(position);
+            _savePlayRecordThrottled();
+          }
+        }),
+      )
+      ..add(backend.durationStream.listen(_onDurationUpdate))
+      ..add(
+        backend.bufferedStream.listen((buffered) {
+          if (mounted) setState(() => _buffered = buffered);
+        }),
+      )
+      ..add(
+        backend.playingStream.listen((playing) {
+          if (mounted) setState(() => _playing = playing);
+        }),
+      )
+      ..add(
+        backend.completedStream.listen((_) {
+          if (mounted &&
+              !_autoNextTriggered &&
+              _currentEpisodeIndex < _currentVideoDetail.episodes.length - 1) {
+            _autoNextTriggered = true;
+            debugPrint('播放器报告播放完成，触发下一集');
+            _nextEpisode();
+          }
+        }),
+      );
+
+    setState(() {
+      _error = null;
+      _initialized = false;
+    });
+
+    await _openEpisodeImpl(_currentEpisodeIndex, isStallRecovery: true);
+    if (mounted) {
+      _switchingBackend = false;
+      _showControls();
+    }
+  }
+
   Future<void> _initBackend() async {
     final backend = PlayerBackendFactory.create(_currentPlayerBackend);
     _backend = backend;
     _backend?.fit = _videoFit;
+    backend.onUnrecoverableStall = _onFvpStallUnrecoverable;
     _subscriptions
       ..add(
         backend.positionStream.listen((position) {
@@ -458,7 +558,11 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   Future<void> _openEpisode(int index) =>
       _switchGate.run(() => _openEpisodeImpl(index));
 
-  Future<void> _openEpisodeImpl(int index) async {
+  Future<void> _openEpisodeImpl(int index, {bool isStallRecovery = false}) async {
+    // 非卡死重建的正常开播：清零 fvp 续播卡死重建计数，避免上次残留计数误杀本次。
+    if (!isStallRecovery) {
+      _fvpStallRetries = 0;
+    }
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
 
@@ -585,8 +689,9 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       // 恢复上次播放位置，并限制在新视频总时长范围内。
       // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
       //
-      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 接管
-      // （FvpBackend 传 deferStartSeek: true —— 等真正起播稳定后再 seek）。
+      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 在
+      // initialize() 完成后**立即**执行（2026-09-22 起不再延后 —— 即「播放记录
+      // 第一时间读取」）。
       // 若此处赶在 open 后约 200ms 抢先 seek，会在 libmdk 尚未稳定时把它打进冻结：
       // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
       // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话
@@ -703,6 +808,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       final backend = PlayerBackendFactory.create(_currentPlayerBackend);
       _backend = backend;
       _backend?.fit = _videoFit;
+      backend.onUnrecoverableStall = _onFvpStallUnrecoverable;
       _subscriptions
         ..add(
           backend.positionStream.listen((position) {

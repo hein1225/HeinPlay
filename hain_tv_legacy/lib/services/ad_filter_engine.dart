@@ -37,27 +37,12 @@ class AdFilterEngine {
       '去广告开关=$enabled, 电脑版=$isComputer, 后端=$effectiveBackend, 清理断点=$useFvp',
     );
 
-    // —— 点播 VOD 在 Android + fvp 下跳过本地代理、直连 CDN ——
-    // 根因（2026-09-19 三星 SM-S9360 真机 arm64 日志 224804）：
-    // VOD 走 LocalM3u8Proxy（分片 URL 重写 127.0.0.1 + 强制 ENDLIST + 变体二次
-    // purify）后，fvp/libmdk 能下载分片（代理全 status 200）但解封装失败、不建
-    // 解码器 → position 冻结卡死；同设备直播/直播回放直连 CDN 原始 URL 时 fvp
-    // 正常播放，证明 fvp 解码能力正常，卡在 libmdk 解封装代理 playlist。
-    // 故 Android + fvp 的 VOD 与直播/回放一致：直接返回 null，播放器播原始 CDN
-    // URL（不去广告）。ExoPlayer 仍走代理+去广告不受影响。
-    final fvpDirectOnAndroid = useFvp && Platform.isAndroid;
-    if (fvpDirectOnAndroid) {
-      WindowsLogger.log(
-        'AdFilterEngine',
-        ' fvp+Android 点播跳过本地代理，直连 CDN（与直播/回放一致）',
-      );
-      return null;
-    }
-
-    // fvp 在 Windows/Linux/鸿蒙直连 CDN 会因 TLS/DNS 握手失败无法播放，
-    // 而安卓(ExoPlayer)/TV 直连正常。因此这些 fvp 平台即便关闭去广告，
-    // 也强制走本地代理透传（复用 App 的 Dart HTTP 客户端拉流），仅“是否去广告
-    // 过滤”不同；其余平台/后端保持历史行为：去广告关闭时直接播放原始 URL。
+    // fvp 在 Windows/Linux/鸿蒙 直连 CDN 会因 TLS/DNS 握手失败导致起播慢/失败，
+    // 故即便关闭去广告，也强制走本地代理透传（复用 App 的 Dart HTTP 客户端拉流）；
+    // 其余平台/后端保持历史行为：去广告关闭时直接播放原始 URL。
+    // Android fvp 不强制走代理：去广告开启时仍走代理（去广告过滤），关闭时直连 CDN
+    // （2026-09-24 曾试把 Android 也并入强制代理以掩盖 libmdk reader 死寂期，
+    // 实测对含大量 discontinuity 的 CDN 点播源无效，故回退到直连）。
     final needProxyPassthrough =
         useFvp && (isComputer || Platform.operatingSystem == 'ohos');
 

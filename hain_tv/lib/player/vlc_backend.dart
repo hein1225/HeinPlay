@@ -60,6 +60,11 @@ class VlcBackend implements VideoPlayerBackend {
   BoxFit get fit => _fit;
 
   @override
+  void set onUnrecoverableStall(VoidCallback? cb) {
+    // VLC 后端不触发续播卡死回退（其无 fvp 续播竞态），空实现满足接口契约。
+  }
+
+  @override
   set fit(BoxFit value) => _fit = value;
 
   /// 将 [BoxFit] 映射到 vlc_player 的 [VlcVideoFit]。

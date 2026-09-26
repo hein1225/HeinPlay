@@ -38,5 +38,10 @@ abstract class VideoPlayerBackend {
   /// 用于在 position 流未精确到达片尾时仍能可靠切下一集。
   Stream<void> get completedStream;
 
+  /// fvp 续播卡死且 App 层 seek 重试/回退片头均 no-op 时触发，
+  /// 上抛到播放页以自动切换后端（如 ExoPlayer）。仅 fvp 后端会赋值并触发，
+  /// 其余后端以空实现满足接口契约。
+  void set onUnrecoverableStall(VoidCallback? cb);
+
   Future<void> dispose();
 }

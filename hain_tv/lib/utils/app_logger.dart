@@ -25,9 +25,35 @@ class AppLogger {
   static bool _flushing = false;
   static DebugPrintCallback? _originalDebugPrint;
 
+  /// 「获取日志」开关的变更监听器。
+  ///
+  /// 供其它日志源跟随开关同步启停——例如 `MdkLogBridge` 把 fvp 插件内部
+  /// libmdk 的日志（`package:logging` 的 `Logger('mdk')`）接入 [log]，
+  /// 必须在开关打开/关闭时同步放开/收紧其日志级别。
+  static final List<void Function(bool)> _enableListeners = [];
+
+  /// 注册开关变更回调。注册时**立即以当前状态回调一次**，因此调用方无需
+  /// 自己先读一次 [isEnabled]，也不依赖 [initialize] 与注册的先后顺序。
+  static void addEnableListener(void Function(bool enabled) listener) {
+    _enableListeners.add(listener);
+    listener(_enabled);
+  }
+
+  static void _notifyEnable() {
+    for (final listener in _enableListeners) {
+      listener(_enabled);
+    }
+  }
+
   /// 显式初始化日志目录与开关状态。建议在 main() 中调用。
   /// 返回是否成功完成初始化。
   static Future<bool> initialize() async {
+    final ok = await _initialize();
+    _notifyEnable();
+    return ok;
+  }
+
+  static Future<bool> _initialize() async {
     _enabled = await UserDataService.getLogEnabled();
     if (!_enabled) {
       _initialized = true;
@@ -49,6 +75,11 @@ class AppLogger {
 
   /// 动态开启/关闭文件日志。设置变更后立即生效。
   static Future<void> setEnabled(bool enabled) async {
+    await _setEnabled(enabled);
+    _notifyEnable();
+  }
+
+  static Future<void> _setEnabled(bool enabled) async {
     final oldEnabled = _enabled;
     _enabled = enabled;
     await UserDataService.saveLogEnabled(enabled);
@@ -193,9 +224,41 @@ class AppLogger {
   }
 
   /// 写入日志。无论是否开启文件日志，都会通过 [debugPrint] 输出。
+  ///
+  /// 注意：开启文件日志时 [debugPrint] 已被 [_hookDebugPrint] 接管，钩子内部会把
+  /// 该行写入文件——因此这里**不能**再 [_write] 一次，否则每条经本方法的日志都
+  /// 会落盘两遍（实测历史日志中该情况占全部行的 14.3%，表现为连续两行完全相同）。
+  /// 仅当钩子尚未安装时（文件日志已开启但日志目录尚不可用的短暂窗口）才由此处
+  /// 兜底写入。
   static void log(String tag, String message) {
     final line = '[${_now()}] [$tag] $message';
     debugPrint(line);
+    if (_enabled && _originalDebugPrint == null) {
+      _write(line);
+    }
+  }
+
+  /// 写入日志，且**绕过 [debugPrint] 的节流队列**。供高频日志源使用。
+  ///
+  /// 与 [log] 的差别只在控制台出口：[log] 走 [debugPrint]，其默认实现
+  /// `debugPrintThrottled` 把输出限速在 **12KB/秒**（`_kDebugPrintCapacity`），
+  /// 且待输出队列 `Queue<String>` **无上限**——超出的行不会丢，而是排队等
+  /// 1 秒后（`_kDebugPrintPauseTime`）继续吐。因此当产生速率持续高于 12KB/秒
+  /// （libmdk 在 reader 死锁等异常下可达上千条/秒）时，队列会一路积压：
+  /// 日志严重滞后，并带来内存与 GC 压力——反过来加剧正在被诊断的卡顿。
+  ///
+  /// 本方法直接 `print`（Android 上即 logcat），没有 Dart 侧队列与限速：
+  /// 代价是 logcat 的环形缓冲在高频下会滚动丢弃最旧的条目（可用
+  /// `adb logcat -G 64M` 扩容），但**不会在应用内积压**。
+  ///
+  /// 文件出口与 [log] 一致。注意此处**不能**复用 [log] 里
+  /// 「`_originalDebugPrint == null` 时兜底写入」的写法：`print` 不经过
+  /// [debugPrint]，不会触发 [_hookDebugPrint] 安装的钩子，所以只要开启就必须
+  /// 自己写，否则文件里会缺这部分日志。
+  static void logDirect(String tag, String message) {
+    final line = '[${_now()}] [$tag] $message';
+    // ignore: avoid_print
+    print(line);
     if (_enabled) {
       _write(line);
     }

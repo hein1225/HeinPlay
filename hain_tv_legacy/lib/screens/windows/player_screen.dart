@@ -671,8 +671,9 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       // 恢复上次播放位置，并限制在新视频总时长范围内。
       // 这里也作为 startAt 的二次确认，稍作延迟确保播放器已真正就绪。
       //
-      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 接管
-      // （FvpBackend 传 deferStartSeek: true —— 等真正起播稳定后再 seek）。
+      // ⚠️ fvp 后端必须跳过这段：fvp 的起点定位已由 VideoPlayerBackendImpl 在
+      // initialize() 完成后**立即**执行（2026-09-22 起不再延后 —— 即「播放记录
+      // 第一时间读取」）。
       // 若此处赶在 open 后约 200ms 抢先 seek，会在 libmdk 尚未稳定时把它打进冻结：
       // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
       // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话

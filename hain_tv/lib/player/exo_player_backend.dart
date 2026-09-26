@@ -21,6 +21,10 @@ class ExoPlayerBackend implements VideoPlayerBackend {
   set fit(BoxFit value) => _impl.fit = value;
 
   @override
+  void set onUnrecoverableStall(VoidCallback? cb) =>
+      _impl.onUnrecoverableStall = cb;
+
+  @override
   Widget buildVideoWidget() => _impl.buildVideoWidget();
 
   @override

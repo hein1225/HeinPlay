@@ -21,6 +21,10 @@ class FvpBackend implements VideoPlayerBackend {
   set fit(BoxFit value) => _impl.fit = value;
 
   @override
+  void set onUnrecoverableStall(VoidCallback? cb) =>
+      _impl.onUnrecoverableStall = cb;
+
+  @override
   Widget buildVideoWidget() => _impl.buildVideoWidget();
 
   @override
@@ -48,18 +52,19 @@ class FvpBackend implements VideoPlayerBackend {
     // 不会触发 AMediaCodec 缺失问题）。
     final hw = await UserDataService.getHardwareDecoding();
     final fvpVideoDecoders = hw ? null : const ['FFmpeg'];
-    // 缓冲窗口：恢复 1.3.5 行为——透传调用方传入的 bufferConfig，
-    // 为 null 时回退到 BufferProfileConfig.current()（与 ExoPlayerBackend:39 一致，
+    // 缓冲窗口：透传调用方传入的 bufferConfig，为 null 时回退到
+    // BufferProfileConfig.current()（与 ExoPlayerBackend:39 一致，
     // 点播/回放=放大窗口 min=1500/max=20000ms、直播=低延迟）。
     //
-    // 曾误信「放大缓冲窗口导致模拟器解码停滞」把 effectiveConfig 钉成 null，
-    // 但 194523/211609 的冻结真实根因是 §8 ad_filter 变体污染 + §9 textureView 误走，
-    // 与缓冲窗口无关；11:27 那次「fvp + platformView + 放大缓冲窗口」5.7s 正常起播、
-    // position 正常递增即为反证。故恢复下发放大窗口。
+    // 🔴 该窗口最终由 _impl 在 `initialize()` **之后**调用 setBufferRange 下发
+    // （2026-09-22 修复）——fvp 的 FVPControllerExtensions 要求其所有方法在
+    // initialize() 后调用，否则 `_players[playerId]?.…` 静默无操作。此处只负责
+    // 选档与透传，实际下发点见 video_player_backend_impl.dart「缓冲窗口下发」处。
     // ⚠️ 与 ExoPlayerBackend.open 对齐：直播恒用低延迟档。
     // 调用方 live_player 不传 bufferConfig，若此处不判 isLive，就会回退到用户设置的
     // 「点播」档（如增强档 min=1500/max=20000ms）并下发到直播 —— 直播预读 20 秒会
-    // 抬高延迟、拖慢换台，还会覆盖 fvp 注册级 lowLatency 设下的 min=0 窗口。
+    // 抬高延迟、拖慢换台（注册级 lowLatency 已归零，直播低延迟完全靠这里的
+    // 低延迟档 min=0/max=1000/drop=true 下发）。
     final effectiveConfig = isLive
         ? BufferProfileConfig.forProfile(BufferProfile.lowLatency)
         : (bufferConfig ?? await BufferProfileConfig.current());
@@ -73,6 +78,7 @@ class FvpBackend implements VideoPlayerBackend {
         bufferConfig: effectiveConfig,
         isLive: isLive,
         formatHint: formatHint,
+        isFvpBackend: true,
         fvpVideoDecoders: fvpVideoDecoders,
         // ⚠️ 不要把 Android 的 fvp 改成 textureView —— 实测会卡死，保持 platformView。
         //
@@ -93,14 +99,6 @@ class FvpBackend implements VideoPlayerBackend {
         // Windows/Linux 的 fvp 仍按平台走 textureView（由 _impl 内部的
         // Platform.isWindows || Platform.isLinux 分支决定），本标志只影响 Android。
         preferTextureView: false,
-        // ⚠️ fvp 不在 open 阶段 seek（2026-09-20 定稿根因）：
-        // fvp/libmdk 在 HLS `prepare()` 完成、`play()` 之前 seek 会卡死 —— position
-        // 停在 seek 目标、buffered==position 不涨、不再推进。而点播续播必带 startAt
-        // （player_screen 传 initialPositionMs/previousPositionMs），直播/回放不传
-        // startAt，故表现为"点播卡、直播/回放正常"。传 true 后由 _impl 在真正起播
-        // 后再定位，定位后停滞则回退从头播放。
-        // ExoPlayer 不受影响：ExoPlayerBackend 不传该参，保持 open 期 seek 行为。
-        deferStartSeek: true,
       );
       final cfgDesc =
           'min=${effectiveConfig.fvpMinMs}ms max=${effectiveConfig.fvpMaxMs}ms '

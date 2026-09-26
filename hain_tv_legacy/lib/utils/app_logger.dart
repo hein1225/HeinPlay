@@ -25,10 +25,29 @@ class AppLogger {
   static bool _flushing = false;
   static DebugPrintCallback? _originalDebugPrint;
 
+  /// 供其它日志源跟随开关同步启停——例如 `MdkLogBridge` 把 fvp 插件内部
+  /// libmdk 的日志（`package:logging` 的 `Logger('mdk')`）接入 [logDirect]，
+  /// 必须在开关打开/关闭时同步放开/收紧其日志级别。
+  static final List<void Function(bool)> _enableListeners = [];
+
+  /// 注册开关变更回调。注册时**立即以当前状态回调一次**，因此调用方无需
+  /// 自己先读一次 [isEnabled]，也不依赖 [initialize] 与注册的先后顺序。
+  static void addEnableListener(void Function(bool enabled) listener) {
+    _enableListeners.add(listener);
+    listener(_enabled);
+  }
+
+  static void _notifyEnable() {
+    for (final listener in _enableListeners) {
+      listener(_enabled);
+    }
+  }
+
   /// 显式初始化日志目录与开关状态。建议在 main() 中调用。
   /// 返回是否成功完成初始化。
   static Future<bool> initialize() async {
     _enabled = await UserDataService.getLogEnabled();
+    _notifyEnable();
     if (!_enabled) {
       _initialized = true;
       return true;
@@ -65,6 +84,8 @@ class AppLogger {
       _logDir = null;
       _initialized = false;
     }
+    // 通知跟随开关的日志源（如 MdkLogBridge）同步放开/收紧日志级别。
+    _notifyEnable();
   }
 
   /// 当前是否启用文件日志。
@@ -196,6 +217,27 @@ class AppLogger {
   static void log(String tag, String message) {
     final line = '[${_now()}] [$tag] $message';
     debugPrint(line);
+    // ⚠️ 仅在 debugPrint **未被钩子接管**时才自己写文件：`_hookDebugPrint` 安装的
+    // 钩子已经写过一次，此处再写会让日志文件整体翻倍（同一行出现两次）。
+    if (_enabled && _originalDebugPrint == null) {
+      _write(line);
+    }
+  }
+
+  /// 写入日志，且**绕过 [debugPrint] 的节流队列**。供高频日志源使用。
+  ///
+  /// 与 [log] 的差别只在控制台出口：[log] 走 [debugPrint]，其默认实现
+  /// `debugPrintThrottled` 把输出限速在 **12KB/秒**，且待输出队列无上限——
+  /// 当产生速率持续高于该值时（libmdk 在 reader 死寂等异常下可达上千条/秒）
+  /// 队列会一路积压：日志严重滞后，并带来内存与 GC 压力。
+  ///
+  /// 本方法直接 `print`（Android 上即 logcat），没有 Dart 侧队列与限速。
+  /// 注意此处**不能**复用 [log] 里「钩子未安装时兜底写入」的写法：`print`
+  /// 不经过 [debugPrint]，不会触发钩子，所以只要开启就必须自己写。
+  static void logDirect(String tag, String message) {
+    final line = '[${_now()}] [$tag] $message';
+    // ignore: avoid_print
+    print(line);
     if (_enabled) {
       _write(line);
     }

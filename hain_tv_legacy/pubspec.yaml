@@ -45,6 +45,12 @@ dependencies:
   # 把 A/B/方向键映射为确认/返回/方向（见 services/gamepad_input_service.dart）。
   ffi: ^2.1.0
   fvp: 0.37.0
+  # fvp 插件内部用 package:logging 转发 libmdk 的原生日志（`Logger('mdk')`）。
+  # 此处是**直接依赖**声明（此前仅为 fvp 的传递依赖）：`MdkLogBridge` 需要
+  # import package:logging 才能订阅 `Logger.root.onRecord`，把 libmdk 内部日志
+  # 接入 AppLogger.logDirect。没有它，logging 包在无 listener 时会静默丢弃日志、
+  # 且 root 默认 INFO 级别会过滤掉 FINE —— libmdk 的内部决策日志在 App 侧完全不可见。
+  logging: ^1.3.0
   # 【已移除】vlc_player: 仅有 Windows 实现，tvLegacy 只构建 Android，无意义。
   # 【已移除】ExoPlayer 走 fvp-only（见下方 dependency_overrides 的占位包）。
 

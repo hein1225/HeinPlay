@@ -1002,15 +1002,6 @@ function Show-MainMenu {
     Write-Host '    菜单 1「构建全部」已含 Linux(AppImage)：Windows 上自动经 WSL2 构建；无 WSL / 未装发行版会自动跳过并提示。' -ForegroundColor DarkGray
     Write-Host '    不需要 Linux 时请改选菜单 11「除 Linux 外构建全部」，或在命令行加 -SkipLinux。' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '命令行参数示例:' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipWindows          跳过 Windows 构建' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipLinux            跳过 Linux 构建（Windows 上默认尝试 WSL2，无 WSL 则跳过）' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -IncludeHap           额外构建鸿蒙 HAP（默认不参与「构建全部」）' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -IncludeTvlegacy      额外构建 tvLegacy（Android 5.0+，默认不参与，冷构建约 70 分钟）' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux -IncludeTvlegacy   仅构建 tvLegacy' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -SkipDoctor -SkipMobile -SkipTv -SkipWindows -SkipLinux -IncludeHap   仅构建鸿蒙 HAP' -ForegroundColor DarkGray
-    Write-Host '  build_all.bat -Clean                构建前执行 flutter clean' -ForegroundColor DarkGray
-    Write-Host ''
     return Read-Host '请输入选项编号'
 }
 

@@ -264,8 +264,9 @@ class _LivePlayerState extends State<LivePlayer> {
     if (backend != null) {
       unawaited(
         backend.pause().catchError((Object e) {
-          debugPrint('LivePlayer 退出暂停播放器失败: $e');
-          WindowsLogger.log('LivePlayer', 'pause 失败: $e');
+          // 快速换台时老 backend 的原生 player 可能已部分释放，pause 抛 NPE 是良性竞态，
+          // 仅 debugPrint（release 不输出），不刷日志文件，避免误导为崩溃。
+          debugPrint('LivePlayer 退出暂停播放器（良性竞态）: $e');
         }).then((_) {
           WindowsLogger.log('LivePlayer', 'pause 完成');
         }),
@@ -277,8 +278,9 @@ class _LivePlayerState extends State<LivePlayer> {
             await backend.dispose();
             WindowsLogger.log('LivePlayer', '延迟销毁完成');
           } catch (e) {
-            debugPrint('LivePlayer 延迟销毁播放器失败: $e');
-            WindowsLogger.log('LivePlayer', '延迟销毁失败: $e');
+            // 换台/退出竞态下原生 player 可能已释放，dispose 抛 NPE 是良性竞态，
+            // 不刷日志文件（避免误导为崩溃），仅 debugPrint 供 debug 排查。
+            debugPrint('LivePlayer 延迟销毁播放器（良性竞态）: $e');
           }
         }),
       );
