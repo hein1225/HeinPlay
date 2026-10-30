@@ -535,14 +535,7 @@ jobs:
     #      结果就是只带 3 个 APK 的残缺 Release 被挂到 tag 上。）
     #   build-ohos 未配置 OHOS_SDK_URL 时是「skipped」，不算失败；
     #   其余五个平台必须全部 success。
-    if: >-
-      ${{ inputs.upload-artifacts != false
-          && needs.build-tv.result == 'success'
-          && needs.build-tvlegacy.result == 'success'
-          && needs.build-mobile.result == 'success'
-          && needs.build-windows.result == 'success'
-          && needs.build-linux.result == 'success'
-          && (needs.build-ohos.result == 'success' || needs.build-ohos.result == 'skipped') }}
+    if: ${{ inputs.upload-artifacts != false && needs.build-tv.result == 'success' && needs.build-tvlegacy.result == 'success' && needs.build-mobile.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' && (needs.build-ohos.result == 'success' || needs.build-ohos.result == 'skipped') }}
     permissions:
       contents: write
     env:
