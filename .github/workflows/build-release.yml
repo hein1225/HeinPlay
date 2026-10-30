@@ -411,22 +411,21 @@ jobs:
           set -euo pipefail
           BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
           curl -fsSL --retry 3 -o linux-mpv-x86_64.tar.gz "$BASE/linux-mpv-x86_64.tar.gz"
-          sudo mkdir -p /opt/heinplay-mpv
-          sudo tar -xzf linux-mpv-x86_64.tar.gz -C /opt/heinplay-mpv
-          sudo cp -r /opt/heinplay-mpv/mpv-linux/. /opt/heinplay-mpv/
-          # 链接期需要 libmpv.so（符号链接），运行期用 libmpv.so.2
-          sudo ln -sf libmpv.so.2 /opt/heinplay-mpv/lib/libmpv.so
-          echo "PKG_CONFIG_PATH=/opt/heinplay-mpv" >> "$GITHUB_ENV"
-          # 桌面 mpv 壳的依赖收集脚本按固定顺序找 libmpv.so.2：
-          #   ① <工程>/third_party/mpv-linux/libmpv.so.2
-          #   ② /usr/local/lib/x86_64-linux-gnu/libmpv.so.2   ← 这里装到这里
-          # 找不到它，依赖收集整段会提前 return，连带 libX11 / libasound 也不进包，
-          # 打包自检就会报「bundle 缺少必需依赖」而失败。
+          # 包内结构与工程 third_party 布局一致：
+          #   third_party/mpv-linux/libmpv.so.2 + third_party/mpv-linux/include/mpv/*.h
+          #   third_party/ffmpeg-mini/lib/*.so*   ← libmpv 依赖的**精简** ffmpeg，
+          #        缺它 ldd 闭包不完整，bundle 会缺 libavcodec 等依赖。
+          tar -xzf linux-mpv-x86_64.tar.gz -C third_party/
+          # pkg-config：prefix 指向实际解包位置；链接期需要 libmpv.so（符号链接）
+          ln -sf libmpv.so.2 third_party/mpv-linux/libmpv.so
+          sed -i "s|@PREFIX@|$PWD/third_party/mpv-linux|" third_party/mpv-linux/mpv.pc
+          echo "PKG_CONFIG_PATH=$PWD/third_party/mpv-linux" >> "$GITHUB_ENV"
+          # 兜底：依赖收集脚本也认系统路径
           sudo mkdir -p /usr/local/lib/x86_64-linux-gnu /usr/local/include/mpv
-          sudo cp -f /opt/heinplay-mpv/lib/libmpv.so.2 /usr/local/lib/x86_64-linux-gnu/
-          sudo cp -f /opt/heinplay-mpv/include/mpv/*.h /usr/local/include/mpv/
+          sudo cp -f third_party/mpv-linux/libmpv.so.2 /usr/local/lib/x86_64-linux-gnu/
+          sudo cp -f third_party/mpv-linux/include/mpv/*.h /usr/local/include/mpv/
           sudo ldconfig
-          ls -l /opt/heinplay-mpv /usr/local/lib/x86_64-linux-gnu/libmpv.so.2
+          ls -l third_party/mpv-linux third_party/ffmpeg-mini/lib
 
       - name: Install appimage-builder
         run: |
@@ -525,9 +524,20 @@ jobs:
     name: Create Release
     needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux, build-ohos]
     runs-on: ubuntu-latest
-    # build-ohos 在未配置 OHOS_SDK_URL 时是「skipped」而非失败 —— 此时仍要发布
-    # 其它平台产物，故条件放宽为「全部成功」或「仅鸿蒙被跳过」。
-    if: ${{ inputs.upload-artifacts != false && (success() || needs.build-ohos.result == 'skipped') }}
+    # 🔴 发布纪律：**全部平台构建成功后才发版**，缺一个都不发。
+    #   （旧条件 success() || needs.build-ohos.result == 'skipped' 会在
+    #     Linux/Windows 失败时因「鸿蒙被跳过」而误判为可发布 →
+    #      结果就是只带 3 个 APK 的残缺 Release 被挂到 tag 上。）
+    #   build-ohos 未配置 OHOS_SDK_URL 时是「skipped」，不算失败；
+    #   其余五个平台必须全部 success。
+    if: >-
+      ${{ inputs.upload-artifacts != false
+          && needs.build-tv.result == 'success'
+          && needs.build-tvlegacy.result == 'success'
+          && needs.build-mobile.result == 'success'
+          && needs.build-windows.result == 'success'
+          && needs.build-linux.result == 'success'
+          && (needs.build-ohos.result == 'success' || needs.build-ohos.result == 'skipped') }}
     permissions:
       contents: write
     env:
