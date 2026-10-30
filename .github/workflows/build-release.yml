@@ -385,6 +385,9 @@ jobs:
           channel: 'stable'
 
       # 与 hain_tv/scripts/build_linux_appimage.sh 的 ensure_system_deps 检查项一一对应。
+      # 追加的 libass9/libpulse0/libsndio7.0/libxpresent1/libxv1/libvdpau1 是
+      # **libmpv.so.2 的运行时依赖**：依赖收集脚本用 ldd 逐个解析并拷进 bundle，
+      # 构建机上没有这些库就收集不到 → 打包自检报「bundle 缺少必需依赖」而失败。
       # 该脚本「缺依赖只打印 apt 命令并退出」，所以这里必须一次装齐：
       #   pkg-config/libgtk-3-dev/libasound2-dev —— flutter build linux 与 ALSA（音量插件）
       #   ninja-build/cmake/clang               —— Flutter Linux 工具链
@@ -398,7 +401,8 @@ jobs:
             ninja-build cmake clang \
             patchelf file squashfs-tools zsync \
             desktop-file-utils fakeroot \
-            libepoxy-dev libx11-dev libgl1-mesa-dev libvulkan-dev
+            libepoxy-dev libx11-dev libgl1-mesa-dev libvulkan-dev \
+            libass9 libpulse0 libsndio7.0 libxpresent1 libxv1 libvdpau1
 
       # 注意：不需要 appimagetool，也不要为它装 FUSE。
       # appimage-builder 1.1.0 的 CreateAppImageCommand 只实例化
