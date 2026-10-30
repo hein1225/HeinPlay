@@ -415,6 +415,7 @@ jobs:
           #   third_party/mpv-linux/libmpv.so.2 + third_party/mpv-linux/include/mpv/*.h
           #   third_party/ffmpeg-mini/lib/*.so*   ← libmpv 依赖的**精简** ffmpeg，
           #        缺它 ldd 闭包不完整，bundle 会缺 libavcodec 等依赖。
+          mkdir -p third_party
           tar -xzf linux-mpv-x86_64.tar.gz -C third_party/
           # pkg-config：prefix 指向实际解包位置；链接期需要 libmpv.so（符号链接）
           ln -sf libmpv.so.2 third_party/mpv-linux/libmpv.so
