@@ -105,7 +105,12 @@ echo "=============================================================="
 #   现在：精确候选 → 团队 SDK 目录通配（按版本号排序取最大）→ 报错。
 pick_flutter_dir() {
   local CAND
+  # 🔴 CI（GitHub Actions）里 flutter 由 subosito/flutter-action 安装，
+  #    路径只在 $FLUTTER_ROOT 里（例：/opt/hostedtoolcache/flutter/stable-3.47.5-x64/flutter），
+  #    前面几个候选全都不存在 → 脚本直接报「未找到 flutter」而失败。
+  #    所以这里把 $FLUTTER_ROOT 放在候选首位。
   for CAND in \
+    "${FLUTTER_ROOT:+$FLUTTER_ROOT/bin}" \
     "$HOME/flutter/bin" \
     "/opt/flutter/bin" \
     "/usr/local/flutter/bin" \
@@ -134,6 +139,7 @@ FLUTTER_DIR="$(pick_flutter_dir || true)"
 if [ -z "$FLUTTER_DIR" ]; then
   echo "错误：Linux 上未找到 flutter。" >&2
   echo "请安装 Flutter 并确保以下任一路径存在可执行文件 flutter：" >&2
+  echo "  \$FLUTTER_ROOT/bin   （CI / 通用环境，subosito/flutter-action 会设置）" >&2
   echo "  \$HOME/flutter/bin | /opt/flutter/bin | /usr/local/flutter/bin" >&2
   echo "  /opt/team/tool-deps/sdks/flutter-*/bin   （团队 SDK 目录，本机实际位置）" >&2
   exit 1

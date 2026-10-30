@@ -4,8 +4,10 @@ project(heinplay_mpv_jni)
 # libmpv 头文件：必须与 jniLibs 里的 libmpv.so 同源。
 # 🔴 曾指向 .mpv-build/src/mpv（鸿蒙源码树），与 Android 版二进制不同源、版本可能漂移。
 # 正常路径由 build.gradle.kts 的 -DMPV_INCLUDE_DIR 显式传入，此处仅为独立构建时的回退。
+# 回退路径：CI / 干净环境没有本机 mpv-android 源码树，
+# 改用 HeinPlayMPV 发布的头文件（third_party/include/mpv/*.h，由 CI 从 Release 资产解出）。
 if(NOT DEFINED MPV_INCLUDE_DIR)
-  set(MPV_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../../../../../../.mpv-android/src/mpv" CACHE PATH "mpv include dir")
+  set(MPV_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../../../../../../third_party" CACHE PATH "mpv include dir")
 endif()
 
 add_library(heinplay_mpv_jni SHARED heinplay_mpv_jni.cpp)

@@ -199,3 +199,24 @@ hain_tv_legacy/android/app/src/main/jniLibs/
 .logwork/
 .dsh-kanban.json
 .dsh-kanban.json.bak-v3
+
+# --- 鸿蒙（HarmonyOS NEXT）工程 hain_tv_ohos/ 的本机构建产物（不入库）---
+# ohpm 拉取的预编译依赖包（har）与 mpv 原生库：本地 ohpm/flutter build hap 产物，
+# 每个 har/.so 单个 8~39MB，随仓库入库会无谓膨胀数百 MB。
+hain_tv_ohos/ohos/har/
+hain_tv_ohos/ohos/mpv_arkts/libs/
+hain_tv_ohos/ohos/entry/libs/
+# flutter build hap 生成的 flutter_assets（每次构建都会重新生成）
+hain_tv_ohos/ohos/entry/src/main/resources/rawfile/flutter_assets/
+# 仓库根 libs/：本地拷贝的第三方原生 so（如 media_kit 的 libc++_shared.so）
+libs/
+
+# =====================
+# mpv 内核相关内容已迁至独立仓库 hein1225/HeinPlayMPV
+# （源码快照 / 移植补丁 / 构建脚本 / 预编译产物都在那边）
+# 本仓库只保留播放业务的胶水层（mpv_backend、JNI 壳、桌面壳）。
+# =====================
+# 桌面 mpv 壳的预编译产物（构建期生成）
+hain_tv/linux/hein_mpv/
+# 鸿蒙 mpv 移植用的上游第三方源码（simdjson）→ HeinPlayMPV/thirdparty/simdjson
+hain_tv_ohos/ohos/mpv_arkts/src/main/cpp/third_party/simdjson/

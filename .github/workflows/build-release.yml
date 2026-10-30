@@ -15,6 +15,11 @@ on:
 
 env:
   RELEASE_TAG: ${{ inputs.version }}
+  # mpv 内核依赖来自独立仓库 hein1225/HeinPlayMPV（固定 tag 的 Release 资产）。
+  # HeinPlay 仓库本身不含任何 mpv 内核文件（源码 / 二进制 / 构建脚本）。
+  # 资产清单与落地路径见 HeinPlayMPV/docs/heinplay-integration.md
+  MPV_DEPS_TAG: 'mpv-v1.4.1'
+  MPV_DEPS_BASE: 'https://github.com/hein1225/HeinPlayMPV/releases/download'
 
 jobs:
   build-tv:
@@ -36,7 +41,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.6'
+          flutter-version: '3.47.5'
           channel: 'stable'
 
       - name: Decode TV keystore
@@ -51,6 +56,19 @@ jobs:
           keyAlias=${{ secrets.TV_KEY_ALIAS }}
           keyPassword=${{ secrets.TV_KEY_PASSWORD }}
           EOF
+
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        run: |
+          set -euo pipefail
+          BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          curl -fsSL --retry 3 -o android-arm64-v8a.tar.gz "$BASE/android-arm64-v8a.tar.gz"
+          curl -fsSL --retry 3 -o android-armeabi-v7a.tar.gz "$BASE/android-armeabi-v7a.tar.gz"
+          mkdir -p third_party android/app/src/main/jniLibs
+          tar -xzf mpv-headers.tar.gz -C third_party/
+          tar -xzf android-arm64-v8a.tar.gz -C android/app/src/main/jniLibs/
+          tar -xzf android-armeabi-v7a.tar.gz -C android/app/src/main/jniLibs/
+          ls -l third_party/include/mpv android/app/src/main/jniLibs/arm64-v8a
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -125,6 +143,19 @@ jobs:
       - name: Drop local JDK pin
         run: sed -i '/^org\.gradle\.java\.home=/d' android/gradle.properties
 
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        run: |
+          set -euo pipefail
+          BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          curl -fsSL --retry 3 -o android-tvlegacy-arm64-v8a.tar.gz "$BASE/android-tvlegacy-arm64-v8a.tar.gz"
+          curl -fsSL --retry 3 -o android-tvlegacy-armeabi-v7a.tar.gz "$BASE/android-tvlegacy-armeabi-v7a.tar.gz"
+          mkdir -p third_party android/app/src/main/jniLibs
+          tar -xzf mpv-headers.tar.gz -C third_party/
+          tar -xzf android-tvlegacy-arm64-v8a.tar.gz -C android/app/src/main/jniLibs/
+          tar -xzf android-tvlegacy-armeabi-v7a.tar.gz -C android/app/src/main/jniLibs/
+          ls -l third_party/include/mpv android/app/src/main/jniLibs/arm64-v8a
+
       - name: Get Flutter dependencies
         run: flutter pub get
 
@@ -180,7 +211,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.6'
+          flutter-version: '3.47.5'
           channel: 'stable'
 
       - name: Decode Mobile keystore
@@ -195,6 +226,19 @@ jobs:
           keyAlias=${{ secrets.MOBILE_KEY_ALIAS }}
           keyPassword=${{ secrets.MOBILE_KEY_PASSWORD }}
           EOF
+
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        run: |
+          set -euo pipefail
+          BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          curl -fsSL --retry 3 -o android-arm64-v8a.tar.gz "$BASE/android-arm64-v8a.tar.gz"
+          curl -fsSL --retry 3 -o android-armeabi-v7a.tar.gz "$BASE/android-armeabi-v7a.tar.gz"
+          mkdir -p third_party android/app/src/main/jniLibs
+          tar -xzf mpv-headers.tar.gz -C third_party/
+          tar -xzf android-arm64-v8a.tar.gz -C android/app/src/main/jniLibs/
+          tar -xzf android-armeabi-v7a.tar.gz -C android/app/src/main/jniLibs/
+          ls -l third_party/include/mpv android/app/src/main/jniLibs/arm64-v8a
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -236,19 +280,26 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.6'
+          flutter-version: '3.47.5'
           channel: 'stable'
 
       - name: Get Flutter dependencies
         run: git config --global core.longpaths true && flutter pub get
 
-      # ⚠️ 2026-10-22 核实：桌面 mpv 壳的构建输入 `hain_tv/third_party/mpv-windows/`
+      # 桌面 mpv 壳的构建输入 `hain_tv/third_party/mpv-windows/`
       #   （官方预编译 libmpv-2.dll + mpv.lib + include/mpv/*.h，约 119MB）
-      #   **未纳入 git**（体积原因），而 src/mpv_desktop/CMakeLists.txt 强依赖它。
-      #   因此本 job 目前**无法直接出包**，需补一步「下载并解压 mpv-dev 包到
-      #   hain_tv/third_party/mpv-windows/」后才能成功。下载源与校验方式见
-      #   hain_tv/third_party/mpv-windows/README.md（官方 mpv-player-windows 构建）。
-      #   本地与专用构建机（192.168.8.10）不受影响 —— 该目录已就位。
+      #   **未纳入 git**（124MB 超过 GitHub 单文件 100MB 上限），
+      #   现统一从独立仓库 hein1225/HeinPlayMPV 的固定 tag Release 资产下载
+      #   （见上一步 Fetch mpv dependencies）。
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        shell: pwsh
+        run: |
+          $base = "$env:MPV_DEPS_BASE/$env:MPV_DEPS_TAG"
+          Invoke-WebRequest -Uri "$base/windows-mpv-x86_64.tar.gz" -OutFile "mpv-windows.tar.gz"
+          New-Item -ItemType Directory -Force -Path "third_party" | Out-Null
+          tar -xzf "mpv-windows.tar.gz" -C "third_party"
+          Get-ChildItem -Recurse "third_party/mpv-windows" | Select-Object FullName
+
       - name: Build Windows release
         run: flutter build windows --target lib/main_windows.dart --release
 
@@ -327,7 +378,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.6'
+          flutter-version: '3.47.5'
           channel: 'stable'
 
       # 与 hain_tv/scripts/build_linux_appimage.sh 的 ensure_system_deps 检查项一一对应。
@@ -343,7 +394,8 @@ jobs:
             pkg-config libgtk-3-dev libasound2-dev \
             ninja-build cmake clang \
             patchelf file squashfs-tools zsync \
-            desktop-file-utils fakeroot
+            desktop-file-utils fakeroot \
+            libepoxy-dev libx11-dev libgl1-mesa-dev libvulkan-dev
 
       # 注意：不需要 appimagetool，也不要为它装 FUSE。
       # appimage-builder 1.1.0 的 CreateAppImageCommand 只实例化
@@ -351,6 +403,19 @@ jobs:
       # 用 zsyncmake 生成 .zsync）；而 modules/appimage.py 的 AppImageCreator /
       # utils/appimagetool.py 属于「存在但从未被实例化」的遗留代码（create_appimage.py
       # 只 import 不调用）。因此打包全程不会调用 appimagetool，也不依赖 FUSE。
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        run: |
+          set -euo pipefail
+          BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
+          curl -fsSL --retry 3 -o linux-mpv-x86_64.tar.gz "$BASE/linux-mpv-x86_64.tar.gz"
+          sudo mkdir -p /opt/heinplay-mpv
+          sudo tar -xzf linux-mpv-x86_64.tar.gz -C /opt/heinplay-mpv
+          sudo cp -r /opt/heinplay-mpv/mpv-linux/. /opt/heinplay-mpv/
+          # 链接期需要 libmpv.so（符号链接），运行期用 libmpv.so.2
+          sudo ln -sf libmpv.so.2 /opt/heinplay-mpv/lib/libmpv.so
+          echo "PKG_CONFIG_PATH=/opt/heinplay-mpv" >> "$GITHUB_ENV"
+          ls -l /opt/heinplay-mpv
+
       - name: Install appimage-builder
         run: |
           # pipx 是最稳的安装方式（appimage-builder 官方推荐）。

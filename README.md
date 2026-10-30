@@ -149,6 +149,16 @@
 - **tvLegacy**：为兼容 Android 5.0+（API 21）老设备，mpv 渲染**固定 OpenGL ES**（产品定位上的刻意选择，不是回退）。
 - 设置里的「强制 OpenGL ES 渲染」开关只作用于 mpv 视频渲染（设备 Vulkan 异常时的人工兜底），默认关闭。
 
+### mpv 内核工程（独立仓库）
+
+mpv 内核的**源码、鸿蒙移植补丁、构建脚本与预编译产物**不在本仓库，统一收管在独立仓库
+[**hein1225/HeinPlayMPV**](https://github.com/hein1225/HeinPlayMPV)：
+
+- 两个仓库**相互独立**：mpv 内核按上游节奏独立演进与发版，不受播放器业务迭代牵制；
+- 两个仓库**相互关联**：线上构建按**固定 tag**（当前 `mpv-v1.4.1`）从 HeinPlayMPV 的 Release 资产取用预编译内核，
+  资产清单与落地路径见 [`HeinPlayMPV/docs/heinplay-integration.md`](https://github.com/hein1225/HeinPlayMPV/blob/main/docs/heinplay-integration.md)。
+- 本仓库只保留播放业务的**胶水层**（`mpv_backend.dart`、各平台 JNI / ArkTS 壳、桌面壳）。
+
 ### Linux 版说明（面向掌机）
 
 Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-linux-x86_64.AppImage`），免安装、双击即用，已纳入自动构建，可直接从 Release 下载。

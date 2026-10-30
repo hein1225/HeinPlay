@@ -62,11 +62,17 @@ android {
                 abiFilters += listOf("arm64-v8a", "armeabi-v7a")
                 arguments += listOf("-DANDROID_STL=c++_shared")
                 // mpv 头文件必须与 libmpv.so 二进制同源。
-                // 🔴 曾指向 .mpv-build/src/mpv（鸿蒙源码树），二者不同源、版本可能漂移；
-                // 现指向 .mpv-android 源码树（与 prefix/ 下的 .so 同一次构建产出）。
-                val mpvInclude =
-                    rootProject.file("../../.mpv-android/src/mpv").absolutePath
-                arguments += listOf("-DMPV_INCLUDE_DIR=$mpvInclude")
+                // 🔴 曾指向 .mpv-build/src/mpv（鸿蒙源码树），二者不同源、版本可能漂移。
+                // 现在优先用本机 mpv-android 源码树（与 prefix/ 下的 .so 同一次构建产出）；
+                // CI / 干净环境没有该树，改用 HeinPlayMPV 发布的头文件
+                // （third_party/include/mpv/client.h，由 CI 从 Release 资产解出）。
+                val mpvIncludeSrc = rootProject.file("../../.mpv-android/src/mpv")
+                val mpvInclude = if (mpvIncludeSrc.resolve("include/mpv/client.h").exists()) {
+                    mpvIncludeSrc
+                } else {
+                    rootProject.file("../../third_party")
+                }
+                arguments += listOf("-DMPV_INCLUDE_DIR=${mpvInclude.absolutePath}")
                 cppFlags += listOf("-std=c++17")
             }
         }

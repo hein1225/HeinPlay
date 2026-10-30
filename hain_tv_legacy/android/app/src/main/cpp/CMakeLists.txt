@@ -12,7 +12,7 @@ project(heinplay_mpv_jni CXX)
 # 未传入时回退到仓库内的 mpv 源码树（cpp → main → src → app → android →
 # hain_tv_legacy → 仓库根，共 6 级）。
 if(NOT DEFINED MPV_INCLUDE_DIR)
-  set(MPV_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../.mpv-android/src/mpv")
+  set(MPV_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party")
 endif()
 message(STATUS "MPV_INCLUDE_DIR = ${MPV_INCLUDE_DIR}")
 if(NOT EXISTS "${MPV_INCLUDE_DIR}/include/mpv/client.h")
