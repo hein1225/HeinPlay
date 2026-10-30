@@ -142,6 +142,12 @@ class _SplashScreenState extends State<SplashScreen>
       await UserDataService.migrateLegacyAccount();
       _setProgress(0.52);
 
+      // 4.5 播放后端升级迁移（fvp -> mpv）：必须早于任何播放页读取后端，
+      // 否则老用户会带着 prefs 里的 "fvp" 进入一个没有 fvp 的版本。
+      // （migrateLegacyAccount 内部已调用一次，此处显式再调，保证即使
+      //  账号迁移被重构也不会漏掉；该迁移函数本身幂等。）
+      await UserDataService.migratePlayerBackendToMpv();
+
       // 5. 服务器测速 / 连接确认（如果用户开启自动选优）。
       final autoSelectLowLatency =
           await UserDataService.getAutoSelectLowLatencyServer();
@@ -151,10 +157,17 @@ class _SplashScreenState extends State<SplashScreen>
         final serverUrl = primary.isNotEmpty ? primary : backup;
         if (serverUrl.isNotEmpty) {
           try {
+            // 🔴🔴 2026-10-16 加总超时兜底：`selectBestServer` 内部已对每个
+            //   候选地址加了建连/请求超时（见 `server_latency_service.dart`
+            //   的 `connectionTimeout` 与 `getUrl(...).timeout`），此处再兜一层，
+            //   保证「服务器测速」在任何异常网络环境下都不会拖住启动流程。
+            //   背景：模拟器 NAT 访问不到局域网 NAS 时，测速曾永久挂起，
+            //   导致 splash 串行 await 卡死、应用表现为「打不开」。
+            //   与下方 `HomeDataPreload.preload()` 的写法保持一致。
             await ServerLatencyService.selectBestServer(
               serverUrl,
               primary.isNotEmpty ? backup : null,
-            );
+            ).timeout(const Duration(seconds: 15), onTimeout: () => serverUrl);
           } catch (e) {
             debugPrint('启动时服务器测速失败: $e');
           }

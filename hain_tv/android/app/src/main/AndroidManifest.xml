@@ -61,6 +61,30 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 🔴 关闭 Flutter 引擎的 Impeller（Vulkan）渲染后端，回退 Skia + OpenGL ES。
+             注意：这**只影响 App 自己的 UI 界面**，与 mpv 播放器内部的 Vulkan 无关
+             —— 视频画面走的是 libplacebo + gpu-api=vulkan，自己持有 Surface，
+             不受此开关影响，Vulkan 硬解照常生效。
+
+             关闭原因（2026-10-13 雷电模拟器实测）：
+             Flutter 引擎 android_context_dynamic_impeller.cc 的 IsDeviceEmulator()
+             靠 ro.hardware ∈ {goldfish,ranchu,qemu} / 机型含 gphone / 存在
+             /dev/qemu_pipe 三选一来识别模拟器，命中就强制回落 OpenGLES。
+             雷电模拟器把机型伪装成 SM-S9470 SAMSUNG，三条判定全部落空，
+             Flutter 误判为真机 → 走 Impeller Vulkan → goldfish_vulkan 驱动
+             能力不全（gralloc 报 Unknown format 56/59、101010-2 初始化失败）
+             → UI 线程卡死：Skipped 48 frames，Launch timeout，无 tombstone。
+             同类风险也存在于华为（AHB import 不稳）、Exynos 系列、
+             API<32 的 MediaTek —— 均在引擎的回退名单里。
+
+             该 flag 的 allowedInRelease=true，release 包同样生效。
+             本工程 Flutter 3.47.5 的 slimpeller=false（libflutter.so 内仍含
+             android_context_gl_skia.cc），故关闭后可正常回退到 Skia + GLES。 -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- FileProvider：用于分享 APK 文件给系统安装器 -->
         <provider
             android:name="androidx.core.content.FileProvider"

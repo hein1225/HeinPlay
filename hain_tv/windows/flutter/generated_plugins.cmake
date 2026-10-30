@@ -4,7 +4,6 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   flutter_js
-  fvp
   permission_handler_windows
   screen_brightness_windows
   screen_retriever_windows

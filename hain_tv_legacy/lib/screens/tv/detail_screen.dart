@@ -201,6 +201,26 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _hasSpeedTested = false;
   String _speedTestProgress = '';
   bool _searchingSources = false;
+
+  /// 🔴 2026-10-29 真机复盘：LunaTV `/api/search` 超时 30s × 最多 2 次重试 ×
+  ///   多个关键词变体，最坏可挂 90s 以上；期间播放按钮被「搜索源中」禁用，
+  ///   用户体感就是「进入视频详情页就卡死」（实测：进入详情页后 15s 内 app 无任何
+  ///   进展，/api/search 始终未返回）。这里加看门狗：到点就放开播放按钮，
+  ///   源搜索继续在后台跑完，不阻塞用户看片。
+  Timer? _sourceSearchWatchdog;
+
+  /// 启动源搜索看门狗（超时未完成即放开播放按钮）。
+  void _startSourceSearchWatchdog() {
+    _sourceSearchWatchdog?.cancel();
+    _sourceSearchWatchdog = Timer(const Duration(seconds: 12), () {
+      if (!mounted || !_searchingSources) return;
+      debugPrint('[SourceSearch] 源搜索超过 12s 仍未完成，放开播放按钮（后台继续搜索）');
+      setState(() {
+        _searchingSources = false;
+      });
+    });
+  }
+
   bool _pendingSpeedTestRestart = false;
   bool _isBangumiFallback = false;
   String? _error;
@@ -251,7 +271,8 @@ class _DetailScreenState extends State<DetailScreen> {
   /// 搜索源中不可点击；自动测速开启时，测速中或多源未完成测速也不可点击。
   /// 自动测速关闭后，即使手动测速中也可进入播放，测速在后台继续。
   bool get _canPlayWithoutRecord {
-    if (_searchingSources) return false;
+    // 🔴 已有可用源时，后台源搜索不应再挡住播放（否则源搜索一慢就「详情页卡死」）。
+    if (_searchingSources && _sources.isEmpty) return false;
     if (_autoSpeedTestEnabled && _speedTesting) return false;
     if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
       return false;
@@ -261,7 +282,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   /// 无播放记录时，播放按钮显示的文案。
   String get _playButtonTextWithoutRecord {
-    if (_searchingSources) return '搜索源中';
+    if (_searchingSources && _sources.isEmpty) return '搜索源中';
     if (_autoSpeedTestEnabled && _speedTesting) return _speedTestProgress;
     if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
       return '测速中';
@@ -427,6 +448,8 @@ class _DetailScreenState extends State<DetailScreen> {
 
   @override
   void dispose() {
+    _sourceSearchWatchdog?.cancel();
+    _sourceSearchWatchdog = null;
     HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _disposePreviewPlayer();
     _scrollController.dispose();
@@ -683,6 +706,7 @@ class _DetailScreenState extends State<DetailScreen> {
       _searchingSources = true;
       _fuzzySearchEnabled = fuzzy;
     });
+    _startSourceSearchWatchdog();
 
     // 使用快速搜索（含变体），不走豆瓣 enrich，避免详情页等待过久。
     // Bangumi 每日放送条目直接使用严格模糊匹配，避免精确模式把带后缀
@@ -704,6 +728,8 @@ class _DetailScreenState extends State<DetailScreen> {
       exactMatch: initialExactMatch,
       fuzzy: fuzzy,
       onProgress: onProgress,
+      // 🔴 源搜索单次请求最多等 12s，避免服务器变慢时详情页被拖死。
+      timeout: const Duration(seconds: 12),
     );
     debugPrint(
       '[SourceSearch] 首轮结果: success=${response.success}, '
@@ -723,6 +749,8 @@ class _DetailScreenState extends State<DetailScreen> {
         exactMatch: false,
         fuzzy: false,
         onProgress: onProgress,
+        // 🔴 源搜索单次请求最多等 12s，避免服务器变慢时详情页被拖死。
+        timeout: const Duration(seconds: 12),
       );
       debugPrint(
         '[SourceSearch] 高相关匹配结果: count=${response.data?.length ?? 0}',
@@ -742,6 +770,8 @@ class _DetailScreenState extends State<DetailScreen> {
           exactMatch: true,
           fuzzy: false,
           onProgress: onProgress,
+          // 🔴 源搜索单次请求最多等 12s，避免服务器变慢时详情页被拖死。
+          timeout: const Duration(seconds: 12),
         );
         debugPrint(
           '[SourceSearch] 基准名重试结果: count=${response.data?.length ?? 0}',
@@ -763,6 +793,8 @@ class _DetailScreenState extends State<DetailScreen> {
         exactMatch: false,
         fuzzy: false,
         onProgress: onProgress,
+        // 🔴 源搜索单次请求最多等 12s，避免服务器变慢时详情页被拖死。
+        timeout: const Duration(seconds: 12),
       );
       debugPrint(
         '[SourceSearch] Bangumi 降级结果: count=${response.data?.length ?? 0}',
@@ -910,6 +942,7 @@ class _DetailScreenState extends State<DetailScreen> {
       _searchingSources = true;
       _fuzzySearchEnabled = true;
     });
+    _startSourceSearchWatchdog();
     try {
       final response = await SearchService.search(
         keyword: widget.title,
@@ -1268,6 +1301,17 @@ class _DetailScreenState extends State<DetailScreen> {
     if (_sources.length < 2 || _speedTesting) return;
     if (!force && !onlyUntested && _hasSpeedTested) return;
 
+    // ⚠️ 2026-10-12 起播慢诊断：量出「自动测速」对起播的挤占程度。
+    //   背景：真机日志显示点播 open 之后，主线程仍在批量分析几十个**不相干**的
+    //   m3u8（maoyanplay/ly166/bfikuncdn/...），open→首帧被拖到 9.5s，
+    //   而 hwdec 回读更是拖到 25s 才到。需先量化这段开销，再决定是否改成懒执行。
+    //   注意：本埋点只打印，不改变任何行为。
+    final _speedTestWatch = Stopwatch()..start();
+    debugPrint(
+      '[起播诊断] 自动测速开始：源数=${_sources.length} force=$force onlyUntested=$onlyUntested '
+      '已测过=$_hasSpeedTested 时刻=${DateTime.now().toIso8601String()}',
+    );
+
     setState(() {
       _speedTesting = true;
       _speedTestProgress = '测速中 0/${_sources.length}';
@@ -1327,6 +1371,13 @@ class _DetailScreenState extends State<DetailScreen> {
     );
 
     if (!mounted) return;
+
+    // ⚠️ 2026-10-12 起播慢诊断：测速耗时收口（只打印，不改行为）。
+    _speedTestWatch.stop();
+    debugPrint(
+      '[起播诊断] 自动测速结束：耗时=${_speedTestWatch.elapsedMilliseconds}ms '
+      '参与源数=${_sources.length}',
+    );
 
     // 将测速结果合并到当前源列表（避免测速期间源列表被后台搜索更新后，
     // 这里用旧的 sorted 列表覆盖导致新增源丢失或用户手动选择被重置）。

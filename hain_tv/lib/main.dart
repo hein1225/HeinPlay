@@ -5,6 +5,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'app_linux.dart';
 import 'app_tv.dart';
 import 'app_windows.dart';
 import 'platform/device_utils.dart';
@@ -15,9 +16,37 @@ import 'services/server_latency_service.dart';
 import 'utils/app_logger.dart';
 import 'services/user_data_service.dart';
 import 'services/version_migration_service.dart';
+import 'mpv_selftest_app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 根据设置初始化文件日志，全平台统一由「获取日志」开关控制。
+  //
+  // 🔴 2026-10-21：**必须放在自检分支之前**。
+  //    自检模式会提前 runApp 并 return，若日志初始化留在后面，
+  //    自检运行时不会产生任何日志文件（实测 ~/文档/app_logs/ 为空），
+  //    排障时无从核实。放到最前面可保证两条路径都写日志。
+  await AppLogger.initialize();
+
+  // 🔴 排障自检入口（默认关闭）：HEIN_MPV_SELFTEST=<媒体路径> 时，
+  //    直接渲染一个最小的 Texture(textureId) 播放界面，绕过首页/详情页。
+  //
+  //    为什么需要它：桌面 mpv 壳的出画链路是
+  //      mpv 渲染 → FBO → FlTextureGL.populate → Flutter 采样
+  //    而 populate **只在 Dart 侧真的构建了 `Texture(textureId)` 时**
+  //    才会被 Flutter 调用。真机排障常无法人工点进播放页（无输入设备/
+  //    自动化环境），没有这个入口就无法验证「捕获 Flutter EGL 上下文 →
+  //    建共享上下文 → 出画」这一段，只能看到「渲染在跑但 popupate 0 次」。
+  //
+  //    仅在显式设置该环境变量时走此分支，正常启动完全不受影响。
+  if (Platform.isLinux) {
+    final selftestMedia = Platform.environment['HEIN_MPV_SELFTEST'] ?? '';
+    if (selftestMedia.isNotEmpty) {
+      runApp(MpvSelfTestApp(media: selftestMedia));
+      return;
+    }
+  }
 
   // 缓存应用版本信息，供 User-Agent 与设置页读取。
   await AppInfoService.init();
@@ -30,9 +59,6 @@ void main() async {
     SharedPreferencesStorePlatform.instance = prefsStore;
     PortableStorageWindows.registerStore(prefsStore);
   }
-
-  // 根据设置初始化文件日志，全平台统一由「获取日志」开关控制。
-  await AppLogger.initialize();
 
   // Windows 桌面端需要初始化窗口管理器，并显式设置窗口标题避免中文乱码。
   if (Platform.isWindows) {
@@ -72,9 +98,33 @@ void main() async {
   BangumiService.loadProxySettings().catchError((_) {});
 
   if (Platform.isWindows) {
-    // Windows 版复用 TV 版页面布局，标记为 TV 模式以确保焦点、遥控逻辑生效。
+    // Windows 端与 Linux 端保持一致：isTv=true 只影响直播页/设置页里
+    // 「TV 布局 vs 电脑版布局」的分支（内部以 isTv && isDesktop 组合判断），
+    // **不**决定播放页走哪套页面 —— 播放页是桌面专用的 WindowsPlayerScreen。
     DeviceUtils.isTvOverride = true;
     runApp(const HainWindowsApp());
+    return;
+  }
+
+  if (Platform.isLinux) {
+    // 🔴🔴 2026-10-23 修复「Linux 版界面像 TV、不能像 Windows 那样用鼠标/手柄」：
+    //   本文件是 Flutter 的**默认 target**（`flutter build linux` / `flutter run -d linux`
+    //   不带 `--target` 时用的就是它），此前**完全没有 Linux 分支** → 直接落到
+    //   `HainTvApp`，也就是 **TV 界面 + TV 播放页**（遥控器焦点驱动，没有桌面版的
+    //   鼠标点击 / 比例切换 / 小窗 / 手柄交互）。
+    //   发行版脚本 build_linux_appimage.sh 走的是 `--target lib/main_linux.dart`，
+    //   所以只有「自己直接 build linux」的用户会撞上这个坑 —— 现象正是
+    //   「Linux 版跟 TV 一样，而不是跟 Windows 一样」。
+    //   此处补齐分支：**任何** Linux 入口都得到与 Windows 一致的桌面版。
+    //   走 LinuxShell → screens/windows/*（首页/分类/搜索/直播/我的）
+    //   → screens/windows/detail_screen.dart → WindowsPlayerScreen（桌面播放页）。
+    //
+    //   Linux 桌面端同样必须初始化窗口管理器：[HainLinuxApp] 用到了
+    //   setPreventClose / addListener / close，未先 ensureInitialized 会直接抛错。
+    await windowManager.ensureInitialized();
+    await windowManager.setTitle('海因影视');
+    DeviceUtils.isTvOverride = true;
+    runApp(const HainLinuxApp());
     return;
   }
 

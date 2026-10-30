@@ -56,6 +56,10 @@ class VlcBackend implements VideoPlayerBackend {
   bool _completedReported = false;
   BoxFit _fit = BoxFit.contain;
 
+  /// VLC 仅 Windows 可用（走原生子窗口），不依赖 PlatformView 创建时序。
+  @override
+  bool get requiresEagerMount => false;
+
   @override
   BoxFit get fit => _fit;
 
@@ -104,7 +108,6 @@ class VlcBackend implements VideoPlayerBackend {
     VideoFormat? formatHint,
     bool preferTextureView = false,
   }) async {
-    await dispose();
     _completedReported = false;
 
     debugPrint('VlcBackend open: $url isLive=$isLive');
@@ -173,6 +176,38 @@ class VlcBackend implements VideoPlayerBackend {
     ];
 
     try {
+      // 🔴🔴 桌面端换源：**原地换源**，不销毁重建 controller。
+      //
+      //   重建的代价（Windows server 实测）：
+      //   ① libvlc 线程退出阻塞 UI 线程 → **「软件未响应」卡死**；
+      //   ② VlcPlayer 的 PlatformView 绑定了 controller 对象，controller 换了
+      //      就必须重建 PlatformView → 中间黑帧 → **闪屏**。
+      //
+      //   原地换源用 setMedia 换 media：请求头（httpHeaders）与
+      //   mediaOptions（缓存）都能随 media 一起下发，只有**构造期**的
+      //   vlcOptions（--network-caching 等档位）无法中途更改 —— 点播档位在
+      //   一次播放期间本就不变，可接受。
+      //   失败（controller 尚未 attach / 已被释放）时回退到重建路径。
+      final existing = _controller;
+      if (existing != null) {
+        try {
+          final source = VlcMediaSource(
+            uri: Uri.parse(finalUrl),
+            httpHeaders: httpHeaders,
+            mediaOptions: mediaOptions,
+            startPosition: startAt ?? Duration.zero,
+          );
+          await existing.setMedia(source, autoPlay: true);
+          WindowsLogger.log('VlcBackend', '原地换源成功（不重建 controller/PlatformView）');
+          return;
+        } catch (e) {
+          WindowsLogger.log('VlcBackend', '原地换源失败，回退重建: $e');
+          await dispose();
+        }
+      } else {
+        await dispose();
+      }
+
       final controller = VlcPlayerController(
         options: vlcOptions,
       );

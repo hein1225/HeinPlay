@@ -1,12 +1,11 @@
 name: hain_tv
 description: "海因影视 TV 版"
 publish_to: 'none'
-version: 1.4.0+24
+version: 1.4.1+25
 
 environment:
-  # 鸿蒙移植方案B：兼容 flutter_flutter 3.41.10-ohos (Dart 3.11.5)。
-  # 同时仍满足 Android/Windows 基线 (官方 Flutter 3.47.2, Dart >=3.12)。
-  sdk: ^3.11.0
+  # 官方 Flutter 基线（3.47.5，Dart 3.13.4）。鸿蒙兼容约束已于 2026-09-27 鸿蒙独立为 hain_tv_ohos/ 后移除。
+  sdk: ^3.12.0
 
 dependencies:
   flutter:
@@ -14,9 +13,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.5.0
   shared_preferences: ^2.5.3
-  cached_network_image: ^3.4.1
-  video_player: ^2.11.0
-  video_player_android: ^2.11.0
+  cached_network_image: ^4.0.0
+  video_player: ^2.14.0
+  video_player_android: ^2.14.0
   path_provider: ^2.1.5
   path_provider_platform_interface: ^2.1.2
   shared_preferences_platform_interface: ^2.4.1
@@ -29,7 +28,7 @@ dependencies:
   xml: ^7.0.1
   wakelock_plus: ^1.7.0
   screen_brightness: ^2.1.1
-  volume_controller: ^3.5.0
+  volume_controller: ^3.6.1
   flutter_js: ^0.8.2
   window_manager: ^0.5.2
   package_info_plus: ^10.1.2
@@ -37,18 +36,34 @@ dependencies:
   # Windows 手柄（XInput）轮询：用 dart:ffi 直接调用系统自带的 xinput*.dll，
   # 把 A/B/方向键映射为确认/返回/方向（见 services/gamepad_input_service.dart）。
   ffi: ^2.1.0
-  # fvp 插件内部用 package:logging 转发 libmdk 的原生日志：
-  # `Logger('mdk')` = libmdk 内部日志（reader/demuxer/解码决策），
-  # `Logger('fvp')` = fvp 插件自身日志。但 package:logging 在**没有任何
-  # listener** 时会把日志静默丢弃，且 root 默认 Level.INFO 会把 debug/all
-  # 级别直接过滤掉——而本项目此前从未用过 logging，于是 libmdk 的内部日志
-  # 一条都到不了 App 侧（= 「fvp 卡住但 App 层全链路日志正常」无法定位的根因）。
-  # 现由 utils/mdk_log_bridge.dart 把这些日志接入 AppLogger（受「获取日志」
-  # 开关控制），因此显式声明该依赖（原为 transitive）。
+  # 🔴 2026-10-16：本依赖原为 fvp/libmdk 的日志桥而显式声明（原为 transitive）。
+  #   fvp 摘除后 utils/mdk_log_bridge.dart 已删除，logging 不再由本项目直接使用；
+  #   保留声明是因为其它依赖仍需要它，且移除会改变 pub 解析结果（风险大于收益）。
+  #   教训存档：fvp 插件内部用 package:logging 转发 libmdk 原生日志
+  #   （`Logger('mdk')` = libmdk 内部 reader/demuxer/解码决策，`Logger('fvp')` =
+  #   插件自身日志），但 package:logging 在**没有任何 listener** 时会把日志静默
+  #   丢弃，且 root 默认 Level.INFO 会过滤掉 debug 级 —— 这正是「fvp 卡住但
+  #   App 层全链路日志完全正常」无法定位的根因，当时靠 MdkLogBridge 才拿到证据。
   logging: ^1.3.0
-  fvp: 0.37.0
-  # fvp 播放经本地代理的 AES-128 加密 HLS 会卡死（libmdk 解密缺陷），改由本地代理
-  # 取 key 并逐段 AES-128-CBC 解密后吐明文绕开。仅 fvp 后端使用。
+  # 🔴🔴 2026-10-16：**已摘除 fvp 依赖**（原 `fvp: 0.37.0`）。
+  #
+  #   全平台（含 Windows / Linux 桌面版与 legacy 独立工程）统一改用 **mpv**
+  #   （官方 mpv 内核 + 自写壳）。fvp 的入口注册（main_linux / main_windows）
+  #   与后端实现（lib/player/fvp_backend.dart）已一并删除。
+  #
+  #   历史留给后人的三条踩坑记录（原 `fvp: 0.37.0` 上方的注释）：
+  #     · 0.38.1（含本地补丁版与纯 pub 版）实测均复现「续播点起播即冻结 →
+  #       FVP_DECODE_STALL → STALL-RECOVER 重建」，部分源必现。0.38.x 本身
+  #       即回归源，故当时回到 pub 官方 0.37.0 作为已知可用基线。
+  #     · 曾加过 `fvp: path: deps/fvp-0.37.0-patched`（用 prepare(position:)
+  #       定位续播点），实测反而导致 libmdk 从第 0 片顺序下载、init 拖到
+  #       16-32s 并超过 openTimeout 误报播放失败，该本地补丁已整体移除。
+  #     · fvp 内部用 package:logging 转发 libmdk 原生日志（Logger('mdk') /
+  #       Logger('fvp')），但无 listener 时会被静默丢弃 —— 这正是「fvp 卡住
+  #       但 App 层全链路日志正常」无法定位的根因。当时靠 utils/mdk_log_bridge.dart
+  #       接入 AppLogger 才拿到证据。**该 bridge 随本次摘除一并移除。**
+  #   教训：第三方播放内核把内部日志接到 Dart 侧 logging 通道却不声明 listener
+  #   时，故障会「对外完全静默」——选型时必须先确认日志可观测性。
   pointycastle: ^3.9.0
   vlc_player:
     path: deps/vlc_player_windows
@@ -68,24 +83,32 @@ dependency_overrides:
   # audio_video_progress_bar 0.11.0 仍使用 Flutter 3.x 已移除的 textTheme.bodyText1，
   # 强制覆盖到 2.0.3 以兼容 Flutter 3.44.6 的新 TextTheme API。
   audio_video_progress_bar: ^2.0.3
-  # shared_preferences 官方 pub.dev 版未声明 platforms.ohos，联邦插件机制要求
-  # 主包在自身 pubspec 里写 `ohos: default_package: shared_preferences_ohos` 才会
-  # 把鸿蒙实现接进 dart_plugin_registrant，否则 ohos 构建启动即抛
+  # 🔴 2026-10-22 钉版：shared_preferences_android 必须锁 2.4.x，不可升 2.5.x。
+  # 2.5.1 起把 Android 侧 Pigeon 实现改成 Kotlin suspend fun（JVM 签名变为
+  # getAll(String, List, Continuation)），但 shared_preferences 2.5.6 的 Dart 侧
+  # 同步 API 仍按老签名调用，启动即崩：
+  #   java.lang.NoSuchMethodError: no non-static method
+  #   "Lio/flutter/plugins/sharedpreferences/SharedPreferencesApiRegistrar;
+  #    .getAll(Ljava/lang/String;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;"
+  # 实测机型 Xiaomi 12S Pro（模拟器），启动 0.3s 内 Unhandled Exception，
+  # 界面完全不渲染。钉到 2.4.28（messages.g.dart 仅一份同步 getAll，签名匹配）解决。
+  # ⚠️ 该崩溃在 TV flavor 同样会出现（共用同一 Dart/Android 依赖树）。
+  shared_preferences_android: 2.4.28
+  # 【已迁出】鸿蒙专属覆盖：shared_preferences / shared_preferences_ohos 的
+  # atomgit(OpenHarmony TPC) git 版曾在此声明，用途是让主包 pubspec 含 ohos 段，
+  # 否则鸿蒙构建启动即抛
   # MissingPluginException(getAll on plugins.flutter.io/shared_preferences)。
-  # 因此主包也必须指向 OpenHarmony TPC 的 git 版（其 pubspec 含 ohos 段）。
-  shared_preferences:
-    git:
-      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
-      path: packages/shared_preferences/shared_preferences
-      ref: master
-  shared_preferences_ohos:
-    git:
-      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
-      path: packages/shared_preferences/shared_preferences_ohos
-      ref: master
+  # 2026-09-27 鸿蒙已独立为 hain_tv_ohos/ 工程，该覆盖随之迁出；
+  # 主工程回到 pub.dev 官方版，不再受 atomgit 可达性影响、也不再拖慢 pub get。
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.3
+  # 🔴 HeinPlay 新增（2026-10-23）：此前本工程未声明 flutter_test，
+  #   导致 test/ 下用例完全无法运行。补上后才能对「测速让路」这类
+  #   纯逻辑做单元验证。`sdk: flutter` 用 Flutter SDK 内置版本，
+  #   不引入外部包，不影响产物体积。
+  flutter_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true

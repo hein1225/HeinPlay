@@ -47,9 +47,35 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
-            // 低版本真机及常见模拟器都要能装；Flutter 的 release 引擎未提供 x86 产物，
-            // 因此不包含 x86，避免在 x86 设备上触发 libflutter.so 缺失闪退。
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+            // 🔴 HeinPlay mpv：libmpv 内核已就位 arm64-v8a 与 armeabi-v7a 两套
+            // （来源 .mpv-android/src/mpv-android/buildscripts/prefix/，NDK r27 编译）。
+            // 两 ABI 都要：v8a 覆盖主流 64 位设备，v7a 覆盖老旧 32 位电视盒子。
+            // 不收 x86/x86_64：Flutter release 引擎无对应产物，mpv 也未编该架构。
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+
+        // 🔴 HeinPlay mpv：用 NDK 编译自写 JNI 壳（libheinplay_mpv_jni.so），
+        // 它直接调官方 mpv 内核（jniLibs 内的 libmpv.so）。
+        externalNativeBuild {
+            cmake {
+                // 🔴 HeinPlay mpv：libmpv 内核两 ABI 均已就位，原生壳同样编两个。
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                arguments += listOf("-DANDROID_STL=c++_shared")
+                // mpv 头文件必须与 libmpv.so 二进制同源。
+                // 🔴 曾指向 .mpv-build/src/mpv（鸿蒙源码树），二者不同源、版本可能漂移；
+                // 现指向 .mpv-android 源码树（与 prefix/ 下的 .so 同一次构建产出）。
+                val mpvInclude =
+                    rootProject.file("../../.mpv-android/src/mpv").absolutePath
+                arguments += listOf("-DMPV_INCLUDE_DIR=$mpvInclude")
+                cppFlags += listOf("-std=c++17")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -109,13 +135,19 @@ android {
     }
 
     // 多个依赖可能同时携带 libc++_shared.so，打包时只保留一份避免冲突。
+    // 另：fvp / vlc(mdk) 等第三方插件自带 x86_64 预编译产物，不受 defaultConfig
+    // 的 abiFilters 约束，会白白塞进包里约 19MB。本项目只发 arm 真机包，
+    // 故显式排除 x86/x86_64 —— 排除后这些 ABI 上 mpv 也不存在，
+    // 避免出现"能装上但 mpv 后端加载失败"的迷惑现象。
     packaging {
         jniLibs {
             pickFirsts += listOf(
-                "lib/armeabi-v7a/libc++_shared.so",
                 "lib/arm64-v8a/libc++_shared.so",
-                "lib/x86/libc++_shared.so",
-                "lib/x86_64/libc++_shared.so",
+                "lib/armeabi-v7a/libc++_shared.so",
+            )
+            excludes += listOf(
+                "lib/x86_64/**",
+                "lib/x86/**",
             )
         }
     }

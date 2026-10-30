@@ -1,0 +1,132 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        // ── 启动页配置（2026-09-28 改造，修复「每次打开先闪一下全屏大软件图标」）──
+        //
+        // 【问题根因】此前 startWindowIcon 指向 startIcon.png，而它与 foreground.png
+        // 是**同一张 1024×1024 的 App 图标**（md5 均为 6d74c213）。鸿蒙官方明确：
+        //   「startWindowIcon 用于展示应用图标，**不会随窗口尺寸进行缩放**」
+        //   「此图标资源会在启动页面上**按实际大小居中显示**」
+        // 于是那张 1024×1024 的图被原样居中画在启动窗口上 —— 用户看到的就是
+        // 「全屏大软件图标」。而安卓/电脑版的原生启动层用的是 splash.jpg
+        // （与 Flutter 封面**同一个文件**，md5 一致），故观感无缝。
+        //
+        // 【修复方案】启用「增强启动页」（API 19+，本工程 compatibleSdkVersion
+        // 为 6.1.0(23)，满足）：
+        //   · startWindow 指向 profile/start_window.json
+        //   · 其中 startWindowBackgroundImage 以**整个窗口**为容器填充封面，
+        //     填充方式 Cover（保持宽高比、两边都 ≥ 显示边界，即裁剪铺满）
+        //   · 资源按 vertical/horizontal 限定词目录分方向供图，与安卓的
+        //     drawable / drawable-land 一一对应
+        // 这才是鸿蒙官方对「全屏启动资源」的推荐做法。官方原文：
+        //   「startWindowIcon 建议避免设计针对单个产品全屏尺寸的图标资源」
+        //   「**全屏资源的展示建议采用配置增强启动页**」
+        //
+        // ⚠️ 下面两行保留为**降级兜底**：低版本系统不识别 startWindow 时回落到
+        // 简易启动页（文档：这两个字段「当 startWindow 被配置时失效」）。
+        // startIcon 同时换成 256×256 规范小图，避免兜底路径再次出现大图标。
+        // 鸿蒙 lint 规则 start-window-icon-check 也要求该图 ≤ 256×256。
+        "startWindow": "$profile:start_window",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        // 屏幕方向：跟随传感器自动旋转，**且受控制中心旋转开关管辖**。
+        //
+        // ⚠️ 此项必须显式声明。鸿蒙 ability 的 orientation 默认值为 "portrait"
+        // （锁定竖屏），不写就等于禁止应用横屏。
+        //
+        // 🔴 2026-09-28（第三轮修正）：原值为 "auto_rotation"，用户报
+        //   「非播放界面在关闭系统旋转开关时仍然会重力旋转」。
+        //   根因：ability 的 "auto_rotation" 对应窗口枚举 AUTO_ROTATION(=4) 系列，
+        //   官方语义是「跟随传感器旋转，**不受**控制中心旋转开关控制」
+        //   （见 @ohos.window.d.ts 中 AUTO_ROTATION / AUTO_ROTATION_LANDSCAPE
+        //     的注释 "This rotation is not controlled by the rotation switch
+        //     in Control Panel."）。故关掉开关也照样转。
+        //
+        //   改为 "auto_rotation_restricted"，其官方语义为「跟随传感器在四个方向
+        //   间旋转，**且受**控制中心旋转开关控制」——开关打开则按姿态自动转，
+        //   开关关闭则保持当前方向。这正是用户要的「安卓版那样的跟随系统」。
+        //
+        //   合法取值（modulecheck/module.json 校验表）：
+        //     auto_rotation / auto_rotation_landscape / auto_rotation_portrait /
+        //     auto_rotation_restricted / auto_rotation_landscape_restricted /
+        //     auto_rotation_portrait_restricted / locked /
+        //     auto_rotation_unspecified / follow_desktop
+        //
+        // 直播播放页与点播播放页仍会用 setPreferredOrientations 按需锁定/恢复，
+        // 两者不冲突：此处规定的是「应用允许被系统旋转到哪些方向」的基线能力。
+        //
+        // ⚠️ 非播放界面（首页/分类/直播列表/搜索/我的等）全程**不调用**
+        //    setPreferredOrientations，窗口保持本声明的方向策略 —— 所以
+        //    「跟随系统开关」只由这一行决定。
+        "orientation": "auto_rotation_restricted",
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ],
+      }
+    ],
+    // 权限清单与安卓手机版（hain_tv/android/app/src/main/AndroidManifest.xml）对齐。
+    // 安卓侧：INTERNET / ACCESS_NETWORK_STATE / WAKE_LOCK / 媒体读取 / 应用内安装。
+    // 鸿蒙侧对应关系见 docs/OHOS_BUILD_SETUP.md 第 6 节。
+    "requestPermissions": [
+      {
+        // 联网（安卓 INTERNET）：访问 LunaTV 服务器、加载图片与视频流
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        // 网络状态（安卓 ACCESS_NETWORK_STATE）：ConnectivityService 探测服务器可达性
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      {
+        // 后台运行（安卓 WAKE_LOCK）：播放视频时保持屏幕常亮 / 进程存活
+        // 该权限为 normal 级，需声明 reason 与 usedScene
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "reason": "$string:reason_keep_background",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
+    ]
+  }
+}

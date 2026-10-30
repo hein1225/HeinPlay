@@ -1,0 +1,24 @@
+{
+  "modelVersion": "26.0.0",
+  "description": "Please describe the basic information.",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.25",
+    "@ohos/hamock": "1.0.0"
+  },
+  "modules": {
+    "entries": [
+      "./entry",
+      "./mpv_arkts"
+    ]
+  },
+  "overrides": {
+    "screen_brightness_ohos": "file:./har/screen_brightness_ohos.har",
+    "@ohos/flutter_module": "file:./entry",
+    "@ohos/flutter_ohos": "file:./har/flutter.har",
+    "shared_preferences_ohos": "file:./har/shared_preferences_ohos.har",
+    "url_launcher_ohos": "file:./har/url_launcher_ohos.har",
+    "path_provider_ohos": "file:./har/path_provider_ohos.har",
+    "video_player_ohos": "file:./har/video_player_ohos.har"
+  }
+}

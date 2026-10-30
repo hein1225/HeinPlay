@@ -15,12 +15,18 @@ class LiveSettingsPage extends StatefulWidget {
 }
 
 class _LiveSettingsPageState extends State<LiveSettingsPage> {
-  PlayerBackendType _livePlayerBackend = PlayerBackendType.exo;
+  // tvLegacy 唯一可用后端是 mpv；此处初值只是首帧占位，_load() 会立刻用设置值覆盖。
+  PlayerBackendType _livePlayerBackend =
+      PlayerBackendFactory.platformLiveDefault;
   bool _lunaTvLiveEnabled = true;
   bool _epgLoadEnabled = true;
   bool _localProxyEnabled = false;
   bool _seamlessSwitchEnabled = false;
   bool _fccFastSwitchEnabled = false;
+  // 与点播页共用同一个全局键 hardware_decoding（UserDataService）。
+  // 原生 MpvPlayerView 已不再区分直播/点播（useHardware = hardwareDecoding），
+  // 故此处开关对直播同样生效。
+  bool _hardwareDecoding = true;
   int _liveSourceCacheHours = 24;
 
   @override
@@ -38,6 +44,7 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
     final localProxyEnabled = await UserDataService.getLocalProxyEnabled();
     final seamlessSwitch = await UserDataService.getSeamlessChannelSwitch();
     final fccFastSwitch = await UserDataService.getFccFastSwitch();
+    final hardwareDecoding = await UserDataService.getHardwareDecoding();
     if (!mounted) return;
     setState(() {
       _livePlayerBackend = liveBackend;
@@ -46,6 +53,7 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
       _localProxyEnabled = localProxyEnabled;
       _seamlessSwitchEnabled = seamlessSwitch;
       _fccFastSwitchEnabled = fccFastSwitch;
+      _hardwareDecoding = hardwareDecoding;
       _liveSourceCacheHours = liveSourceCacheHours;
     });
   }
@@ -75,28 +83,25 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
   Future<void> _setLocalProxyEnabled(bool value) async {
     await UserDataService.saveLocalProxyEnabled(value);
     setState(() => _localProxyEnabled = value);
-    showSettingsSnackBar(
-      context,
-      value ? '已开启本地 M3U8 代理' : '已关闭本地 M3U8 代理',
-    );
+    showSettingsSnackBar(context, value ? '已开启本地 M3U8 代理' : '已关闭本地 M3U8 代理');
   }
 
   Future<void> _setSeamlessSwitchEnabled(bool value) async {
     await UserDataService.saveSeamlessChannelSwitch(value);
     setState(() => _seamlessSwitchEnabled = value);
-    showSettingsSnackBar(
-      context,
-      value ? '已开启无缝换台' : '已关闭无缝换台',
-    );
+    showSettingsSnackBar(context, value ? '已开启无缝换台' : '已关闭无缝换台');
   }
 
   Future<void> _setFccFastSwitchEnabled(bool value) async {
     await UserDataService.saveFccFastSwitch(value);
     setState(() => _fccFastSwitchEnabled = value);
-    showSettingsSnackBar(
-      context,
-      value ? '已开启 FCC 快速换台' : '已关闭 FCC 快速换台',
-    );
+    showSettingsSnackBar(context, value ? '已开启 FCC 快速换台' : '已关闭 FCC 快速换台');
+  }
+
+  Future<void> _setHardwareDecoding(bool value) async {
+    await UserDataService.saveHardwareDecoding(value);
+    setState(() => _hardwareDecoding = value);
+    showSettingsSnackBar(context, value ? '已开启硬件解码' : '已关闭硬件解码（强制软解）');
   }
 
   String _livePlayerBackendTitle(PlayerBackendType type) {
@@ -108,6 +113,9 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
         return isDefault ? 'FVP（默认）' : 'FVP';
       case PlayerBackendType.vlc:
         return isDefault ? 'VLC（默认）' : 'VLC';
+      case PlayerBackendType.mpv:
+        // tvLegacy 唯一可用后端（官方 mpv 内核 + 自写壳）。
+        return isDefault ? 'MPV（默认）' : 'MPV';
     }
   }
 
@@ -119,6 +127,8 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
         return '基于 libmdk，兼容性较好';
       case PlayerBackendType.vlc:
         return '基于 libvlc，格式兼容性最强';
+      case PlayerBackendType.mpv:
+        return '官方 mpv 内核，自编译适配 Android 5.0+，硬解与续播最稳';
     }
   }
 
@@ -137,7 +147,8 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
           buildSwitchTile(
             context: context,
             title: '无缝换台',
-            subtitle: '开启后换台时当前画面继续播放，目标频道在后台预载，'
+            subtitle:
+                '开启后换台时当前画面继续播放，目标频道在后台预载，'
                 '就绪后再切换（最多等待 ${UserDataService.seamlessSwitchTimeoutMs ~/ 1000} 秒，'
                 '超时直接切换）。预载期间同时解码两路直播流，'
                 '会消耗更多流量与设备性能。默认关闭',
@@ -148,7 +159,8 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
           buildSwitchTile(
             context: context,
             title: 'FCC 快速换台',
-            subtitle: '开启后优先使用直播源提供的 FCC 地址拉流，缩短换台等待；'
+            subtitle:
+                '开启后优先使用直播源提供的 FCC 地址拉流，缩短换台等待；'
                 '源未提供 FCC 地址的频道自动使用普通地址。默认关闭',
             value: _fccFastSwitchEnabled,
             onChanged: _setFccFastSwitchEnabled,
@@ -158,10 +170,22 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
           buildSwitchTile(
             context: context,
             title: '本地 M3U8 代理',
-            subtitle: '开启后直播 M3U8 经本地代理转发，用于排查/兼容个别直播源'
+            subtitle:
+                '开启后直播 M3U8 经本地代理转发，用于排查/兼容个别直播源'
                 '（如神盾TV）；关闭则直播直连原始地址。默认关闭',
             value: _localProxyEnabled,
             onChanged: _setLocalProxyEnabled,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          buildSwitchTile(
+            context: context,
+            title: '硬件解码',
+            // 与点播页共用同一个全局键；原生 useHardware = hardwareDecoding，
+            // 已不区分直播/点播，故本开关对直播同样生效。
+            subtitle: '仅对 MPV 播放器有效；关闭后强制软解，'
+                '可能解决个别直播源花屏/绿屏问题。默认开启',
+            value: _hardwareDecoding,
+            onChanged: _setHardwareDecoding,
           ),
           const SizedBox(height: AppSpacing.md),
           _buildLivePlayerBackendCard(),
@@ -176,8 +200,7 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
           buildSwitchTile(
             context: context,
             title: '加载 EPG 节目单',
-            subtitle:
-                '关闭后不拉取节目单与时移信息，直播连接更快；开启时（默认）频道就绪后立即开播，节目单后台异步加载',
+            subtitle: '关闭后不拉取节目单与时移信息，直播连接更快；开启时（默认）频道就绪后立即开播，节目单后台异步加载',
             value: _epgLoadEnabled,
             onChanged: _setEpgLoadEnabled,
           ),

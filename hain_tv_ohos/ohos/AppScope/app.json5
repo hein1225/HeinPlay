@@ -1,0 +1,11 @@
+{
+  "app": {
+    "bundleName": "com.heinplay.hain_tv_ohos",
+    "vendor": "heinplay",
+    "versionCode": 25,
+    "versionName": "1.4.1",
+    "buildVersion": "1",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

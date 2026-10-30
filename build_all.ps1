@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # HeinPlay 全平台构建脚本
 # 功能：菜单选择 flutter doctor、依赖检查、Windows 插件检查、Android 签名完整性检查
 #       构建 TV / 手机 / Windows / Linux(AppImage) / 鸿蒙(HAP) / 全部版本，汇总结果、日志路径与产物路径
@@ -12,7 +12,7 @@
 # 说明：Linux 版为 AppImage，需在 Linux 环境或 WSL2 中构建（Flutter 不支持 Windows 交叉编译 Linux）。
 #       在 Windows 上运行时会自动尝试通过 WSL2 执行 build_linux_appimage.sh；未安装 WSL 则跳过并提示。
 #       【已并入「1. 构建全部」】（2026-09-22 起）；不需要时改选菜单 11「除 Linux 外构建全部」或加 -SkipLinux。
-#       鸿蒙版走 scripts/build_hap.sh（Git Bash + DevEco SDK），需要 DevEco 命令行工具链与本机签名材料；
+#       鸿蒙版走独立工程 hain_tv_ohos\scripts\build_ohos.sh（Git Bash + DevEco SDK），需要 DevEco 命令行工具链与本机签名材料；
 #       【默认不参与「1.构建全部」】，需通过菜单 11/12 或 -IncludeHap 显式启用。
 
 [CmdletBinding()]
@@ -86,7 +86,7 @@ function Invoke-FlutterPubGet {
     try {
         if ($Clean) {
             # flutter clean 会删除整个 build 目录，但 Windows 插件依赖（如 vlc_player、
-            # fvp 下载的 mdk-sdk 等）体积大且下载困难，需要保留。
+            # （历史：fvp 下载的 mdk-sdk 等）体积大且下载困难，需要保留。
             # 同时保留 _deps 目录（包含 nuget.exe 等 CMake 下载的构建工具），避免每次构建重复下载。
             $buildDir = Join-Path $hainDir 'build\windows\x64'
             $backupDir = Join-Path $env:TEMP "heinplay_build_backup_$(Get-Random)"
@@ -155,7 +155,8 @@ function Test-SevenZip {
 
 function Test-WindowsPlugin {
     Write-Section 'Windows 插件依赖检查'
-    # Windows 播放器已改为 fvp + vlc，不再依赖 shinchiro mpv-dev。
+    # 🔴 2026-10-16：Windows 播放器已统一为 **mpv**（官方内核 + 自写壳），
+    # fvp 已摘除。不再依赖 shinchiro mpv-dev，也不再依赖 fvp 插件。
     # 仅检查构建目录是否存在；依赖由插件在构建时自行下载。
     $depsDir = Join-Path $hainDir 'build\windows\x64'
     if (Test-Path $depsDir) {
@@ -177,7 +178,7 @@ function Repair-WindowsNativeDeps {
         New-Item -ItemType Directory -Path $depsDir -Force | Out-Null
     }
 
-    # Windows 播放器已改为 fvp + vlc，不再依赖 shinchiro mpv-dev。
+    # Windows 播放器已改为 mpv + vlc（fvp 已于 2026-10-16 摘除）。
     # 清理残留的 mpv 缓存与解压目录，避免旧文件干扰新构建。
     $mpvArchives = Get-ChildItem -Path $depsDir -Filter 'mpv-dev-*.7z' -ErrorAction SilentlyContinue
     foreach ($f in $mpvArchives) {
@@ -217,7 +218,7 @@ function Repair-WindowsNativeDeps {
     }
 
     $localPlugins = @{
-        # Windows 播放器已改为 fvp + vlc；flutter_mpv / media_kit 不再使用。
+        # Windows 播放器已改为 mpv + vlc（自写 mpv 壳，非 flutter_mpv/media_kit）。
         'permission_handler_windows' = 'deps\permission_handler_windows'
     }
 
@@ -304,6 +305,20 @@ function Get-LegacyProjectVersion {
     $pubspec = Get-Content -Path $pubspecPath -Raw
     if ($pubspec -notmatch 'version:\s*([^\s]+)') {
         throw '无法从 hain_tv_legacy/pubspec.yaml 读取 version'
+    }
+    return $Matches[1].Split('+')[0]
+}
+
+function Get-OhosProjectVersion {
+    # 鸿蒙是仓库根下的独立工程，其产物版本号以 hain_tv_ohos\pubspec.yaml 为准
+    # （正常应与主工程一致；此处不做强制同步校验，产物名按各自 pubspec 生成）。
+    $pubspecPath = Join-Path (Join-Path $rootDir 'hain_tv_ohos') 'pubspec.yaml'
+    if (-not (Test-Path $pubspecPath)) {
+        throw "未找到鸿蒙工程 pubspec.yaml: $pubspecPath"
+    }
+    $pubspec = Get-Content -Path $pubspecPath -Raw
+    if ($pubspec -notmatch 'version:\s*([^\s]+)') {
+        throw '无法从 hain_tv_ohos/pubspec.yaml 读取 version'
     }
     return $Matches[1].Split('+')[0]
 }
@@ -622,12 +637,12 @@ function Invoke-BuildTvlegacy {
 function Invoke-BuildHap {
     # 鸿蒙(HarmonyOS NEXT) HAP 构建。
     # 说明：
-    #   1) 只能在本机 Windows 上经 Git Bash 执行 scripts/build_hap.sh（脚本内会导出
+    #   1) 鸿蒙已是**仓库根下的独立工程 hain_tv_ohos\**（2026-09-27 从主工程迁出，
+    #      与 tvLegacy 同样处理）。故不再从 $hainDir 定位，也不再需要临时 junction
+    #      —— 该工程的鸿蒙实体目录**直接命名为 ohos\**，满足 flutter 工具链硬编码查找。
+    #   2) 只能在本机 Windows 上经 Git Bash 执行 scripts/build_ohos.sh（脚本内会导出
     #      DevEco node/ohpm/flutter 等环境并调用 `flutter build hap`）；
     #      绝不能走 WSL（Linux 无 DevEco 工具链）。
-    #   2) flutter 工具链硬编码查找 <工程>/ohos。鸿蒙工程实体已统一为 harmony_haintv/，
-    #      故调用前若缺 ohos 会自动创建临时 junction（ohos -> harmony_haintv），
-    #      构建结束后删除（仅删链接，不影响 harmony_haintv 实体与产物）。
     #   3) 鸿蒙为 opt-in 构建（测试期），不会因任何「构建全部」自动触发。
 
     $name = '鸿蒙版'
@@ -638,10 +653,16 @@ function Invoke-BuildHap {
     $utf8Bom = New-Object System.Text.UTF8Encoding $true
     [System.IO.File]::AppendAllText($logPath, "`n=== $name 构建开始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`n", $utf8Bom)
 
-    $hapProject = Join-Path $hainDir 'harmony_haintv'
-    $buildScript = Join-Path $hainDir 'scripts\build_hap.sh'
+    # 鸿蒙独立工程：与 hain_tv / hain_tv_legacy 平级（仓库根下）
+    $hapDir = Join-Path $rootDir 'hain_tv_ohos'
+    $hapProject = Join-Path $hapDir 'ohos'
+    $buildScript = Join-Path $hapDir 'scripts\build_ohos.sh'
+    if (-not (Test-Path $hapDir)) {
+        Write-Err "鸿蒙独立工程目录不存在: $hapDir"
+        return @{ Success = $false; Skipped = $true; LogPath = $logPath }
+    }
     if (-not (Test-Path $hapProject)) {
-        Write-Err "鸿蒙工程目录不存在: $hapProject（应包含 AppScope/entry/oh-package.json5）"
+        Write-Err "鸿蒙工程实体不存在: $hapProject（应包含 AppScope/entry/oh-package.json5）"
         return @{ Success = $false; Skipped = $true; LogPath = $logPath }
     }
     if (-not (Test-Path $buildScript)) {
@@ -659,24 +680,8 @@ function Invoke-BuildHap {
         }
     }
     if (-not $bashExe) {
-        Write-Err '未找到 Git Bash（bash.exe）。鸿蒙构建需在 Windows Git Bash 中执行 build_hap.sh。'
+        Write-Err '未找到 Git Bash（bash.exe）。鸿蒙构建需在 Windows Git Bash 中执行 build_ohos.sh。'
         return @{ Success = $false; Skipped = $true; LogPath = $logPath }
-    }
-
-    # 临时 ohos junction（仅当缺失时创建）
-    $ohosLink = Join-Path $hainDir 'ohos'
-    $createdJunction = $false
-    if (-not (Test-Path $ohosLink)) {
-        Write-Host '创建临时 junction: ohos -> harmony_haintv（构建后自动删除）...' -ForegroundColor Cyan
-        try {
-            cmd /c mklink /J "$ohosLink" "$hapProject" | Out-Null
-            if (-not (Test-Path $ohosLink)) { throw 'mklink 失败' }
-            $createdJunction = $true
-        }
-        catch {
-            Write-Err "创建 ohos junction 失败: $_。可手动执行: mklink /J `"$ohosLink`" `"$hapProject`""
-            return @{ Success = $false; Skipped = $true; LogPath = $logPath }
-        }
     }
 
     try {
@@ -707,28 +712,39 @@ function Invoke-BuildHap {
         }
 
         if ($res.TimedOut) {
-            Write-Err 'build_hap.sh 执行超过 60 分钟，判定超时，已终止其进程树'
-            throw 'build_hap.sh 执行超时'
+            Write-Err 'build_ohos.sh 执行超过 60 分钟，判定超时，已终止其进程树'
+            throw 'build_ohos.sh 执行超时'
         }
         if ($null -eq $res.ExitCode) {
-            throw 'build_hap.sh 退出码不可读（子进程状态异常）'
+            throw 'build_ohos.sh 退出码不可读（子进程状态异常）'
         }
         if ($res.ExitCode -ne 0) {
-            throw "build_hap.sh 退出码 $($res.ExitCode)"
+            throw "build_ohos.sh 退出码 $($res.ExitCode)"
         }
 
-        # 产物：flutter build hap 输出到 ohos/entry/build/...（junction 指向 harmony_haintv）
-        $hapOut = Join-Path $hainDir "harmony_haintv\entry\build\default\outputs\default\entry-default-signed.hap"
+        # 产物：flutter build hap / app 输出到 <独立工程>/ohos/...
+        #
+        # 交付规则（2026-10-29 起）：交付 **发布版 APP 包** + **未签名 HAP**；
+        # 已签名的单应用 HAP 不再作为交付物（GitHub 线上构建同样只出 unsigned.hap）。
+        $hapOut = Join-Path $hapProject "entry\build\default\outputs\default\entry-default-unsigned.hap"
         if (-not (Test-Path $hapOut)) {
             throw "未找到产物: $hapOut"
         }
-        $version = Get-ProjectVersion
-        $distName = "heinplay-${version}-harmonyos.hap"
+        $appOut = Join-Path $hapProject "..\build\outputs\default\ohos-default-signed.app"
+        $version = Get-OhosProjectVersion
+        $distName = "heinplay-${version}-ohos-unsigned.hap"
         $distPath = Join-Path $distDir $distName
         New-Item -ItemType Directory -Force -Path $distDir | Out-Null
         Copy-Item -Path $hapOut -Destination $distPath -Force
         Write-Ok "$name 构建成功"
         Write-LocalLink "$name 产物:" $distPath
+
+        # 发布版 APP 包（release 模式才有；缺失不算失败）
+        if (Test-Path $appOut) {
+            $distApp = Join-Path $distDir "heinplay-${version}-ohos-release.app"
+            Copy-Item -Path $appOut -Destination $distApp -Force
+            Write-LocalLink "$name 发布版 APP:" $distApp
+        }
         return @{ Success = $true; Skipped = $false; LogPath = $logPath }
     }
     catch {
@@ -741,13 +757,6 @@ function Invoke-BuildHap {
             Write-Host '--- 日志结束 ---' -ForegroundColor Yellow
         }
         return @{ Success = $false; Skipped = $false; LogPath = $logPath }
-    }
-    finally {
-        # 仅删除本次创建的 junction 链接（不会触碰 harmony_haintv 实体内容）
-        if ($createdJunction -and (Test-Path $ohosLink)) {
-            cmd /c rmdir "$ohosLink" | Out-Null
-            Write-Host '已删除临时 ohos junction（harmony_haintv 实体与产物不受影响）' -ForegroundColor DarkGray
-        }
     }
 }
 
@@ -933,7 +942,7 @@ function Invoke-SelectedBuilds {
 
     if ($IncludeHap) {
         $r = Invoke-BuildHap
-        $hapOut = Join-Path $distDir "heinplay-${version}-harmonyos.hap"
+        $hapOut = Join-Path $distDir "heinplay-$(Get-OhosProjectVersion)-ohos-unsigned.hap"
         $hapStatus = if ($r.Skipped) { '跳过' } elseif ($r.Success) { '成功' } else { '失败' }
         $results += [PSCustomObject]@{
             Platform     = '鸿蒙版'
@@ -995,7 +1004,7 @@ function Show-MainMenu {
     Write-Host '9. 清理构建缓存 (flutter clean)'
     Write-Host '0. 退出'
     Write-Host ''
-    Write-Host '注：tvLegacy 由独立工程 hain_tv_legacy\ 构建（与 hain_tv\ 平级；Flutter 3.32.8 / Dart 3.8.1，fvp 播放器，支持 Android 5.0+）。' -ForegroundColor DarkGray
+    Write-Host '注：tvLegacy 由独立工程 hain_tv_legacy\ 构建（与 hain_tv\ 平级；Flutter 3.32.8 / Dart 3.8.1，mpv 播放器，支持 Android 5.0+）。' -ForegroundColor DarkGray
     Write-Host '    本脚本以独立子进程转发调用；冷构建约 70 分钟（含 MDK 原生编译）。' -ForegroundColor DarkGray
     Write-Host '    产物统一归入仓库根 dist\（与手机 / TV / Windows / Linux / 鸿蒙产物同目录）。' -ForegroundColor DarkGray
     Write-Host '    也可到 hain_tv_legacy\ 直接双击 build_tvlegacy.bat 单独构建。' -ForegroundColor DarkGray

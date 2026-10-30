@@ -77,6 +77,11 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 🔴 HeinPlay mpv：注册自写原生播放插件（PlatformView + MethodChannel/EventChannel）。
+        // tvLegacy 的播放器已由 fvp 切换为 mpv（自编译官方内核 + 本工程自写壳），
+        // 该插件负责把 libmpv 的渲染与状态事件接到 Dart 侧 MpvBackend。
+        flutterEngine.plugins.add(MpvPlugin())
     }
 
     /// 在 FlutterView 之上附加一个全屏 ImageView 显示启动封面。

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:hain_tv/services/portable_storage_windows.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/app_logger.dart';
+import 'package:hain_tv/utils/back_interceptor.dart';
 import 'package:hain_tv/widgets/common/splash_screen.dart';
 import 'package:hain_tv/widgets/windows/windows_shell.dart';
 import 'package:window_manager/window_manager.dart';
@@ -115,9 +117,43 @@ class _HainWindowsAppState extends State<HainWindowsApp>
     // 提前返回会让 ESC、鼠标右键在首页完全失效（既不返回也不提示退出）。
     // 统一交给 maybePop：有可返回的路由就返回，否则由根路由的 PopScope
     // 拦截并弹出「退出确认」对话框（见 WindowsShell._handleBack）。
-    debugPrint('全局 ESC: 执行 maybePop');
-    AppLogger.log('AppWindows', '全局 ESC maybePop');
-    navigator.maybePop();
+    //
+    // 🔴🔴 2026-10-22 修复「回放中按 ESC 直接退出播放」：
+    //    `HardwareKeyboard` 派发按键时是遍历所有 handler、且不看别人的返回值
+    //    （见 hardware_keyboard.dart 的 _dispatchKeyEvent，循环体只有
+    //    `handled = handled || thisResult`，命中后不会 break）。本 handler 由
+    //    App 的 initState 注册，播放页的 handler 在页面 initState 才注册，因此
+    //    本 handler 先执行；同一次 ESC 随后还会进播放页 handler 并同步执行
+    //    「退回直播」。而这里 maybePop() 是异步落地的，等它走到 PopScope 时
+    //    播放页已经把 _isReplayMode 改成 false，优先级决策就从「回放 → 退回直播」
+    //    落到最后一档「退出播放页」——用户看到「回放按一次 ESC 直接退出播放」。
+    //    修法：记下当时的 handledSerial，把 maybePop 推迟到微任务里执行；落地时
+    //    序号若已变，说明本次返回键已被页面消费，放弃这次 maybePop。
+    final serialBefore = BackInterceptor.handledSerial;
+    // 同时记下「路由被弹出」序号：多数页面（详情页/分类页/登录页等）在按键
+    // 派发过程中就同步 `Navigator.pop()` 了，它们不会调用 markHandled，
+    // 只能靠 NavigatorObserver 记录。两条序号任一变化都说明本次返回键已被消费。
+    final popSerialBefore = BackInterceptor.popSerial;
+    debugPrint('全局 ESC: 排队 maybePop');
+    AppLogger.log('AppWindows', '全局 ESC 排队 maybePop serial=$serialBefore');
+    scheduleMicrotask(() {
+      if (BackInterceptor.handledSerial != serialBefore) {
+        AppLogger.log('AppWindows',
+            '全局 ESC 放弃 maybePop：本次按键已被页面消费 '
+            'serial=${BackInterceptor.handledSerial}');
+        return;
+      }
+      if (BackInterceptor.popSerial != popSerialBefore) {
+        AppLogger.log('AppWindows',
+            '全局 ESC 放弃 maybePop：本次按键已弹出一层路由 '
+            'popSerial=${BackInterceptor.popSerial}');
+        return;
+      }
+      final nav = _navigatorKey.currentState;
+      if (nav == null) return;
+      AppLogger.log('AppWindows', '全局 ESC 执行 maybePop');
+      nav.maybePop();
+    });
     return true;
   }
 
@@ -137,6 +173,9 @@ class _HainWindowsAppState extends State<HainWindowsApp>
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: _navigatorKey,
+      // 记录「路由被弹出」，供全局 ESC/右键处理器判断本次返回是否已被页面
+      // 通过 Navigator.pop() 消费，避免重复弹一层（详情页 ESC 连退两层的根因）。
+      navigatorObservers: [BackInterceptorObserver()],
       title: '海因影视',
       debugShowCheckedModeBanner: false,
       theme: buildLightTheme(),

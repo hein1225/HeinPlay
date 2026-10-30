@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:hain_tv/models/search_result.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
+import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
@@ -132,6 +133,10 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       backgroundColor: AppColors.bgApp,
       body: SafeArea(
         child: SingleChildScrollView(
+          // 底部留出浮动磨砂导航栏总高，避免最后一项被导航栏永久遮挡。
+          padding: EdgeInsets.only(
+            bottom: GlassStyleService.navBarTotalHeight(context),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Column(

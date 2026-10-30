@@ -1,0 +1,2558 @@
+import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+import 'package:hain_tv/models/bangumi_calendar_item.dart';
+import 'package:hain_tv/models/douban_movie.dart';
+import 'package:hain_tv/models/favorite.dart';
+import 'package:hain_tv/models/play_record.dart' as models;
+import 'package:hain_tv/models/search_result.dart';
+import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/models/video_detail.dart';
+import 'package:hain_tv/player/player_backend_factory.dart';
+import 'package:hain_tv/player/video_player_backend.dart';
+import 'package:hain_tv/services/bangumi_service.dart';
+import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/favorite_refresh_notifier.dart';
+import 'package:hain_tv/services/hain_tv_cache_manager.dart';
+import 'package:hain_tv/services/local_storage_service.dart' as local;
+import 'package:hain_tv/services/lunatv_service.dart';
+import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/search_service.dart';
+import 'package:hain_tv/services/user_data_service.dart';
+import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/screens/mobile/player_screen.dart';
+import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+
+class MobileDetailScreen extends StatefulWidget {
+  final List<SourceOption> sources;
+  final int initialSourceIndex;
+  final String title;
+  final String? poster;
+  final String year;
+  final int? doubanId;
+  final int? bangumiId;
+  final String? bangumiRate;
+  final int initialEpisodeIndex;
+  final int initialPlayTime;
+  final bool searchOnLoad;
+  final models.PlayRecord? playRecord;
+
+  const MobileDetailScreen({
+    super.key,
+    required this.sources,
+    this.initialSourceIndex = 0,
+    required this.title,
+    this.poster,
+    this.year = '',
+    this.doubanId,
+    this.bangumiId,
+    this.bangumiRate,
+    this.initialEpisodeIndex = 0,
+    this.initialPlayTime = 0,
+    this.searchOnLoad = false,
+    this.playRecord,
+  });
+
+  factory MobileDetailScreen.fromSearchResult(
+    SearchResult result, {
+    int initialEpisodeIndex = 0,
+    int initialPlayTime = 0,
+  }) {
+    return MobileDetailScreen(
+      sources: [SourceOption.fromSearchResult(result)],
+      title: result.title,
+      poster: result.poster.isNotEmpty ? result.poster : null,
+      year: result.year,
+      doubanId: result.doubanId,
+      initialEpisodeIndex: initialEpisodeIndex,
+      initialPlayTime: initialPlayTime,
+      // 搜索页点选后进入详情页，默认选中该源并同时搜索其他源进行测速排序。
+      searchOnLoad: true,
+    );
+  }
+
+  factory MobileDetailScreen.fromSearchResults(
+    List<SearchResult> results, {
+    int initialSourceIndex = 0,
+    int initialEpisodeIndex = 0,
+    int initialPlayTime = 0,
+  }) {
+    final sources = SearchService.groupBySource(results);
+    return MobileDetailScreen(
+      sources: sources,
+      initialSourceIndex: initialSourceIndex,
+      title: sources.isNotEmpty ? sources.first.title : '',
+      poster: sources.isNotEmpty && sources.first.poster != null
+          ? sources.first.poster
+          : null,
+      year: sources.isNotEmpty ? sources.first.year : '',
+      doubanId: sources.isNotEmpty ? sources.first.doubanId : null,
+      initialEpisodeIndex: initialEpisodeIndex,
+      initialPlayTime: initialPlayTime,
+    );
+  }
+
+  factory MobileDetailScreen.fromDoubanMovie(DoubanMovie movie) {
+    return MobileDetailScreen(
+      sources: const [],
+      title: movie.title,
+      poster: movie.poster.isNotEmpty ? movie.poster : null,
+      year: movie.year,
+      doubanId: int.tryParse(movie.id),
+    );
+  }
+
+  factory MobileDetailScreen.fromBangumiCalendarItem(BangumiCalendarItem item) {
+    return MobileDetailScreen(
+      sources: const [],
+      title: item.title,
+      poster: item.poster,
+      year: item.year ?? '',
+      bangumiId: item.id,
+      bangumiRate: item.rate,
+      searchOnLoad: true,
+    );
+  }
+
+  factory MobileDetailScreen.fromFavorite(Favorite favorite) {
+    return MobileDetailScreen(
+      sources: [
+        SourceOption(
+          source: favorite.source,
+          sourceName: favorite.sourceName.isNotEmpty
+              ? favorite.sourceName
+              : favorite.source,
+          id: favorite.id,
+          title: favorite.title,
+          poster: favorite.cover.isNotEmpty ? favorite.cover : null,
+          year: '',
+          doubanId: favorite.doubanId != null
+              ? int.tryParse(favorite.doubanId!)
+              : null,
+        ),
+      ],
+      title: favorite.title,
+      poster: favorite.cover.isNotEmpty ? favorite.cover : null,
+      year: '',
+      doubanId: favorite.doubanId != null
+          ? int.tryParse(favorite.doubanId!)
+          : null,
+      searchOnLoad: true,
+    );
+  }
+
+  factory MobileDetailScreen.fromPlayRecord(models.PlayRecord record) {
+    return MobileDetailScreen(
+      sources: [
+        SourceOption(
+          source: record.source,
+          sourceName: record.sourceName.isNotEmpty
+              ? record.sourceName
+              : record.source,
+          id: record.id,
+          title: record.title,
+          poster: record.cover.isNotEmpty ? record.cover : null,
+          year: record.year,
+          doubanId: record.doubanId != null
+              ? int.tryParse(record.doubanId!)
+              : null,
+        ),
+      ],
+      title: record.title,
+      poster: record.cover.isNotEmpty ? record.cover : null,
+      year: record.year,
+      doubanId: record.doubanId != null ? int.tryParse(record.doubanId!) : null,
+      initialEpisodeIndex: record.index > 0 ? record.index - 1 : 0,
+      initialPlayTime: record.playTime,
+      playRecord: record,
+      searchOnLoad: true,
+    );
+  }
+
+  /// 通过标题和年份搜索并进入详情页
+  factory MobileDetailScreen.fromTitle({
+    required String title,
+    String year = '',
+    int initialEpisodeIndex = 0,
+    int initialPlayTime = 0,
+  }) {
+    return MobileDetailScreen(
+      sources: const [],
+      title: title,
+      year: year,
+      initialEpisodeIndex: initialEpisodeIndex,
+      initialPlayTime: initialPlayTime,
+      searchOnLoad: true,
+    );
+  }
+
+  @override
+  State<MobileDetailScreen> createState() => _MobileDetailScreenState();
+}
+
+class _MobileDetailScreenState extends State<MobileDetailScreen> {
+  bool _detailLoading = true;
+  bool _doubanLoading = true;
+  bool _speedTesting = false;
+  bool _hasSpeedTested = false;
+  String _speedTestProgress = '';
+  bool _searchingSources = false;
+  bool _pendingSpeedTestRestart = false;
+  bool _isBangumiFallback = false;
+  String? _error;
+  VideoDetail? _videoDetail;
+  DoubanMovieDetails? _doubanDetails;
+  String? _doubanSearchRate;
+
+  /// 视频详情请求序号，用于在用户手动切换源后丢弃旧源的异步响应，
+  /// 避免界面仍显示已放弃源的数据。
+  int _videoDetailRequestId = 0;
+
+  int _selectedEpisodeIndex = 0;
+  bool _episodeSortAscending = true;
+  int _selectedSourceIndex = 0;
+
+  // 仅当用户主动手动切换源时为 true，用于区分“自动选中记录源”和“用户手动切源”。
+  bool _sourceSwitchedByUser = false;
+
+  /// 从搜索页点进来时，记录用户点击的源 key，确保搜索/合并其他源后仍优先选中该源。
+  String? _initialSelectedSourceKey;
+
+  bool _isFavorite = false;
+  bool _fuzzySearchEnabled = false;
+  PlayerBackendType _playerBackend = PlayerBackendFactory.platformDefault;
+  bool _autoSpeedTestEnabled = true;
+  late List<SourceOption> _sources;
+  models.PlayRecord? _playRecord;
+
+  bool _summaryExpanded = false;
+
+  VideoPlayerBackend? _previewBackend;
+  final List<StreamSubscription> _previewSubscriptions = [];
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _episodeKeys = {};
+
+  /// 与播放页共享源列表，进入全屏播放后搜索/测速仍会继续，
+  /// 新源可实时同步到播放页的换源列表。
+  final ValueNotifier<List<SourceOption>> _sourcesNotifier = ValueNotifier([]);
+
+  SourceOption get _currentSource {
+    if (_sources.isEmpty) {
+      return const SourceOption(source: '', sourceName: '', id: '', title: '');
+    }
+    return _sources[_selectedSourceIndex];
+  }
+
+  /// 无播放记录时，播放按钮是否可点击。
+  /// 搜索源中不可点击；自动测速开启时，测速中或多源未完成测速也不可点击。
+  /// 自动测速关闭后，即使手动测速中也可进入播放，测速在后台继续。
+  bool get _canPlayWithoutRecord {
+    if (_searchingSources) return false;
+    if (_autoSpeedTestEnabled && _speedTesting) return false;
+    if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
+      return false;
+    }
+    return true;
+  }
+
+  /// 无播放记录时，播放按钮显示的文案。
+  String get _playButtonTextWithoutRecord {
+    if (_searchingSources) return '搜索源中';
+    if (_autoSpeedTestEnabled && _speedTesting) return _speedTestProgress;
+    if (_autoSpeedTestEnabled && _sources.length >= 2 && !_hasSpeedTested) {
+      return '测速中';
+    }
+    return '播放';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 先直接展示传入的源，避免在路由转场期间做繁重的同步过滤导致灰屏/卡顿。
+    _sources = widget.sources;
+    _sourcesNotifier.value = List.unmodifiable(_sources);
+    _selectedEpisodeIndex = widget.initialEpisodeIndex;
+    _selectedSourceIndex = widget.initialSourceIndex.clamp(
+      0,
+      _sources.isEmpty ? 0 : _sources.length - 1,
+    );
+    if (_sources.isNotEmpty &&
+        _selectedSourceIndex < _sources.length) {
+      final s = _sources[_selectedSourceIndex];
+      _initialSelectedSourceKey = '${s.source}+${s.id}';
+    }
+    _playRecord = widget.playRecord;
+    // 首帧渲染后再过滤源并加载数据，让详情页先显示出来。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _filterSources();
+      if (!mounted) return;
+      if (_playRecord != null) {
+        setState(() => _applyPlayRecordSelection());
+        _scrollToSelectedEpisode();
+      }
+      _loadData();
+    });
+  }
+
+  /// 过滤掉与影片标题不精确匹配的源，避免传入的模糊结果污染列表。
+  /// 从搜索页点选的源始终保留，避免被精确匹配过滤掉导致无法选中。
+  void _filterSources() {
+    if (widget.sources.isEmpty || widget.title.isEmpty) return;
+    final variants = SearchService.generateSearchVariants(widget.title);
+    final filtered = widget.sources
+        .where(
+          (s) => SearchService.isExactTitleMatch(
+            s.title,
+            widget.title,
+            variants: variants,
+          ),
+        )
+        .toList();
+    // 保留搜索页点选的初始源
+    if (_initialSelectedSourceKey != null &&
+        !filtered.any(
+          (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+        )) {
+      final initialSource = widget.sources.firstWhere(
+        (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+      );
+      filtered.insert(0, initialSource);
+    }
+    if (!mounted) return;
+    setState(() {
+      _sources = filtered;
+      _sourcesNotifier.value = List.unmodifiable(_sources);
+      _selectedSourceIndex = _selectedSourceIndex.clamp(
+        0,
+        _sources.isEmpty ? 0 : _sources.length - 1,
+      );
+    });
+  }
+
+  /// 按标题查询是否有播放记录。
+  /// [force] 为 true 时，即使已有记录也会重新查询，用于从播放页返回后刷新。
+  /// [applySelection] 为 true 时，查询到记录后自动选中记录中的源。
+  /// [localOnly] 为 true 时只读本地，避免远程请求阻塞 UI。
+  Future<void> _loadPlayRecord({
+    bool force = false,
+    bool applySelection = false,
+    bool localOnly = false,
+  }) async {
+    if (_playRecord != null && !force) return;
+    // 收集可能的标题：Bangumi 标题、源标题、视频详情标题可能不一致，
+    // 播放记录保存的是视频源标题，所以要用多个候选标题去匹配。
+    final candidateTitles = <String>{widget.title};
+    if (_videoDetail != null && _videoDetail!.title.isNotEmpty) {
+      candidateTitles.add(_videoDetail!.title);
+    }
+    if (_currentSource.title.isNotEmpty) {
+      candidateTitles.add(_currentSource.title);
+    }
+    if (_doubanDetails != null && _doubanDetails!.title.isNotEmpty) {
+      candidateTitles.add(_doubanDetails!.title);
+    }
+    try {
+      final record = await PlayRecordService.findByTitles(
+        candidateTitles.toList(),
+        year: widget.year,
+        localOnly: localOnly,
+      );
+      if (mounted) {
+        setState(() {
+          _playRecord = record;
+          if (applySelection && record != null) {
+            _applyPlayRecordSelection();
+          }
+        });
+        if (applySelection && record != null) {
+          _scrollToSelectedEpisode();
+        }
+        // 播放记录加载完成后，若尚未开始测速则触发一次，确保原始源被优先测速。
+        if (record != null && _sources.length >= 2) {
+          _maybeStartSpeedTest();
+        }
+      }
+    } catch (e) {
+      debugPrint('查询播放记录失败: $e');
+    }
+  }
+
+  /// 根据当前 [_playRecord] 选中对应源与集数。
+  /// 若用户已手动切换源，则不再覆盖当前源，仅同步集数。
+  void _applyPlayRecordSelection() {
+    final record = _playRecord;
+    if (record == null || _sources.isEmpty) return;
+    if (!_sourceSwitchedByUser) {
+      final index = _sources.indexWhere(
+        (s) => s.source == record.source && s.id == record.id,
+      );
+      if (index >= 0) {
+        _selectedSourceIndex = index;
+      }
+    }
+    // 同步播放记录中的集数（转换为 0-based 索引）
+    final episodeIndex = record.index > 0 ? record.index - 1 : 0;
+    final detail = _videoDetail;
+    if (detail != null && episodeIndex < detail.episodes.length) {
+      _selectedEpisodeIndex = episodeIndex;
+    } else if (detail == null) {
+      // 详情尚未加载完成时先暂存，后续加载后再应用
+      _selectedEpisodeIndex = episodeIndex;
+    }
+  }
+
+  /// 将当前选中的集数滚动到可视区域。
+  void _scrollToSelectedEpisode() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = _episodeKeys[_selectedEpisodeIndex];
+      final ctx = key?.currentContext;
+      if (ctx != null && ctx.mounted) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposePreviewPlayer();
+    _scrollController.dispose();
+    _sourcesNotifier.dispose();
+    super.dispose();
+  }
+
+  /// 从年份字符串中提取 4 位数字年份。
+  String? _extractYear(String year) {
+    final match = RegExp(r'\d{4}').firstMatch(year);
+    return match?.group(0);
+  }
+
+  /// 判断结果年份是否与请求年份匹配；请求年份为空或无法解析时视为匹配。
+  bool _yearMatches(String resultYear, String requestedYear) {
+    if (requestedYear.isEmpty) return true;
+    final requested = _extractYear(requestedYear);
+    if (requested == null || requested.isEmpty) return true;
+    final result = _extractYear(resultYear);
+    return result == requested;
+  }
+
+  Future<void> _loadFavoriteStatus({bool localOnly = false}) async {
+    final source = _currentSource.source;
+    final id = _currentSource.id;
+    if (source.isEmpty || id.isEmpty) return;
+
+    bool isFavorite;
+    if (localOnly) {
+      isFavorite = await local.LocalStorageService.isFavorite(source, id);
+    } else {
+      final key = '$source+$id';
+      isFavorite = await LunaTVService.isFavorite(key);
+      // 同步远程状态到本地
+      if (isFavorite) {
+        final record = local.FavoriteRecord(
+          source: source,
+          id: id,
+          title: widget.title,
+          posterUrl: _doubanDetails?.poster ?? widget.poster,
+          year: widget.year,
+          doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
+          createdAt: DateTime.now(),
+        );
+        await local.LocalStorageService.addFavorite(record);
+      } else {
+        await local.LocalStorageService.removeFavorite(source, id);
+      }
+    }
+
+    if (mounted) {
+      setState(() => _isFavorite = isFavorite);
+    }
+  }
+
+  Future<void> _loadPlayerBackend() async {
+    final source = _currentSource.source;
+    final id = _currentSource.id;
+    // ⚠️ 必须做可用性校验：用户从安卓版恢复的历史设置里可能存着 `exo`，
+    // 而鸿蒙只有 fvp 一个后端。此前直接 setState 原始值，导致详情页把 exo
+    // 传给播放页 → 设置页/切换弹窗错误显示「ExoPlayer」且点选无效
+    // （PlayerBackendFactory.create 实际仍回落 fvp，UI 与实际不一致）。
+    // 与 PlayerBackendFactory.createDefault/createForVideo 的纠正逻辑保持一致。
+    if (source.isEmpty || id.isEmpty) {
+      final defaultBackend = await UserDataService.getPlayerBackend();
+      final effective = PlayerBackendFactory.availableBackends
+              .contains(defaultBackend)
+          ? defaultBackend
+          : PlayerBackendFactory.platformDefault;
+      if (mounted) {
+        setState(() => _playerBackend = effective);
+      }
+      return;
+    }
+    final type = await UserDataService.getPlayerBackendForVideo(source, id);
+    final effective = PlayerBackendFactory.availableBackends.contains(type)
+        ? type
+        : PlayerBackendFactory.platformDefault;
+    if (mounted) {
+      setState(() => _playerBackend = effective);
+    }
+  }
+
+  Future<void> _loadData() async {
+    // 读取自动测速开关，用于控制播放按钮是否等待测速完成。
+    _autoSpeedTestEnabled = await UserDataService.getAutoSpeedTest();
+
+    if (mounted) {
+      setState(() {
+        _doubanLoading = true;
+        _error = null;
+      });
+    }
+
+    // 如果没有源或明确要求搜索，提前进入搜索状态，避免先显示"精确匹配无结果"
+    final needsSourceSearch =
+        widget.title.isNotEmpty && (_sources.isEmpty || widget.searchOnLoad);
+    if (needsSourceSearch && mounted) {
+      setState(() => _searchingSources = true);
+    }
+
+    // 进入详情页立即在后台搜索更多源并触发测速，搜索与下面的播放记录/收藏/详情加载并发执行。
+    if (needsSourceSearch) {
+      unawaited(_searchSourcesInBackground());
+    }
+
+    // 先查询本地播放记录；若存在记录则优先使用记录中的源。
+    await _loadPlayRecord(applySelection: true, localOnly: true);
+    // 后台同步远程记录与豆瓣海报
+    unawaited(_loadPlayRecord(applySelection: true, localOnly: false));
+
+    // 源确定后再加载收藏状态与播放器后端。
+    await _loadFavoriteStatus(localOnly: true);
+    unawaited(_loadFavoriteStatus(localOnly: false));
+    await _loadPlayerBackend();
+
+    // 源数量>=2 时立即后台测速，不等详情加载完成。
+    _maybeStartSpeedTest();
+
+    final futures = <Future<void>>[];
+
+    if (_currentSource.source.isNotEmpty && _currentSource.id.isNotEmpty) {
+      futures.add(_loadVideoDetail());
+    } else {
+      if (mounted) setState(() => _detailLoading = false);
+    }
+
+    // 如果有豆瓣ID、Bangumi ID或需要搜索，加载详情
+    if (widget.doubanId != null ||
+        widget.bangumiId != null ||
+        widget.searchOnLoad ||
+        widget.title.isNotEmpty) {
+      futures.add(_loadDoubanDetails());
+    } else {
+      if (mounted) setState(() => _doubanLoading = false);
+    }
+
+    if (futures.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _detailLoading = false;
+          _doubanLoading = false;
+          _error = '缺少视频源信息';
+        });
+      }
+      return;
+    }
+
+    await Future.wait(futures);
+
+    // 详情加载完成后再次尝试测速（若源在详情加载期间才达到 2 个且尚未测速）。
+    _maybeStartSpeedTest();
+  }
+
+  /// 满足条件时在后台启动测速，避免重复启动。
+  /// 尊重设置中的“自动测速”开关；手动点击测速按钮不受此开关限制。
+  Future<void> _maybeStartSpeedTest({
+    bool force = false,
+    bool onlyUntested = false,
+  }) async {
+    if (_sources.length < 2 || _speedTesting) return;
+    if (!force && !onlyUntested && _hasSpeedTested) return;
+    final enabled = await UserDataService.getAutoSpeedTest();
+    if (!enabled) return;
+    unawaited(_runSpeedTest(force: force, onlyUntested: onlyUntested));
+  }
+
+  /// 提取用于模糊/简化搜索的基准名称：
+  /// 1. 去掉括号及其中内容（年份、版本等）。
+  /// 2. 去掉常见的语言/版本/质量后缀（如“国语”“HD”“4K”等）。
+  /// 3. 取第一个空格或标点（:：-–—）之前的部分。
+  String _extractSearchBaseName(String title) {
+    var base = title.trim();
+
+    // 去掉括号及其中内容（年份、版本等）
+    base = base.replaceAll(RegExp(r'[（(].*?[）)]'), '').trim();
+
+    // 去掉常见的语言/版本/质量后缀
+    const suffixes = [
+      '国语', '粤语', '日语', '英语', '韩语', '中字', '双语',
+      '高清', '超清', '蓝光', 'DVD', 'TV版', '剧场版', 'OVA', 'OAD',
+      'HD', 'BD', '4K', '1080P', '720P', '480P', '2160P',
+    ];
+    var lower = base.toLowerCase();
+    for (final suffix in suffixes) {
+      if (lower.endsWith(suffix.toLowerCase())) {
+        base = base.substring(0, base.length - suffix.length).trim();
+        lower = base.toLowerCase();
+        break;
+      }
+    }
+
+    // 按首个空格/标点截取，进一步去掉副标题
+    final splitIndex = base.indexOf(RegExp(r'[\s:：\-–—]'));
+    if (splitIndex > 0) {
+      base = base.substring(0, splitIndex).trim();
+    }
+
+    return base;
+  }
+
+  /// 后台搜索播放源，搜索到一个即刷新界面，全部完成后加载当前选中源详情。
+  /// 海报墙进入默认使用精确匹配；若 [fuzzy] 为 true 则启用模糊匹配。
+  Future<void> _searchSourcesInBackground({bool fuzzy = false}) async {
+    if (!mounted) return;
+    setState(() {
+      _searchingSources = true;
+      _fuzzySearchEnabled = fuzzy;
+    });
+
+    // 使用快速搜索（含变体），不走豆瓣 enrich，避免详情页等待过久。
+    // Bangumi 每日放送条目直接使用严格模糊匹配，避免精确模式把带后缀
+    // 的源标题（如"名侦探柯南（1996）"）过滤掉。
+    final initialExactMatch = widget.bangumiId != null ? false : !fuzzy;
+    // 手动模糊搜索时使用影视名基准名（首个空格/标点前），提升命中率
+    final searchKeyword = fuzzy
+        ? _extractSearchBaseName(widget.title)
+        : widget.title;
+    debugPrint(
+      '[SourceSearch] 开始搜索: title=${widget.title}, keyword=$searchKeyword, year=${widget.year}, '
+      'bangumiId=${widget.bangumiId}, exactMatch=$initialExactMatch, fuzzy=$fuzzy',
+    );
+    final onProgress = (List<SourceOption> sources) {
+      _mergeAndUpdateSources(sources, fuzzy: fuzzy, isFinal: false);
+    };
+    var response = await SearchService.searchSourcesFastWithVariants(
+      keyword: searchKeyword,
+      exactMatch: initialExactMatch,
+      fuzzy: fuzzy,
+      onProgress: onProgress,
+    );
+    debugPrint(
+      '[SourceSearch] 首轮结果: success=${response.success}, '
+      'count=${response.data?.length ?? 0}, message=${response.message}',
+    );
+
+    // 精确模式无结果时，先用原始标题尝试非精确的高相关匹配（包含/开头/高相似），
+    // 比直接截断基准名更可能命中带季/篇后缀的具体条目。
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
+        !fuzzy &&
+        initialExactMatch) {
+      debugPrint('[SourceSearch] 精确模式无结果，尝试高相关匹配: $searchKeyword');
+      response = await SearchService.searchSourcesFastWithVariants(
+        keyword: searchKeyword,
+        exactMatch: false,
+        fuzzy: false,
+        onProgress: onProgress,
+      );
+      debugPrint(
+        '[SourceSearch] 高相关匹配结果: count=${response.data?.length ?? 0}',
+      );
+    }
+
+    // 若原始标题无结果，尝试用基准名（首个空格/标点前）重试
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
+        !fuzzy) {
+      final simplified = _extractSearchBaseName(widget.title);
+      if (simplified.isNotEmpty && simplified != widget.title) {
+        debugPrint('[SourceSearch] 尝试基准名重试: $simplified');
+        response = await SearchService.searchSourcesFastWithVariants(
+          keyword: simplified,
+          exactMatch: true,
+          fuzzy: false,
+          onProgress: onProgress,
+        );
+        debugPrint(
+          '[SourceSearch] 基准名重试结果: count=${response.data?.length ?? 0}',
+        );
+      }
+    }
+
+    // Bangumi 每日放送条目：精确匹配无结果时自动降级到严格模糊匹配
+    //（仅保留包含/高相似结果），避免引入大量不相关源。
+    // 若仍无结果，用户可手动点击“尝试模糊搜索”使用更宽松的阈值。
+    if ((!response.success ||
+            response.data == null ||
+            response.data!.isEmpty) &&
+        !fuzzy &&
+        widget.bangumiId != null) {
+      debugPrint('[SourceSearch] Bangumi 首轮无结果，降级严格模糊匹配');
+      response = await SearchService.searchSourcesFastWithVariants(
+        keyword: widget.title,
+        exactMatch: false,
+        fuzzy: false,
+        onProgress: onProgress,
+      );
+      debugPrint(
+        '[SourceSearch] Bangumi 降级结果: count=${response.data?.length ?? 0}',
+      );
+    }
+
+    if (response.success &&
+        response.data != null &&
+        response.data!.isNotEmpty) {
+      _mergeAndUpdateSources(response.data!, fuzzy: fuzzy, isFinal: true);
+    } else if (mounted) {
+      setState(() => _searchingSources = false);
+    }
+  }
+
+  /// 将搜索到的源与当前 [_sources] 合并并刷新界面。
+  /// [isFinal] 为 true 时，会重置搜索状态并尝试加载当前选中源的视频详情。
+  void _mergeAndUpdateSources(
+    List<SourceOption> searchedSources, {
+    required bool fuzzy,
+    required bool isFinal,
+  }) {
+    if (!mounted || searchedSources.isEmpty) {
+      if (isFinal && mounted) setState(() => _searchingSources = false);
+      return;
+    }
+
+    final exactYear = widget.year.isNotEmpty
+        ? searchedSources
+              .where((s) => _yearMatches(s.year, widget.year))
+              .toList()
+        : <SourceOption>[];
+    final sourcesToUse = exactYear.isNotEmpty ? exactYear : searchedSources;
+
+    // 合并已有源与搜索结果，去重；播放记录对应的原始源优先排在最前
+    final originalSource = widget.playRecord != null
+        ? '${widget.playRecord!.source}+${widget.playRecord!.id}'
+        : null;
+    final seen = <String>{};
+    final mergedSources = <SourceOption>[];
+
+    // 1. 优先保留原始源或搜索页点选的初始源
+    for (final s in _sources) {
+      final key = '${s.source}+${s.id}';
+      if (key == originalSource || key == _initialSelectedSourceKey) {
+        seen.add(key);
+        mergedSources.add(s);
+        break;
+      }
+    }
+
+    // 2. 加入搜索结果
+    for (final s in sourcesToUse) {
+      final key = '${s.source}+${s.id}';
+      if (!seen.contains(key)) {
+        seen.add(key);
+        mergedSources.add(s);
+      }
+    }
+
+    // 3. 模糊模式下保留其余已有源；精确模式下丢弃不匹配的已有源
+    if (fuzzy) {
+      for (final s in _sources) {
+        final key = '${s.source}+${s.id}';
+        if (!seen.contains(key)) {
+          seen.add(key);
+          mergedSources.add(s);
+        }
+      }
+    }
+
+    // 若用户已手动选源，尽量保留当前选中的源；否则优先使用播放记录源。
+    final currentSourceKey =
+        _sources.isNotEmpty && _selectedSourceIndex < _sources.length
+        ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+        : null;
+    var preservedIndex = currentSourceKey != null
+        ? mergedSources.indexWhere(
+            (s) => '${s.source}+${s.id}' == currentSourceKey,
+          )
+        : -1;
+
+    // 用户手动选择的源若不在搜索结果中，仍予以保留，避免自动切回记录源。
+    if (_sourceSwitchedByUser &&
+        currentSourceKey != null &&
+        preservedIndex < 0) {
+      mergedSources.add(_sources[_selectedSourceIndex]);
+      preservedIndex = mergedSources.length - 1;
+    }
+
+    setState(() {
+      _sources = mergedSources;
+      _sourcesNotifier.value = List.unmodifiable(_sources);
+      if (_sourceSwitchedByUser && preservedIndex >= 0) {
+        _selectedSourceIndex = preservedIndex;
+      } else if (originalSource != null) {
+        final originalIndex = mergedSources.indexWhere(
+          (s) => '${s.source}+${s.id}' == originalSource,
+        );
+        if (originalIndex >= 0) {
+          _selectedSourceIndex = originalIndex;
+        } else {
+          _selectedSourceIndex = 0;
+        }
+      } else if (_initialSelectedSourceKey != null) {
+        final initialIndex = mergedSources.indexWhere(
+          (s) => '${s.source}+${s.id}' == _initialSelectedSourceKey,
+        );
+        _selectedSourceIndex = initialIndex >= 0 ? initialIndex : 0;
+      } else {
+        _selectedSourceIndex = 0;
+      }
+      if (isFinal) _searchingSources = false;
+      if (isFinal && _playRecord != null) {
+        _applyPlayRecordSelection();
+      }
+    });
+    if (isFinal && _playRecord != null) {
+      _scrollToSelectedEpisode();
+    }
+
+    // 视频详情尚未加载时，自动加载当前选中源
+    if (isFinal && _videoDetail == null && _currentSource.source.isNotEmpty) {
+      unawaited(_loadVideoDetail());
+    }
+
+    // 搜索到源后，用源标题再次尝试匹配播放记录（Bangumi 标题与源标题可能不同）。
+    if (isFinal && _playRecord == null) {
+      unawaited(_loadPlayRecord(force: true, applySelection: true));
+    }
+
+    // 搜索全部完成后，若存在多个源且未测速，执行一次自动测速择优。
+    // 有播放记录时也会测速，但不会改变当前选中的源。
+    if (isFinal && _sources.length >= 2) {
+      unawaited(_maybeStartSpeedTest(force: true));
+    }
+  }
+
+  /// 手动触发模糊搜索，用于精确匹配无结果时。
+  /// 使用与“搜索”分类页一致的 [SearchService.search]（fuzzy: true）逻辑，
+  /// 结果经 groupBySource 后合并到当前源列表。
+  Future<void> _runFuzzySearch() async {
+    if (!mounted) return;
+    setState(() {
+      _searchingSources = true;
+      _fuzzySearchEnabled = true;
+    });
+    try {
+      final response = await SearchService.search(
+        keyword: widget.title,
+        fuzzy: true,
+      );
+      if (!mounted) return;
+      if (response.success && response.data != null) {
+        final sources = SearchService.groupBySource(response.data!);
+        _mergeAndUpdateSources(sources, fuzzy: true, isFinal: true);
+      } else {
+        setState(() => _searchingSources = false);
+      }
+    } catch (e) {
+      debugPrint('手动模糊搜索失败: $e');
+      if (mounted) setState(() => _searchingSources = false);
+    }
+  }
+
+  Future<void> _loadVideoDetail() async {
+    final requestId = ++_videoDetailRequestId;
+    final reqSource = _currentSource.source;
+    final reqId = _currentSource.id;
+    final reqTitle = _currentSource.title;
+
+    final response = await LunaTVService.getDetail(
+      source: reqSource,
+      id: reqId,
+      title: reqTitle,
+    );
+
+    if (!mounted) return;
+    // 若切换源后已有新请求发出，或当前源已变更，则丢弃本次旧响应。
+    if (requestId != _videoDetailRequestId) return;
+    if (reqSource != _currentSource.source || reqId != _currentSource.id) {
+      return;
+    }
+
+    if (response.success && response.data != null) {
+      final detail = response.data!;
+      // 播放记录进入时原始源可能缺少 episodes，这里用详情接口补全，
+      // 使其能参与测速并显示速度/分辨率。
+      final currentKey = '${_currentSource.source}+${_currentSource.id}';
+      final sourceIdx = _sources.indexWhere(
+        (s) => '${s.source}+${s.id}' == currentKey,
+      );
+      var shouldRetest = false;
+      if (sourceIdx >= 0 && detail.episodes.isNotEmpty) {
+        final old = _sources[sourceIdx];
+        if (old.episodes.isEmpty) {
+          _sources[sourceIdx] = old.copyWith(episodes: detail.episodes);
+          _sourcesNotifier.value = List.unmodifiable(_sources);
+          shouldRetest = _sources.length >= 2;
+        }
+      }
+
+      setState(() {
+        _videoDetail = detail;
+        _detailLoading = false;
+        if (_playRecord != null) {
+          _applyPlayRecordSelection();
+        }
+      });
+
+      if (shouldRetest) {
+        // 当前源 episodes 刚补充完整，标记待补测；若正在测速中会在本轮结束后
+        // 仅对未测速源补测，避免全部源重测一遍。
+        _pendingSpeedTestRestart = true;
+      }
+
+      if (_playRecord != null) {
+        _scrollToSelectedEpisode();
+      }
+      // 视频标题已确定后，用源标题/视频标题再次尝试匹配播放记录。
+      if (_playRecord == null) {
+        unawaited(_loadPlayRecord(force: true, applySelection: true));
+      }
+    } else {
+      // 详情接口失败时，若当前源已带有搜索返回的剧集/海报，则用它兜底展示，
+      // 避免源失效时直接显示错误页面；同时继续等待豆瓣详情作为更优展示。
+      final fallbackDetail = _buildFallbackVideoDetail();
+      setState(() {
+        if (fallbackDetail != null) {
+          _videoDetail = fallbackDetail;
+        } else {
+          _error = response.message ?? '获取视频详情失败';
+        }
+        _detailLoading = false;
+      });
+    }
+  }
+
+  /// 当 detail 接口失败时，用当前源已有的搜索信息构造一个基础 VideoDetail 用于兜底展示。
+  VideoDetail? _buildFallbackVideoDetail() {
+    final s = _currentSource;
+    if (s.source.isEmpty || s.id.isEmpty) return null;
+    final hasEpisodes = s.episodes.isNotEmpty;
+    final hasPoster = s.poster != null && s.poster!.isNotEmpty;
+    if (!hasEpisodes && !hasPoster) return null;
+    return VideoDetail(
+      source: s.source,
+      sourceName: s.sourceName,
+      id: s.id,
+      title: s.title.isNotEmpty ? s.title : widget.title,
+      poster: s.poster ?? '',
+      year: s.year.isNotEmpty ? s.year : widget.year,
+      doubanId: s.doubanId,
+      episodes: s.episodes,
+      episodesTitles: const [],
+    );
+  }
+
+  Future<void> _loadDoubanDetails() async {
+    // Bangumi 每日放送条目：优先用豆瓣详情，豆瓣找不到再回退到 Bangumi
+    if (widget.bangumiId != null) {
+      DoubanMovieDetails? doubanDetails;
+      var isBangumiFallback = false;
+      if (widget.title.isNotEmpty) {
+        final searchResponse = await DoubanService.search(
+          keyword: widget.title,
+          limit: 5,
+        );
+        if (searchResponse.success && searchResponse.data != null) {
+          DoubanMovie? bestMatch;
+          var bestScore = 0.0;
+          for (final candidate in searchResponse.data!) {
+            var score = _titleSimilarity(widget.title, candidate.title);
+            if (widget.year.isNotEmpty && candidate.year.isNotEmpty) {
+              if (widget.year == candidate.year) score += 0.2;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              bestMatch = candidate;
+            }
+          }
+          if (bestMatch != null && bestScore >= 0.6) {
+            _doubanSearchRate = bestMatch.rate;
+            final detailResponse = await DoubanService.getDetails(
+              doubanId: bestMatch.id,
+            );
+            if (detailResponse.success && detailResponse.data != null) {
+              doubanDetails = detailResponse.data;
+            }
+          }
+        }
+      }
+
+      if (doubanDetails == null) {
+        final response = await BangumiService.fetchSubject(widget.bangumiId!);
+        if (response.success && response.data != null) {
+          doubanDetails = response.data;
+          isBangumiFallback = true;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _doubanLoading = false;
+          _doubanDetails = doubanDetails;
+          _isBangumiFallback = isBangumiFallback;
+        });
+      }
+      return;
+    }
+
+    // 普通豆瓣条目
+    if (widget.doubanId != null) {
+      final response = await DoubanService.getDetails(
+        doubanId: widget.doubanId.toString(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _doubanLoading = false;
+        if (response.success && response.data != null) {
+          _doubanDetails = response.data;
+        }
+      });
+      return;
+    }
+
+    // 既无 Bangumi ID 也无豆瓣 ID：尝试用标题和年份搜索豆瓣兜底，
+    // 使从播放记录/收藏夹等仅有源标题的入口也能展示豆瓣详情页。
+    // 先用完整标题，再用基准名（去掉季/集后缀）重试，提高命中率。
+    final fallbackTitles = [
+      widget.title,
+      if (widget.title.isNotEmpty) _extractSearchBaseName(widget.title),
+    ].where((t) => t.isNotEmpty).toSet().toList();
+    for (final keyword in fallbackTitles) {
+      final searchResponse = await DoubanService.search(
+        keyword: keyword,
+        limit: 5,
+      );
+      if (searchResponse.success && searchResponse.data != null) {
+        DoubanMovie? bestMatch;
+        var bestScore = 0.0;
+        for (final candidate in searchResponse.data!) {
+          var score = _titleSimilarity(widget.title, candidate.title);
+          if (widget.year.isNotEmpty && candidate.year.isNotEmpty) {
+            if (widget.year == candidate.year) score += 0.2;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = candidate;
+          }
+        }
+        if (bestMatch != null && bestScore >= 0.6) {
+          final detailResponse = await DoubanService.getDetails(
+            doubanId: bestMatch.id,
+          );
+          if (mounted) {
+            setState(() {
+              _doubanLoading = false;
+              if (detailResponse.success && detailResponse.data != null) {
+                _doubanDetails = detailResponse.data;
+              }
+            });
+          }
+          return;
+        }
+      }
+    }
+    if (mounted) setState(() => _doubanLoading = false);
+  }
+
+  static double _titleSimilarity(String a, String b) {
+    String normalize(String s) {
+      var result = s.toLowerCase();
+      // 将罗马数字/圈数字等特殊数字归一为阿拉伯数字，提升含“Ⅲ”“①”等标题的匹配率
+      const digitMap = {
+        'ⅰ': '1', 'ⅱ': '2', 'ⅲ': '3', 'ⅳ': '4', 'ⅴ': '5',
+        'ⅵ': '6', 'ⅶ': '7', 'ⅷ': '8', 'ⅸ': '9', 'ⅹ': '10',
+        '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
+        '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10',
+        'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5',
+        'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8', 'Ⅸ': '9', 'Ⅹ': '10',
+      };
+      digitMap.forEach((k, v) {
+        result = result.replaceAll(k, v);
+      });
+      return result.replaceAll(RegExp(r'\s+'), '');
+    }
+
+    final na = normalize(a);
+    final nb = normalize(b);
+    if (na.isEmpty || nb.isEmpty) return 0.0;
+    if (na == nb) return 1.0;
+
+    var keywordIndex = 0;
+    for (var i = 0; i < nb.length && keywordIndex < na.length; i++) {
+      if (nb[i] == na[keywordIndex]) keywordIndex++;
+    }
+    if (keywordIndex == na.length) return 0.9;
+
+    final matchedChars = na.split('').where(nb.contains).length;
+    return matchedChars / na.length;
+  }
+
+  void _disposePreviewPlayer() {
+    for (final sub in _previewSubscriptions) {
+      sub.cancel();
+    }
+    _previewSubscriptions.clear();
+    _previewBackend?.dispose();
+    _previewBackend = null;
+  }
+
+  Future<void> _onSourceChanged(int index) async {
+    if (index < 0 || index >= _sources.length) return;
+    if (index == _selectedSourceIndex) return;
+
+    setState(() {
+      _selectedSourceIndex = index;
+
+      _sourceSwitchedByUser = true;
+      _videoDetail = null;
+      _error = null;
+      _selectedEpisodeIndex = 0;
+      _detailLoading = true;
+    });
+    await _loadFavoriteStatus(localOnly: true);
+    unawaited(_loadFavoriteStatus(localOnly: false));
+    await _loadPlayerBackend();
+    await _loadVideoDetail();
+  }
+
+  /// 按测速结果对播放源进行排序。
+  /// - 无播放记录：全部按速度降序排列，最快的源放在第一位。
+  /// - 有播放记录：记录原始源置顶；测速最快的源（若与记录源不同）放在第二位，
+  ///   其余源按速度降序排在后面。
+  List<SourceOption> _sortSourcesBySpeed(List<SourceOption> sources) {
+    if (sources.length <= 1) return List<SourceOption>.from(sources);
+
+    final record = _playRecord;
+    SourceOption? recordSource;
+    if (record != null) {
+      recordSource = sources.firstWhere(
+        (s) => s.source == record.source && s.id == record.id,
+        orElse: () =>
+            const SourceOption(source: '', sourceName: '', id: '', title: ''),
+      );
+      if (recordSource.source.isEmpty) recordSource = null;
+    }
+
+    /// 可用性：测出真实速度 > 可用但速度未知 > 不可用/未知。
+    int _availabilityRank(double? speed) {
+      if (speed == null || speed == 0) return 0;
+      if (speed == -1.0) return 1;
+      return 2;
+    }
+
+    /// 分辨率档位：用于保证 1080P 排在 720P/360P 之前。
+    int _resolutionRank(String? resolution) {
+      switch (resolution) {
+        case '4K':
+          return 5;
+        case '1080P':
+          return 4;
+        case '720P':
+          return 3;
+        case '480P':
+          return 2;
+        case '360P':
+          return 1;
+        default:
+          return 0;
+      }
+    }
+
+    final others = sources.where((s) => s != recordSource).toList();
+    others.sort((a, b) {
+      // 先比可用性。
+      final aAvail = _availabilityRank(a.speed);
+      final bAvail = _availabilityRank(b.speed);
+      if (aAvail != bAvail) return bAvail.compareTo(aAvail);
+
+      // 可用性相同再比分辨率档位，避免低清源因速度高排在前面。
+      final aRes = _resolutionRank(a.resolution);
+      final bRes = _resolutionRank(b.resolution);
+      if (aRes != bRes) return bRes.compareTo(aRes);
+
+      // 同分辨率内按真实速度降序。
+      final aEffective = a.speed == -1.0 ? 0.0 : (a.speed ?? 0.0);
+      final bEffective = b.speed == -1.0 ? 0.0 : (b.speed ?? 0.0);
+      return bEffective.compareTo(aEffective);
+    });
+
+    if (recordSource != null) {
+      return [recordSource, ...others];
+    }
+    return others;
+  }
+
+  Future<void> _runSpeedTest({
+    bool force = false,
+    bool onlyUntested = false,
+  }) async {
+    if (_sources.length < 2 || _speedTesting) return;
+    if (!force && !onlyUntested && _hasSpeedTested) return;
+
+    setState(() {
+      _speedTesting = true;
+      _speedTestProgress = '测速中 0/${_sources.length}';
+    });
+
+    // 记录当前选中的源标识，测速排序后优先保持不变。
+    final previousSourceIndex = _selectedSourceIndex;
+    final previousSource = previousSourceIndex >= 0 &&
+            previousSourceIndex < _sources.length
+        ? _sources[previousSourceIndex]
+        : null;
+    final previousSourceKey = previousSource != null
+        ? '${previousSource.source}+${previousSource.id}'
+        : null;
+
+    final tested = await SearchService.speedTestSources(
+      _sources,
+      playedSourceKey: _playRecord != null
+          ? '${_playRecord!.source}+${_playRecord!.id}'
+          : (_selectedSourceIndex >= 0 &&
+                  _selectedSourceIndex < _sources.length)
+              ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+              : null,
+      testAllSources: !onlyUntested,
+      onlyUntested: onlyUntested,
+      onProgressText: (completed, total) {
+        if (mounted) {
+          setState(() {
+            _speedTestProgress = '测速中 $completed/$total';
+          });
+        }
+      },
+      onProgress: (sortedSources) {
+        if (mounted) {
+          setState(() {
+            // 测速每完成一个源就回调一次已排序的完整列表，实时刷新 UI。
+            // 先记录当前选中的源标识，避免排序后索引错位。
+            final currentKey = _selectedSourceIndex >= 0 &&
+                    _selectedSourceIndex < _sources.length
+                ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+                : null;
+            _sources = sortedSources;
+            if (currentKey != null &&
+                currentKey.isNotEmpty &&
+                currentKey != '+') {
+              final newIndex = _sources.indexWhere(
+                (s) => '${s.source}+${s.id}' == currentKey,
+              );
+              if (newIndex >= 0) {
+                _selectedSourceIndex = newIndex;
+              }
+            }
+            _sourcesNotifier.value = List.unmodifiable(sortedSources);
+          });
+        }
+      },
+    );
+
+    if (!mounted) return;
+
+    // 将测速结果合并到当前源列表（避免测速期间源列表被后台搜索更新后，
+    // 这里用旧的 sorted 列表覆盖导致新增源丢失或用户手动选择被重置）。
+    final testedMap = {
+      for (final s in tested) '${s.source}+${s.id}': s,
+    };
+
+    setState(() {
+      // 排序前先记录当前选中的源标识，避免排序后索引错位。
+      final currentSourceKey = _selectedSourceIndex >= 0 &&
+              _selectedSourceIndex < _sources.length
+          ? '${_sources[_selectedSourceIndex].source}+${_sources[_selectedSourceIndex].id}'
+          : previousSourceKey;
+
+      for (var i = 0; i < _sources.length; i++) {
+        final key = '${_sources[i].source}+${_sources[i].id}';
+        final testedSource = testedMap[key];
+        if (testedSource != null) {
+          _sources[i] = _sources[i].copyWith(
+            speed: testedSource.speed,
+            responseTime: testedSource.responseTime,
+            resolution: testedSource.resolution ?? _sources[i].resolution,
+          );
+        }
+      }
+      _sources = _sortSourcesBySpeed(_sources);
+      _sourcesNotifier.value = List.unmodifiable(_sources);
+      _speedTesting = false;
+      _hasSpeedTested = true;
+      _speedTestProgress = '';
+
+      final record = _playRecord;
+      final recordIndex = record != null
+          ? _sources.indexWhere(
+              (s) => s.source == record.source && s.id == record.id,
+            )
+          : -1;
+
+      // 用户手动切换过源时，测速排序后仍保持用户当前选择的源。
+      if (_sourceSwitchedByUser &&
+          currentSourceKey != null &&
+          currentSourceKey.isNotEmpty &&
+          currentSourceKey != '+') {
+        final manualIndex = _sources.indexWhere(
+          (s) => '${s.source}+${s.id}' == currentSourceKey,
+        );
+        if (manualIndex >= 0) {
+          _selectedSourceIndex = manualIndex;
+        } else {
+          // 用户手动选择的源若不在当前列表中，仍保留原选择避免被强制切走。
+          // 保持当前索引并在安全范围内 clamp。
+          _selectedSourceIndex = _selectedSourceIndex.clamp(
+            0,
+            _sources.isEmpty ? 0 : _sources.length - 1,
+          );
+        }
+      } else if (recordIndex >= 0) {
+        _selectedSourceIndex = recordIndex;
+      } else {
+        _selectedSourceIndex = 0;
+      }
+
+      debugPrint(
+        '[SourceSelect] speedTest done: userSwitched=$_sourceSwitchedByUser, '
+        'currentKey=$currentSourceKey, selectedIndex=$_selectedSourceIndex, '
+        'source=${_sources.isNotEmpty ? _sources[_selectedSourceIndex].source : ""}',
+      );
+    });
+
+    // 选中源发生变化时，重新加载对应源的详情与播放器后端。
+    final currentSource = _sources[_selectedSourceIndex];
+    if (previousSource == null ||
+        currentSource.source != previousSource.source ||
+        currentSource.id != previousSource.id) {
+      setState(() {
+        _videoDetail = null;
+        _error = null;
+        _selectedEpisodeIndex = 0;
+        _detailLoading = true;
+      });
+      await _loadFavoriteStatus(localOnly: true);
+      unawaited(_loadFavoriteStatus(localOnly: false));
+      await _loadPlayerBackend();
+      await _loadVideoDetail();
+    }
+
+    // 测速期间若有新源加入或当前源刚补充 episodes，仅对未测速源补测一次，
+    // 避免全部源重测一遍。
+    if (_pendingSpeedTestRestart) {
+      _pendingSpeedTestRestart = false;
+      if (mounted && _sources.length >= 2) {
+        unawaited(_maybeStartSpeedTest(onlyUntested: true));
+      }
+    }
+  }
+
+  void _toggleFavorite() async {
+    final source = _currentSource.source;
+    final id = _currentSource.id;
+    if (source.isEmpty || id.isEmpty) return;
+    final key = '$source+$id';
+
+    // 1. 先按本地状态切换，立即刷新 UI
+    final currentlyFavorite = await local.LocalStorageService.isFavorite(
+      source,
+      id,
+    );
+    final targetFavorite = !currentlyFavorite;
+    final record = local.FavoriteRecord(
+      source: source,
+      id: id,
+      title: widget.title,
+      posterUrl: _doubanDetails?.poster ?? widget.poster,
+      year: widget.year,
+      doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
+      createdAt: DateTime.now(),
+    );
+    if (targetFavorite) {
+      await local.LocalStorageService.addFavorite(record);
+    } else {
+      await local.LocalStorageService.removeFavorite(source, id);
+    }
+    if (mounted) {
+      setState(() => _isFavorite = targetFavorite);
+    }
+    FavoriteRefreshNotifier.instance.notify();
+
+    // 2. 后台同步到 LunaTV 服务器
+    unawaited(_syncFavoriteToRemote(key: key, add: targetFavorite));
+  }
+
+  Future<void> _syncFavoriteToRemote({
+    required String key,
+    required bool add,
+  }) async {
+    try {
+      final favorite = Favorite(
+        source: _currentSource.source,
+        id: _currentSource.id,
+        title: widget.title,
+        cover: _doubanDetails?.poster ?? widget.poster ?? '',
+        sourceName: _currentSource.sourceName,
+        doubanId: widget.doubanId?.toString() ?? _doubanDetails?.id,
+      );
+      if (add) {
+        await LunaTVService.addFavorite(key: key, favorite: favorite);
+      } else {
+        await LunaTVService.deleteFavorite(key);
+      }
+    } catch (e) {
+      debugPrint('同步远程收藏失败: $e');
+    }
+  }
+
+  /// 查找指定源 ID 在当前源列表中的索引。
+  int? _findSourceIndex(String source, String id) {
+    final key = '$source+$id';
+    final index = _sources.indexWhere((s) => '${s.source}+${s.id}' == key);
+    return index >= 0 ? index : null;
+  }
+
+  Future<void> _playEpisode(
+    int index, {
+    int initialPlayTime = 0,
+    int? preferredSourceIndex,
+  }) async {
+    // 若视频详情尚未加载完成，短暂等待（用户点击时详情通常已在后台加载）
+    if (_videoDetail == null && _detailLoading) {
+      await Future.any([
+        Future.doWhile(() async {
+          await Future.delayed(const Duration(milliseconds: 100));
+          return mounted && _videoDetail == null && _detailLoading;
+        }),
+        Future.delayed(const Duration(seconds: 8)),
+      ]);
+    }
+
+    final detail = _videoDetail;
+    if (detail == null || detail.episodes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('播放资源加载中，请稍后再试'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+    if (index < 0 || index >= detail.episodes.length) return;
+
+    // 播放时优先使用指定的源（如播放记录），否则使用用户当前选中的源。
+    // 自动测速择优只在详情页初始化时执行一次，播放时不再调回优选源。
+    final sourceIndex = preferredSourceIndex ?? _selectedSourceIndex;
+
+    // 若调用方未显式指定续播位置、且存在与当前集匹配的播放记录，则自动续播。
+    // 否则点「剧集列表 / 主播放按钮」入口会忽略记录、从 0 重播，进而误触发
+    // 跳过片头（2026-09-24 用户复测：某源未读到续播记录 → 回退重播 → 触发跳过片头）。
+    if (initialPlayTime <= 0 && _playRecord != null && (_playRecord!.index - 1) == index) {
+      initialPlayTime = _playRecord!.playTime;
+    }
+
+    // 🔴 2026-09-28：播放前重新读取一次「本视频实际应使用的后端」，
+    // 不要直接沿用状态变量 _playerBackend。
+    //
+    // 原因：_playerBackend 是异步加载的（见 _loadPlayerBackend，由 setState 更新），
+    // 初值是 PlayerBackendFactory.platformDefault。若用户在加载完成前就点播放，
+    // 传下去的就是平台默认后端，而**不是设置里真正选的那个**，表现为
+    // 「设置里明明选了 AVPlayer，首次进播放页却用 fvp 起播」。
+    // 实测日志（设备 9CN0223912004329）同一秒读取与使用不一致：
+    //     12:18:13 [AdFilterEngine] 去广告开关=true, 后端=PlayerBackendType.avplayer
+    //     12:18:14 MobilePlayerScreen 尝试播放 [PlayerBackendType.fvp]
+    // 这里按「源+视频」维度同步读一次（与 _loadPlayerBackend 完全同源同规则），
+    // 读到的值同时也回写状态，保证 UI 与实际一致。
+    final playSource = sourceIndex >= 0 && sourceIndex < _sources.length
+        ? _sources[sourceIndex]
+        : _currentSource;
+    var backendForThisPlay = _playerBackend;
+    try {
+      final stored = (playSource.source.isEmpty || playSource.id.isEmpty)
+          ? await UserDataService.getPlayerBackend()
+          : await UserDataService.getPlayerBackendForVideo(
+              playSource.source,
+              playSource.id,
+            );
+      backendForThisPlay = PlayerBackendFactory.availableBackends.contains(stored)
+          ? stored
+          : PlayerBackendFactory.platformDefault;
+      if (mounted && backendForThisPlay != _playerBackend) {
+        setState(() => _playerBackend = backendForThisPlay);
+      }
+    } catch (_) {
+      // 读取失败时沿用当前状态值，不因设置读取异常而阻断播放。
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MobilePlayerScreen(
+          videoDetail: detail,
+          episodeIndex: index,
+          sources: _sources,
+          sourcesNotifier: _sourcesNotifier,
+          initialSourceIndex: sourceIndex,
+          playerBackend: backendForThisPlay,
+          initialPositionMs: initialPlayTime * 1000,
+        ),
+      ),
+    );
+
+    // 从播放页返回后异步刷新播放记录：先读本地立即更新 UI，再在后台同步远程/海报
+    if (mounted) {
+      unawaited(
+        _loadPlayRecord(
+          force: true,
+          applySelection: true,
+          localOnly: true,
+        ).then((_) async {
+          if (mounted) {
+            // 后台再拉取远程记录和豆瓣海报，不阻塞当前页面
+            unawaited(
+              _loadPlayRecord(
+                force: true,
+                applySelection: true,
+                localOnly: false,
+              ),
+            );
+          }
+        }),
+      );
+    }
+  }
+
+  Widget _buildPoster() {
+    var url = _doubanDetails?.poster ?? widget.poster ?? '';
+    if (url.isEmpty) {
+      return Container(
+        color: AppColors.bgSurface,
+        child: Center(
+          child: Text(
+            widget.title.isNotEmpty ? widget.title.substring(0, 1) : '',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              fontSize: 48,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (url.startsWith('//')) {
+      url = 'https:$url';
+    }
+    url = BangumiService.proxyImageUrl(url);
+
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      cacheManager: HainTvCacheManager(),
+      memCacheWidth: 300,
+      memCacheHeight: 450,
+      httpHeaders: const {
+        'Referer': 'https://m.douban.com',
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      },
+      placeholder: (_, __) => Container(color: AppColors.bgSurface),
+      errorWidget: (_, __, ___) => Container(color: AppColors.bgSurface),
+    );
+  }
+
+  Widget _buildSourceSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              '播放源',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            if (_searchingSources)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: TechLoadingIndicator(strokeWidth: 2),
+              ),
+            if (_searchingSources) const SizedBox(width: AppSpacing.sm),
+            if (_sources.length >= 2)
+              GestureDetector(
+                onTap: () => _runSpeedTest(force: true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgElevated,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_speedTesting)
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: TechLoadingIndicator(strokeWidth: 2),
+                        )
+                      else
+                        Icon(
+                          Icons.network_check,
+                          color: AppColors.primary,
+                          size: 16,
+                        ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Text(
+                        _speedTesting ? '测速中' : '优选测速',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 13,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        SizedBox(
+          height: 180,
+          child: _sources.isEmpty
+              ? _searchingSources
+                    ? const SizedBox.shrink()
+                    : _fuzzySearchEnabled
+                    ? Text(
+                        '未找到相关播放源',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 14,
+                          color: AppColors.textSecondary,
+                        ),
+                      )
+                    : GestureDetector(
+                        onTap: _runFuzzySearch,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.sm,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.bgElevated,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.search,
+                                color: AppColors.primary,
+                                size: 16,
+                              ),
+                              SizedBox(width: AppSpacing.xs),
+                              Text(
+                                '精确匹配无结果，尝试模糊搜索',
+                                style: TextStyle(
+                                  fontFamily: 'NotoSansSC',
+                                  fontSize: 13,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Row(
+                    children: List.generate(_sources.length, (index) {
+                      return Padding(
+                        padding: EdgeInsets.only(
+                          right: index < _sources.length - 1
+                              ? AppSpacing.md
+                              : AppSpacing.sm,
+                        ),
+                        child: _buildSourceCard(index),
+                      );
+                    }),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSourceCard(int index) {
+    final source = _sources[index];
+    final selected = index == _selectedSourceIndex;
+    final speedText = _formatSpeed(source.speed);
+    final badgeColor = _speedColor(source.speed);
+    final resolutionText = source.resolution?.trim() ?? '';
+
+    return GestureDetector(
+      onTap: () => _onSourceChanged(index),
+      child: SizedBox(
+        width: 140,
+        child: AspectRatio(
+          aspectRatio: 2 / 3,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: CachedNetworkImage(
+                  imageUrl: source.poster?.isNotEmpty == true
+                      ? source.poster!
+                      : '',
+                  fit: BoxFit.cover,
+                  cacheManager: HainTvCacheManager(),
+                  memCacheWidth: 300,
+                  memCacheHeight: 450,
+                  placeholder: (_, __) => Container(color: AppColors.bgSurface),
+                  errorWidget: (_, __, ___) => Container(
+                    color: AppColors.bgSurface,
+                    child: Center(
+                      child: Text(
+                        source.title.isNotEmpty
+                            ? source.title.substring(0, 1)
+                            : '',
+                        style: TextStyle(
+                          fontFamily: 'NotoSansSC',
+                          fontSize: 24,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // 底部彩色背景 + 标题/源名
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(AppRadius.sm),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.sm,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgElevated.withValues(alpha: 0.95),
+                      border: Border(
+                        top: BorderSide(
+                          color: AppColors.primary.withValues(alpha: 0.6),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          source.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                            height: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          source.sourceName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (speedText.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeColor,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      speedText,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              if (resolutionText.isNotEmpty)
+                Positioned(
+                  top: speedText.isNotEmpty ? 28 : 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      resolutionText,
+                      style: TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textInverse,
+                      ),
+                    ),
+                  ),
+                ),
+              if (selected)
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Icon(
+                    Icons.check_circle,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatSpeed(double? speedBps) {
+    if (speedBps == null) return '';
+    if (speedBps == -1.0) return '可用';
+    if (speedBps <= 0) return '不可用';
+    if (speedBps >= 1024 * 1024) {
+      return '${(speedBps / 1024 / 1024).toStringAsFixed(2)} MB/s';
+    }
+    return '${(speedBps / 1024).toStringAsFixed(1)} KB/s';
+  }
+
+  Color _speedColor(double? speedBps) {
+    if (speedBps == null) return AppColors.error;
+    if (speedBps == -1.0) return AppColors.success;
+    if (speedBps <= 0) return AppColors.error;
+    if (speedBps >= 1 * 1024 * 1024) return AppColors.success;
+    if (speedBps >= 256 * 1024) return AppColors.primary;
+    return AppColors.warning;
+  }
+
+  Widget _buildInfoSection() {
+    final rating = _doubanDetails?.rate ?? _doubanSearchRate;
+    final genres = _doubanDetails?.genres ?? [];
+    final summary = _doubanDetails?.summary ?? _videoDetail?.desc ?? '';
+    final directors = _doubanDetails?.directors ?? [];
+    final screenwriters = _doubanDetails?.screenwriters ?? [];
+    final actors = _doubanDetails?.actors ?? [];
+    final countries = _doubanDetails?.countries ?? [];
+    final languages = _doubanDetails?.languages ?? [];
+    final duration = _doubanDetails?.duration;
+    final releaseDate = _doubanDetails?.releaseDate;
+    final totalEpisodes = _doubanDetails?.totalEpisodes;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.title,
+          style: TextStyle(
+            fontFamily: 'NotoSansSC',
+            fontSize: 24,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            if (widget.year.isNotEmpty) _buildMetaChip(widget.year),
+            if (rating != null && rating.isNotEmpty)
+              _buildMetaChip(
+                _isBangumiFallback ? 'Bangumi $rating' : '豆瓣 $rating',
+                isPrimary: !_isBangumiFallback,
+                isBangumi: _isBangumiFallback,
+              ),
+            if (!_isBangumiFallback &&
+                widget.bangumiRate != null &&
+                widget.bangumiRate!.isNotEmpty)
+              _buildMetaChip('Bangumi ${widget.bangumiRate}', isBangumi: true),
+            if (genres.isNotEmpty) _buildMetaChip(genres.take(3).join(' / ')),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        if (_doubanLoading)
+          const SizedBox(
+            width: 24,
+            height: 24,
+            child: TechLoadingIndicator(strokeWidth: 2),
+          )
+        else if (summary.isNotEmpty)
+          GestureDetector(
+            onTap: () => setState(() => _summaryExpanded = !_summaryExpanded),
+            child: Text(
+              summary,
+              maxLines: _summaryExpanded ? null : 3,
+              overflow: _summaryExpanded
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                height: 1.5,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        const SizedBox(height: AppSpacing.md),
+        _buildInfoRow('导演', directors),
+        _buildInfoRow('编剧', screenwriters),
+        _buildInfoRow('主演', actors, maxItems: 8),
+        if (releaseDate != null && releaseDate.isNotEmpty)
+          _buildInfoText('首播', releaseDate),
+        const SizedBox(height: AppSpacing.md),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            if (countries.isNotEmpty)
+              _buildMetaChip(countries.take(2).join(' / ')),
+            if (languages.isNotEmpty) _buildMetaChip(languages.first),
+            if (totalEpisodes != null && totalEpisodes > 0)
+              _buildMetaChip('共${totalEpisodes}集'),
+            if (duration != null && duration.isNotEmpty)
+              _buildMetaChip(duration),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _buildActionButtons(),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(String label, List<String> items, {int maxItems = 5}) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final value = items.take(maxItems).join(' / ');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              fontSize: 14,
+              height: 1.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                height: 1.5,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoText(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              fontSize: 14,
+              height: 1.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 14,
+                height: 1.5,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    final record = _playRecord;
+    // 未手动切源时优先使用播放记录原始源；手动切源后跟随当前选中的源。
+    final effectiveSourceIndex = _sources.isNotEmpty
+        ? _selectedSourceIndex.clamp(0, _sources.length - 1)
+        : -1;
+    final continueSourceIndex = record != null && effectiveSourceIndex >= 0
+        ? (_sourceSwitchedByUser
+              ? effectiveSourceIndex
+              : _findSourceIndex(record.source, record.id) ??
+                    effectiveSourceIndex)
+        : effectiveSourceIndex;
+    final continueSource = continueSourceIndex >= 0
+        ? _sources[continueSourceIndex]
+        : const SourceOption(source: '', sourceName: '', id: '', title: '');
+    final sourceName = record != null && continueSourceIndex >= 0
+        ? (continueSource.sourceName.isNotEmpty
+              ? continueSource.sourceName
+              : continueSource.source)
+        : '';
+    final hasRecord = record != null;
+
+    return Wrap(
+      spacing: AppSpacing.md,
+      runSpacing: AppSpacing.md,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (hasRecord)
+          GestureDetector(
+            onTap: () => _playEpisode(
+              record.index > 0 ? record.index - 1 : 0,
+              initialPlayTime: record.playTime,
+              preferredSourceIndex: continueSourceIndex,
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    '继续播放',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (sourceName.isNotEmpty)
+                    Text(
+                      '来源：$sourceName',
+                      style: const TextStyle(
+                        fontFamily: 'NotoSansSC',
+                        fontSize: 11,
+                        color: Colors.white70,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        if (hasRecord)
+          OutlinedButton.icon(
+            onPressed: () => _playEpisode(0),
+            icon: Icon(Icons.replay, color: AppColors.textPrimary),
+            label: Text(
+              '从头播放',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              side: BorderSide(color: AppColors.border),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+            ),
+          ),
+        if (!hasRecord)
+          ElevatedButton.icon(
+            onPressed: _canPlayWithoutRecord
+                ? () => _playEpisode(_selectedEpisodeIndex)
+                : null,
+            icon: const Icon(Icons.play_arrow, color: Colors.white),
+            label: Text(
+              _playButtonTextWithoutRecord,
+              style: const TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _canPlayWithoutRecord
+                  ? AppColors.primary
+                  : AppColors.textMuted,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+            ),
+          ),
+        ElevatedButton.icon(
+          onPressed: _toggleFavorite,
+          icon: Icon(
+            _isFavorite ? Icons.favorite : Icons.favorite_border,
+            color: _isFavorite ? AppColors.primary : AppColors.textPrimary,
+          ),
+          label: Text(
+            _isFavorite ? '已收藏' : '收藏',
+            style: TextStyle(
+              fontFamily: 'NotoSansSC',
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: _isFavorite ? AppColors.primary : AppColors.textPrimary,
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _isFavorite
+                ? AppColors.primaryTint
+                : AppColors.bgElevated,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.sm,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            elevation: 0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetaChip(
+    String text, {
+    bool isPrimary = false,
+    bool isBangumi = false,
+  }) {
+    final Color bgColor;
+    final Color fgColor;
+    if (isBangumi) {
+      bgColor = const Color(0xFFFBCFE8); // 浅粉
+      fgColor = const Color(0xFFDB2777); // 深粉
+    } else if (isPrimary) {
+      bgColor = AppColors.primaryTint;
+      fgColor = AppColors.primary;
+    } else {
+      bgColor = AppColors.bgElevated;
+      fgColor = AppColors.textSecondary;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontFamily: 'NotoSansSC',
+          fontSize: 12,
+          fontWeight: isPrimary || isBangumi
+              ? FontWeight.w600
+              : FontWeight.w400,
+          color: fgColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEpisodes() {
+    final detail = _videoDetail;
+    if (_detailLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(AppSpacing.lg),
+        child: Center(
+          child: TechLoadingIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    if (detail == null || detail.episodes.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final titles = detail.episodesTitles.isNotEmpty
+        ? detail.episodesTitles
+        : List.generate(detail.episodes.length, (i) => '第${i + 1}集');
+
+    final displayIndices = _episodeSortAscending
+        ? List<int>.generate(detail.episodes.length, (i) => i)
+        : List<int>.generate(
+            detail.episodes.length,
+            (i) => i,
+          ).reversed.toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(
+            left: AppSpacing.lg,
+            right: AppSpacing.lg,
+            bottom: AppSpacing.md,
+          ),
+          child: Row(
+            children: [
+              Text(
+                '选集',
+                style: TextStyle(
+                  fontFamily: 'NotoSansSC',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  if (!_episodeSortAscending) {
+                    setState(() => _episodeSortAscending = true);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _episodeSortAscending
+                        ? AppColors.primaryTint
+                        : AppColors.bgSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: Border.all(
+                      color: _episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    '正序',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: _episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              GestureDetector(
+                onTap: () {
+                  if (_episodeSortAscending) {
+                    setState(() => _episodeSortAscending = false);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: !_episodeSortAscending
+                        ? AppColors.primaryTint
+                        : AppColors.bgSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: Border.all(
+                      color: !_episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    '倒序',
+                    style: TextStyle(
+                      fontFamily: 'NotoSansSC',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: !_episodeSortAscending
+                          ? AppColors.primary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 72,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            child: Row(
+              children: List.generate(displayIndices.length, (displayIndex) {
+                final originalIndex = displayIndices[displayIndex];
+                final title = titles[originalIndex];
+                final selected = _selectedEpisodeIndex == originalIndex;
+                return Padding(
+                  key: _episodeKeys.putIfAbsent(
+                    originalIndex,
+                    () => GlobalKey(),
+                  ),
+                  padding: EdgeInsets.only(
+                    right: displayIndex < displayIndices.length - 1
+                        ? AppSpacing.sm
+                        : 0,
+                  ),
+                  child: SizedBox(
+                    width: 100,
+                    child: GestureDetector(
+                      onTap: (_playRecord == null &&
+                              !_canPlayWithoutRecord)
+                          ? null
+                          : () => _playEpisode(originalIndex),
+                      child: Container(
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                          vertical: AppSpacing.xs,
+                        ),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? AppColors.primaryTint
+                              : AppColors.bgSurface,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'NotoSansSC',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: selected
+                                ? AppColors.primary
+                                : AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFatalError =
+        _error != null &&
+        _videoDetail == null &&
+        _doubanDetails == null &&
+        !_detailLoading &&
+        !_doubanLoading;
+
+    Widget child;
+    if (hasFatalError) {
+      child = Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _error!,
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              ElevatedButton(
+                onPressed: _loadData,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                    vertical: AppSpacing.md,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                ),
+                child: const Text(
+                  '重试',
+                  style: TextStyle(
+                    fontFamily: 'NotoSansSC',
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      final screenWidth = MediaQuery.of(context).size.width;
+      final posterWidth = screenWidth * 0.42;
+
+      child = Scaffold(
+        body: SafeArea(
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    child: SizedBox(
+                      width: posterWidth,
+                      child: AspectRatio(
+                        aspectRatio: 2 / 3,
+                        child: _buildPoster(),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                  ),
+                  child: _buildInfoSection(),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                _buildEpisodes(),
+                const SizedBox(height: AppSpacing.lg),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                  ),
+                  child: _buildSourceSelector(),
+                ),
+                const SizedBox(height: AppSpacing.xl),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) Navigator.of(context).pop();
+      },
+      child: child,
+    );
+  }
+}

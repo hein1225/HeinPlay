@@ -16,9 +16,12 @@ import '../services/live_service.dart';
 import '../services/live_source_storage.dart';
 import '../services/user_data_service.dart';
 import '../theme.dart';
+import '../utils/back_interceptor.dart';
 import '../utils/windows_logger.dart';
 import '../widgets/common/tech_loading_indicator.dart';
 import '../widgets/live/live_player.dart';
+
+import '../utils/log_redactor.dart';
 
 /// 全屏直播播放页。
 ///
@@ -133,6 +136,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 换台时新频道的播放器立刻在下层静音预载，旧频道画面与声音留在上层，
   /// 直到新频道首帧就绪（或预载超时/失败）才移除，从而避免换台黑屏。
   _HoldoverPlayerSpec? _holdoverPlayer;
+
+  /// 无缝换台是否处于「预载中」。
+  ///
+  /// 🔴 2026-10-23：与 [_holdoverPlayer] **刻意分开**。
+  /// [_holdoverPlayer] 表示「栈里还有旧画面」，本字段表示「新频道还在预载、
+  /// 尚未接管画面与声音」。二者曾用同一个条件表达（`_holdoverPlayer != null`），
+  /// 导致超时撤掉旧画面时把新频道的 onReady 回调一并置空，新频道再无人接管
+  /// —— 表现为「换台后卡住不动」（Windows server 实测：原生已出画，
+  /// Dart 层同刻判 timeout 就再也无人让新频道接管）。
+  bool _seamlessPreloading = false;
 
   /// 无缝换台预载超时定时器：超时后无论是否就绪都立即切换画面。
   Timer? _seamlessTimeoutTimer;
@@ -457,7 +470,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       );
       debugPrint(
         '[LiveLastChannel] save sourceId=${widget.source.id} '
-        'name=${ch.name} url=${ch.currentUrl}',
+        'name=${ch.name} url=${LogRedactor.redact(ch.currentUrl)}',
       );
     } catch (e, st) {
       debugPrint('[LiveLastChannel] save ERROR: $e\n$st');
@@ -482,6 +495,25 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       _holdoverPlayer = spec;
     }
 
+    // 🔴🔴 2026-10-23 换台「卡住」根因之三（Windows server 实测日志实证）：
+    //
+    //   预载状态**不能**用 `_holdoverPlayer != null` 表达。此前 `preloading`
+    //   直接取 `_holdoverPlayer != null`，于是：
+    //     ① 预载中：新频道 muted=true / showOverlay=false，等待 ready 回调
+    //     ② 3 秒超时 → _commitSeamlessSwitch('timeout') → _holdoverPlayer=null
+    //     ③ rebuild 时 preloading 变 false → 新频道 unmute、显示遮罩
+    //        —— 看似正常，但**新频道的 onReady 回调同时被置 null**
+    //     ④ 900ms 后新播放器就绪 → _notifyReady() → widget.onReady == null
+    //        → 静默返回，**没人再把新频道「接管」**
+    //   实测 08:30:11 换台：原生层 08:30:12.909 已出画，
+    //   Dart 层同刻判 timeout → 用户看到「换台后卡住不动」。
+    //
+    //   修法：把「预载中」与「有无旧画面」拆成两个独立状态 ——
+    //   _seamlessPreloading 只表示预载流程进行中，_holdoverPlayer 只表示
+    //   栈里是否还有旧画面。timeout 撤掉旧画面后，预载状态同时结束，
+    //   新频道正常 unmute + 接管，不再依赖 onReady 回调。
+    _seamlessPreloading = true;
+
     _seamlessTimeoutTimer?.cancel();
     _seamlessTimeoutTimer = Timer(
       Duration(milliseconds: UserDataService.seamlessSwitchTimeoutMs),
@@ -496,6 +528,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _commitSeamlessSwitch(String reason) {
     _seamlessTimeoutTimer?.cancel();
     _seamlessTimeoutTimer = null;
+    // 预载流程结束（无论成功还是超时）——新频道要接管画面与声音。
+    _seamlessPreloading = false;
     if (_holdoverPlayer == null) return;
     debugPrint('[SeamlessSwitch] 切换画面（$reason）');
     if (!mounted) {
@@ -928,17 +962,109 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   /// 纹理与窗口资源，偶发死锁导致软件卡死闪退（日志表现为 pop 前页面未销毁）。
   /// 先暂停停止推帧，等渲染线程空闲后再 pop 可规避该竞态。
   void _exitWindowsPlayback() {
-    if (!DeviceUtils.isDesktop || _exitingWindowsPlayback) return;
+    // 🔴 2026-10-21 修复「没有频道列表时按 ESC 无法退出播放」：
+    //    原实现把 `_exitingWindowsPlayback` 一次性置 true 后只尝试 pop 一次。
+    //    只要那一次 pop 因为任何原因没生效（页面未 mounted、pause 抛异常、
+    //    delayed 回调被吞），标志位就永久停留在 true，**此后所有 ESC / 右键 /
+    //    频道列表返回按钮全部静默失效** —— 正是用户反馈的「无法退出播放」。
+    //    改为：失败可重试 + 兜底强制 pop + 全程日志。
+    if (!DeviceUtils.isDesktop) return;
+    if (_exitingWindowsPlayback) {
+      // 上一次退出尝试没成功：不静默返回，而是立刻补一次强制 pop。
+      WindowsLogger.log('LivePlayerScreen',
+          '退出播放重入：上次未完成，本次强制 pop');
+      _forcePopNow();
+      return;
+    }
     _exitingWindowsPlayback = true;
-    WindowsLogger.log('LivePlayerScreen', 'Windows 退出播放：暂停渲染后 pop');
-    unawaited(_livePlayerController.pause());
-    Future<void>.delayed(Duration(milliseconds: 150), () {
-      if (mounted) {
-        // 直接 pop 绕过 canPop（Windows 下 canPop 恒 false），
-        // 避免再次进入 onPopInvoked 导致死循环。
-        Navigator.of(context).pop();
+    WindowsLogger.log('LivePlayerScreen',
+        '桌面退出播放：先出栈，再后台暂停渲染（频道列表=$_showChannelList 控制栏=$_controlsVisible 回放=$_isReplayMode）');
+    // 🔴🔴 2026-10-21 修复「退出播放软件卡死」：
+    //    原实现先 pause() 再延迟 150ms 才 pop。pause 会走 mpv 的暂停命令，
+    //    在渲染线程繁忙/软渲染时可能长时间不返回；更要命的是它被 unawaited
+    //    包着但 pop 依赖 150ms 定时器，一旦主 isolate 被别处阻塞，pop 就永远
+    //    不会执行 → 用户看到卡死。
+    //    现在**同步立即 pop**（用户立刻看到页面退出），pause 放到 pop 之后做。
+    _forcePopNow();
+    // 后台暂停/释放渲染，不阻塞 UI；失败只记日志。
+    unawaited(
+      _livePlayerController
+          .pause()
+          .timeout(const Duration(seconds: 3))
+          .catchError((e) {
+        WindowsLogger.log('LivePlayerScreen', '退出播放时 pause 异常/超时（忽略）：$e');
+      }),
+    );
+  }
+
+  /// 桌面端「返回」统一决策（ESC / 手柄 B / 频道列表返回按钮共用）。
+  ///
+  /// 优先级与 [PopScope.onPopInvokedWithResult] 保持一致，由外到内逐层收起：
+  ///   全屏 → 退全屏；节目单 → 关节目单；频道列表 → 关列表；
+  ///   控制栏 → 收控制栏；回放 → 退回直播；都没有 → 退出播放页。
+  ///
+  /// 为什么不直接 `Navigator.maybePop()`：本页 PopScope 在桌面端 `canPop` 恒为
+  /// false，maybePop 只会回调 `onPopInvokedWithResult(didPop=false)` 而不会真的
+  /// 出栈；一旦那条回调链在中途结束（日志实测就停在「收频道列表」），用户就会
+  /// 觉得「按 ESC 毫无反应」。这里显式走完整决策，末层直接强制退出。
+  void _handleDesktopBackKey() {
+    final isFullScreen = isWindowsFullScreen;
+    WindowsLogger.log('LivePlayerScreen',
+        '桌面返回决策：全屏=$isFullScreen 节目单=$_showEpgList '
+            '频道列表=$_showChannelList 控制栏=$_controlsVisible 回放=$_isReplayMode');
+    // 🔴🔴 2026-10-22 修复「回放中按 ESC 直接退出播放」：
+    //    `HardwareKeyboard` 派发按键时遍历所有 handler 且不看别人的返回值
+    //    （hardware_keyboard.dart 的 _dispatchKeyEvent 命中后不 break），
+    //    app_windows 的全局 handler 与本页 handler 会收到**同一次** ESC。
+    //    全局 handler 的 maybePop() 是异步落地的，落地时本函数已把
+    //    _isReplayMode 改成 false，PopScope 于是落到最后一档「退出播放页」。
+    //    这里在真正处理前先 markHandled()，让全局 handler 排队中的 maybePop
+    //    发现序号已变并主动放弃，保证一次 ESC 只走一层。
+    BackInterceptor.markHandled();
+    if (isFullScreen) {
+      handleWindowsEsc();
+    } else if (_showEpgList) {
+      _closeEpgList();
+    } else if (_showChannelList) {
+      _hideChannelListAndControls();
+    } else if (_controlsVisible) {
+      _hideControls();
+    } else if (_isReplayMode) {
+      _exitReplayMode();
+    } else if (DeviceUtils.isDesktop) {
+      // 🔴 用户约定（2026-10-22）：**直播模式只有在频道列表未显示时才允许退出播放**。
+      //    上面的 else-if 链已经保证走到这里时列表/控制栏/节目单/全屏都已收起，
+      //    这里再显式兜一道，防止后续有人调整分支顺序又把「有浮层时直接退播放」放回来。
+      if (_showChannelList || _controlsVisible || _showEpgList) {
+        WindowsLogger.log(
+          'LivePlayerScreen',
+          'BACK-GUARD-SKIP 忽略退出播放：仍有浮层显示'
+              '（频道列表=$_showChannelList 控制栏=$_controlsVisible '
+              '节目单=$_showEpgList）',
+        );
+        return;
       }
-    });
+      _exitWindowsPlayback();
+    }
+  }
+
+  /// 强制退出播放页：直接 pop 根 Navigator，绕过 canPop（桌面 canPop 恒 false）。
+  /// 用全局 navigator 而不是本页 context，避免页面已从树中移除时 pop 失效。
+  void _forcePopNow() {
+    if (!mounted) {
+      WindowsLogger.log('LivePlayerScreen', '强制 pop 跳过：页面已卸载');
+      return;
+    }
+    final nav = Navigator.of(context);
+    WindowsLogger.log('LivePlayerScreen',
+        '强制 pop：canPop=${nav.canPop()}');
+    // 先把标志位放下，pop 失败时下一轮 ESC 仍可重试，不会被永久锁死。
+    _exitingWindowsPlayback = false;
+    try {
+      nav.pop();
+    } catch (e) {
+      WindowsLogger.log('LivePlayerScreen', '强制 pop 异常：$e');
+    }
   }
 
   /// 直播页按键绑定：把回车/小键盘回车/ESC 改绑到本页 Intent，避免被 Flutter
@@ -1000,6 +1126,22 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     if (!mounted) return false;
     final route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) return false;
+
+    // 🔴🔴 2026-10-22 修复「回放中按 ESC 直接退出播放」：
+    //    `HardwareKeyboard` 派发按键时**遍历所有 handler 且不看别人的返回值**
+    //    （hardware_keyboard.dart 的 _dispatchKeyEvent 里只有
+    //    `handled = handled || thisResult`，命中后不 break）。因此同一次 ESC
+    //    会先进入 app_windows 的全局 handler（它发起异步的 maybePop），再进入
+    //    本 handler（同步执行「退回直播」）。等 maybePop 的微任务落地时，
+    //    _isReplayMode 已被改成 false，PopScope 的优先级决策就从
+    //    「回放 → 退回直播」掉到最后一档「退出播放页」。
+    //    这里在页面真正处理返回键前先 markHandled()，让全局 handler 排队中的
+    //    maybePop 发现序号已变并主动放弃，保证一次返回键只走一层。
+    if (event is KeyDownEvent &&
+        (event.logicalKey == LogicalKeyboardKey.escape ||
+            event.logicalKey == LogicalKeyboardKey.goBack)) {
+      BackInterceptor.markHandled();
+    }
 
     // 节目单（回放列表）打开时，所有按键优先交给节目单处理（含回车/小键盘回车/
     // select），确保键盘确认键能稳定激活回放，不依赖长按/KeyUp 计时，也不受后续
@@ -1108,10 +1250,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         return true;
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.goBack:
-        // ESC 统一交给全局 handler（app_windows._handleEscKey）→ navigator.maybePop
-        // → 本页 PopScope.onPopInvokedWithResult，按“全屏→回放→节目单→频道列表→退出播放”
-        // 的优先级决策。本页不再重复消费 ESC，避免与全局 handler 并发触发双动作/卡死。
-        return false;
+        // 🔴🔴 2026-10-21 修复「没有频道列表时按 ESC 无法退出播放」（78 真机日志实锤）：
+        //    原实现 return false，把 ESC 交给全局 handler → navigator.maybePop()。
+        //    但本页 PopScope 在桌面端 canPop **恒为 false**，于是 maybePop 只会触发
+        //    onPopInvokedWithResult(didPop=false)，然后按优先级先收频道列表/控制栏，
+        //    等这些层级都收完后才轮到最后那个 else if 分支——而日志显示流程常常
+        //    在「收频道列表」这一步就结束、再无后续，_exitWindowsPlayback() 从未被调用。
+        //    现在改为本页直接消费 ESC，自己按同一优先级决策，末层直接强制退出播放，
+        //    不再依赖「canPop 恒 false 的 maybePop 能不能穿透」。
+        _handleDesktopBackKey();
+        return true;
       default:
         return false;
     }
@@ -1684,7 +1832,27 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         return true;
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.goBack:
-        _toggleChannelList();
+        // 🔴🔴 2026-10-22 用户约定：**直播模式只有「频道列表未显示」时按 ESC 才退出播放**。
+        //    频道列表显示时 ESC 只收起列表，绝不动播放页。
+        //
+        //    这里原本无条件 `_toggleChannelList()`，而 Windows 入口把
+        //    `DeviceUtils.isTvOverride` 置为 true，因此 Windows 上
+        //    `_handleHardwareKeyEvent` 里「isTv && _showChannelList」那条分支
+        //    会先于 ESC 的 switch 命中，走到本函数。`_toggleChannelList()` 只把
+        //    `_showChannelList` 置 false，**不清 `_controlsVisible`**；而 Windows
+        //    的频道列表与控制栏是同一层（见 `_showChannelListAndControls`，两者
+        //    同时置 true），结果列表收起后控制栏仍留在画面上，要多按一次 ESC
+        //    才收得掉，与 `PopScope.onPopInvokedWithResult` 桌面端分支
+        //    （那里明确调 `_hideChannelListAndControls()`）层级不一致。
+        //    故桌面端统一走「列表 + 控制栏一起收」，与 PopScope 保持一致；
+        //    TV/手机保持原来的 `_toggleChannelList()` 行为不变。
+        if (DeviceUtils.isDesktop) {
+          WindowsLogger.log('LivePlayerScreen',
+              'TV-CL-ESC desktop=true 收列表+控制栏（不退出播放）');
+          _hideChannelListAndControls();
+        } else {
+          _toggleChannelList();
+        }
         return true;
       default:
         return false;
@@ -1967,7 +2135,11 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
     // 无缝换台预载期间：新频道在下层静音解码，且不显示自身加载/错误遮罩，
     // 由上层保留的旧画面继续呈现，直到就绪/超时才接管画面与声音。
-    final preloading = _holdoverPlayer != null;
+    //
+    // 🔴 2026-10-23：用独立的 [_seamlessPreloading]，**不再**用
+    // `_holdoverPlayer != null` 表达预载状态。超时撤掉旧画面时若同时
+    // 置空 onReady，新频道就永远没人接管（换台卡住）。详见该字段注释。
+    final preloading = _seamlessPreloading;
 
     return LivePlayer(
       key: ValueKey(spec.playerKey),
@@ -2737,7 +2909,16 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
               // 落盘诊断：若日志出现本行，说明「回车/确认」被焦点树误激活到本
               // 返回按钮上（表现为回放刚进入就被秒退）。修复后不应再出现。
               WindowsLogger.log('LivePlayerScreen', '频道列表返回按钮被激活：退出播放');
-              handleWindowsEsc();
+              // 🔴🔴 2026-10-21：该按钮的语义就是「退出播放」（tooltip 亦如此），
+              //    但原实现调 handleWindowsEsc() → 非全屏时只做 maybePop()，
+              //    而本页 PopScope 桌面端 canPop 恒 false，pop 被吞掉后仅收起了
+              //    频道列表，用户看到的就是「点了返回却还在播放页」。
+              //    用户明确要求：频道列表的返回 = 退出播放。故桌面端直接走退出链。
+              if (DeviceUtils.isDesktop) {
+                _exitWindowsPlayback();
+              } else {
+                handleWindowsEsc();
+              }
             },
             icon: Icon(Icons.arrow_back, color: Colors.white),
             tooltip: '退出播放',

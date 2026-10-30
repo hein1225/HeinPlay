@@ -9,6 +9,7 @@ import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/screens/mobile/history_screen.dart';
 import 'package:hain_tv/services/connectivity_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
@@ -333,7 +334,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen>
             onViewMore: () => _viewMoreCategory('anime', '动漫'),
           ),
         ),
-        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl)),
+        // 底部留出浮动磨砂导航栏总高：磨砂导航栏浮在内容之上（见 MobileShell 的
+        // Stack 结构），若不预留，最后一行会被导航栏永久遮挡、滚不到它上面。
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height:
+                AppSpacing.xxl + GlassStyleService.navBarTotalHeight(context),
+          ),
+        ),
       ],
     );
   }

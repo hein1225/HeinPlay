@@ -1,0 +1,201 @@
+name: hain_tv
+description: "海因影视 鸿蒙版（HarmonyOS NEXT / OpenHarmony）"
+publish_to: 'none'
+version: 1.4.1+25
+
+environment:
+  # 【鸿蒙独立工程】专用 flutter_flutter 3.41.10-ohos（Dart 3.11.5）。
+  # 官方 Flutter 不含 ohos 平台支持，必须用 OpenHarmony 移植版工具链。
+  # 下限同时兼容主工程基线，便于两侧对搬代码。
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.5.0
+  shared_preferences: ^2.5.3
+  cached_network_image: ^3.4.1
+  video_player: ^2.11.0
+  # 【已移除】video_player_android（ExoPlayer/media3）：鸿蒙无 Android 运行时，
+  # 且该插件无 ohos 实现，保留会让 flutter build hap 在插件解析阶段失败。
+  # 其引用点 player/exo_player_backend.dart 已随本工程摘除。
+  path_provider: ^2.1.5
+  path_provider_platform_interface: ^2.1.2
+  shared_preferences_platform_interface: ^2.4.1
+  # video_player 的平台接口包：avplayer 后端经 video_player_ohos 实现，
+  # 需要读写全局单例 `VideoPlayerPlatform.instance`。
+  # 原本只是 video_player 的 transitive 依赖，直接 import 会触发
+  # depend_on_referenced_packages lint，故显式声明 —— 与紧随其后的
+  # path_provider_platform_interface / shared_preferences_platform_interface 同理。
+  # 版本与 TPC 的 video_player 2.10.1 要求（^6.3.0）及当前锁定值一致。
+  video_player_platform_interface: ^6.9.0
+  permission_handler: ^12.0.3
+  dio: ^5.11.0
+  open_filex: ^4.4.0
+  visibility_detector: ^0.4.0+2
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.1
+  xml: ^7.0.1
+  wakelock_plus: ^1.7.0
+  screen_brightness: ^2.1.1
+  volume_controller: ^3.5.0
+  flutter_js: ^0.8.2
+  package_info_plus: ^10.1.2
+  # 以下两个虽为 Windows 专属，但 lib/ 的跨平台文件（services/app_info_service.dart
+  # 读 exe 版本、platform/windows_window_utils.dart）在顶层 import 了它们，
+  # 而 app_info_service 被手机版 profile/update 页面共用，不能删。
+  # 鸿蒙构建下这些代码路径永不执行（仅在 Platform.isWindows 分支内调用），
+  # 保留依赖只为通过编译 —— 与 tvLegacy 独立工程的处理方式一致。
+  win32: ^6.4.0
+  window_manager: ^0.5.2
+  ffi: ^2.1.0
+  # fvp 插件内部用 package:logging 转发 libmdk 的原生日志：
+  # `Logger('mdk')` = libmdk 内部日志（reader/demuxer/解码决策），
+  # `Logger('fvp')` = fvp 插件自身日志。package:logging 在**没有任何 listener**
+  # 时会把日志静默丢弃，且 root 默认 Level.INFO 会把 debug/all 级别直接过滤掉。
+  # 现由 utils/mdk_log_bridge.dart 接入 AppLogger（受「获取日志」开关控制），
+  # 因此显式声明该依赖（原为 transitive）。
+  logging: ^1.3.0
+  # 🔴 2026-10-06：fvp 已**彻底从鸿蒙工程移除**（mpv 接管默认、avplayer 兜底）。
+  # 代码侧不再 import package:fvp，video_player_backend_impl.dart 的 fvp 专有扩展
+  # （setBufferRange / setVideoDecoders / setProperty）调用已全部清除；
+  # player_backend_factory 的 availableBackends 仅剩 [mpv, avplayer]。
+  # 本地代理的 AES-128 加密 HLS 解密（原仅 fvp 后端使用，现仍保留该能力供代理链路）。
+  pointycastle: ^3.9.0
+  # 【已移除】Erika 播放内核（Rust/wgpu）：2026-09-30 实测在鸿蒙 Maleoon 910 上
+  # 取不到帧→卡死强杀，已彻底弃用并删除（代码 + 依赖 + 原生 so 全移除，见本回合）。
+  # 【已移除】vlc_player: 仅有 Windows 实现，鸿蒙构建无意义；
+  # 其唯一引用点 player/vlc_backend.dart 已随本工程摘除。
+
+dependency_overrides:
+  # audio_video_progress_bar 0.11.0 仍使用 Flutter 3.x 已移除的 textTheme.bodyText1，
+  # 强制覆盖到 2.0.3 以兼容新 TextTheme API。
+  audio_video_progress_bar: ^2.0.3
+  # ⚠️ 鸿蒙专属覆盖（从主工程 pubspec 迁入，2026-09-27）：
+  # shared_preferences 官方 pub.dev 版未声明 platforms.ohos，联邦插件机制要求
+  # 主包在自身 pubspec 里写 `ohos: default_package: shared_preferences_ohos` 才会
+  # 把鸿蒙实现接进 dart_plugin_registrant，否则 ohos 构建启动即抛
+  # MissingPluginException(getAll on plugins.flutter.io/shared_preferences)。
+  # 因此主包也必须指向 OpenHarmony TPC 的 git 版（其 pubspec 含 ohos 段）。
+  # 该覆盖**只对鸿蒙构建必需**，故随工程独立迁出，主工程不再受 atomgit 可达性影响。
+  shared_preferences:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences
+      ref: master
+  shared_preferences_ohos:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences_ohos
+      ref: master
+  # ⚠️ path_provider：官方 pub.dev 版主包未声明 platforms.ohos，鸿蒙端拿不到
+  # getApplicationDocumentsDirectory / getTemporaryDirectory，会连锁导致
+  # flutter_cache_manager（CachedNetworkImage 的磁盘缓存层）整体不可用 —— 表现为
+  # 「海报全部加载不出来」，同时 AppLogger 日志目录初始化失败（实测 554 次）。
+  # 视频仍能播是因为 fvp 走 libmdk 原生网络栈，完全不经过 Dart 侧插件。
+  # OpenHarmony TPC 的 git 版主包 pubspec 含 `ohos: default_package: path_provider_ohos`，
+  # 联邦插件机制才会把 ohos 实现接进 dart_plugin_registrant。
+  path_provider:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/path_provider/path_provider
+      ref: master
+  path_provider_ohos:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/path_provider/path_provider_ohos
+      ref: master
+  # ⚠️ url_launcher：同上，官方版主包未声明 platforms.ohos，外部链接跳转不可用。
+  url_launcher:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/url_launcher/url_launcher
+      ref: master
+  url_launcher_ohos:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/url_launcher/url_launcher_ohos
+      ref: master
+  # ⚠️ video_player（AVPlayer 后端必需）：官方 pub.dev 的 video_player 主包
+  # **未声明 platforms.ohos**（实测 2.11.1 的 plugin.platforms 只有
+  # android/ios/macos/web 四项），联邦插件机制下 ohos 实现不会被接进
+  # dart_plugin_registrant，运行时表现为 MissingPluginException，
+  # 即「选了 AVPlayer 后端却黑屏/报错」。
+  # OpenHarmony TPC 的 git 版主包 pubspec 含：
+  #     ohos:
+  #       default_package: video_player_ohos
+  # 因此主包也必须指向 TPC 版 —— 与 path_provider / url_launcher 的处理完全同理。
+  #
+  # 版本权衡（实测选型过程）：
+  # TPC 仓库对 video_player 打了多个 tag，逐一核对 pubspec 后结果如下：
+  #   video_player-v2.11.1-ohos-1.0.0 | 2.11.1 | ❌ 主包 platforms 缺 ohos 段
+  #   video_player-v2.10.1-ohos-1.0.1 | 2.10.1 | ✅ 有 ohos 段
+  #   video_player-v2.10.0-ohos-1.0.1 | 2.10.0 | ✅ 有 ohos 段
+  #   video_player-v2.9.2-ohos-1.0.1  | 2.9.2  | ✅ 有 ohos 段
+  #   video_player-v2.7.2-ohos-1.0.1  | 2.7.1  | ✅ 有 ohos 段
+  # ⚠️ 2.11.1-ohos 虽版本号与本工程原锁定版一致，但它的主包**只在 dependencies
+  # 里引了 video_player_ohos，没有在 plugin.platforms 里写 ohos**，联邦插件
+  # 机制下不会注册 ohos 实现 —— 选了等于黑屏，故弃用。
+  #
+  # 最终选 2.10.1-ohos-1.0.1，理由是它同时满足三个硬条件：
+  # 1. platforms 含 `ohos: default_package: video_player_ohos`（能注册）；
+  # 2. 本工程用到的 API 全部存在：VideoViewType / viewType（8 处）、
+  #    isCompleted（14 处）、networkUrl / file / asset、initialize / play /
+  #    pause / seekTo / setVolume / setPlaybackSpeed / setLooping / dispose。
+  #    实测直接切到 2.7.1 会立刻产生 4 处编译错误
+  #    （viewType / VideoViewType / isCompleted 三个符号不存在），故必须 ≥2.10。
+  # 3. video_player_platform_interface 要求 ^6.3.0，与工程现用 6.9.0 兼容。
+  video_player:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/video_player/video_player
+      ref: video_player-v2.10.1-ohos-1.0.1
+  # video_player_ohos 改为**本地 fork**（2026-09-28）：
+  #
+  # 上游（含 gitcode 的 `br_video_player-v2.11.1_ohos` 分支）都不支持「起播定位」——
+  # 鸿蒙 AVPlayer 的公开 API 没有起始位置入口（media.PlaybackStrategy 无该字段、
+  # createMediaSourceWithUrl 也无第三个参数），而 Dart 侧 initialize() 恰好 resolve
+  # 在 PREPARED 时刻，导致插件内置的 pendingSeekPosition 通道永远走不到。
+  # 结果是 AVPlayer 先按播放列表第 0 片拉流、之后才 seek → 用户可见「从片头缓冲」。
+  #
+  # fork 内容（见 deps/video_player_ohos，仅 4 处改动，均带 🔴 2026-09-28 注释）：
+  #   1. pigeons/messages.dart    CreateMessage 增 startPositionMs
+  #   2. lib/src/messages.g.dart  同步 encode/decode（手工同步，未重跑 pigeon 以免
+  #      版本差异重写整个生成文件）
+  #   3. ohos/.../Messages.ets    toList/fromList 同步
+  #   4. ohos/.../VideoPlayer.ets 构造接收 startPositionMs → 预置 pendingSeekPosition；
+  #      并在 IDLE 分支恢复（IDLE 会无条件清空该字段，早于 PREPARED）
+  #   5. lib/src/ohos_video_player.dart  新增 setNextStartPosition() 旁路入口
+  #
+  # ⚠️ 主包 video_player 仍是 git 依赖（未 fork）：起始位置通过
+  # OhosVideoPlayer.setNextStartPosition() 旁路传入，绕开了 VideoCreationOptions
+  # 无该字段的限制，因此无需一并 fork 主包。
+  video_player_ohos:
+    path: deps/video_player_ohos
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.3
+  # 🔴 HeinPlay 新增（2026-10-08）：本工程原名下**未声明** flutter_test，
+  #   导致 `test/` 下所有用例都无法运行（报 `Couldn't resolve the package
+  #   'flutter_test'`）——包括既有的 ts_pts_normalizer_test.dart。
+  #   补上它才能对 TS/SPS 解析这类纯逻辑做单元验证。
+  #   `sdk: flutter` 形式使用 Flutter SDK 内置版本，不引入外部包。
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/splash/splash_tv.jpeg
+    - assets/images/splash/splash_mobile.jpeg
+
+flutter_launcher_icons:
+  image_path: "../plan/ico.png"
+  ohos:
+    generate: true
+    image_path: "../plan/ico.png"
+  android:
+    generate: true
+    adaptive_icon_background: "#00000000"
+    adaptive_icon_foreground: "../plan/mo_ico.png"

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -18,8 +19,32 @@ import 'app_info_service.dart';
 import 'cache_service.dart';
 import 'connectivity_service.dart';
 import 'm3u8_utils.dart';
+import 'media_resolution_probe.dart';
+import 'playback_activity.dart';
 import 'user_data_service.dart';
 import '../utils/windows_logger.dart';
+
+import '../utils/log_redactor.dart';
+
+/// 🔴 2026-10-23（第六轮）：分辨率探测时保留的分片样本字节数。
+///
+/// 实测 SPS 位于分片开头 602 字节处；64KB 足够覆盖各种封装的头部，
+/// 内存占用也可忽略。
+const int _kResolutionProbeBytes = 64 * 1024;
+
+/// 🔴 2026-10-23（第六轮）：十六进制字符串 → 16 字节 IV。
+Uint8List? _hexIvToBytes(String? hex) {
+  if (hex == null) return null;
+  final clean = hex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+  if (clean.length < 32) return null;
+  final out = Uint8List(16);
+  for (var i = 0; i < 16; i++) {
+    final v = int.tryParse(clean.substring(i * 2, i * 2 + 2), radix: 16);
+    if (v == null) return null;
+    out[i] = v;
+  }
+  return out;
+}
 
 class LunaTVConfig {
   static const Duration searchTimeout = Duration(seconds: 30);
@@ -51,6 +76,21 @@ class _NonClosingClient extends http.BaseClient {
   void close() {
     // 共享客户端的生命周期由 LunaTVService 管理，此处不关闭底层连接。
   }
+}
+
+/// 🔴 2026-10-23（第三轮）：单源测速的取消令牌。
+///
+/// `Future.timeout` 只能放弃等待，无法中止底层 HTTP 请求。外层批处理
+/// 超时后若不通知被测源，这个源会继续跑完（实测多跑 2~4 秒），
+/// 白占带宽，并且日志里同时出现 `outer-timeout-abandoned` 与
+/// `note=unavailable` 两条互相矛盾的记录。
+///
+/// 用法：外层超时 → `token.cancel()` → 被测函数在 await 边界检查
+/// `token.isCancelled` 并立即返回。
+class SpeedTestCancelToken {
+  bool _cancelled = false;
+  bool get isCancelled => _cancelled;
+  void cancel() => _cancelled = true;
 }
 
 class LunaTVService {
@@ -94,10 +134,12 @@ class LunaTVService {
   /// HandshakeException，而 Android 同网络可正常访问。此处对电脑版
   /// 放宽证书校验，并禁用系统代理、保持长连接，确保用户配置的服务器地址可用。
   static void _log(String tag, String message) {
+    // 🔒 隐私：统一脱敏，避免服务器地址 / 用户名 / 密码进入日志。
+    final safe = LogRedactor.redact(message);
     if (DeviceUtils.isComputer) {
-      WindowsLogger.log(tag, message);
+      WindowsLogger.log(tag, safe);
     } else {
-      debugPrint('[$tag] $message');
+      debugPrint('[$tag] $safe');
     }
   }
 
@@ -780,6 +822,8 @@ class LunaTVService {
     String? source,
     bool forceRefresh = false,
     http.Client? cancelClient,
+    /// 🔴 详情页的后台源搜索用更短的超时，避免服务端变慢时把详情页拖死。
+    Duration? timeout,
   }) async {
     await _initCache();
     final trimmed = keyword.trim();
@@ -814,7 +858,7 @@ class LunaTVService {
       final response = await _get(
         '/api/search',
         queryParameters: query,
-        timeout: LunaTVConfig.searchTimeout,
+        timeout: timeout ?? LunaTVConfig.searchTimeout,
         cancelClient: cancelClient,
       );
 
@@ -1011,6 +1055,7 @@ class LunaTVService {
     return IOClient(httpClient);
   }
 
+
   static Future<({Duration responseTime, double? speed, String? resolution})>
       speedTestEpisode(
     String url, {
@@ -1020,68 +1065,151 @@ class LunaTVService {
     String? sourceType,
     /// 若已缓存该源分辨率，传入后可跳过 M3U8 分辨率提取，但仍会解析分片用于测速。
     String? cachedResolution,
+    /// 🔴 2026-10-23：为 true 时**只做分辨率识别，不做下载测速**。
+    ///
+    /// 用于「正在播放的源」——该源的流量正在被播放器占用，再测一次不仅
+    /// 测出来的值被自身播放流污染（显示很慢），还会白白再抢一遍带宽。
+    /// 此时直接解析 M3U8 拿到真实分辨率后返回，速度标记为 -1.0
+    /// （语义：可用但速度未知）。
+    bool resolutionOnly = false,
+    /// 🔴 2026-10-23（第三轮）：取消令牌。
+    ///
+    /// 外层批处理给每个源设了 8 秒硬超时，但 Dart 的 `Future.timeout`
+    /// **只停止等待，不会中止底层任务**。于是被判超时的源仍会在几秒后
+    /// 跑完并打印 `note=unavailable`，既白占带宽，又让日志出现
+    /// 「超时放弃」和「判定不可用」两行自相矛盾的记录。
+    ///
+    /// 外层超时后调用 [SpeedTestCancelToken.cancel]，本函数在每个
+    /// await 边界检查该令牌并立即返回，不再继续发请求。
+    SpeedTestCancelToken? cancelToken,
   }) async {
     final stopwatch = Stopwatch()..start();
     final headers = _buildVideoHeaders(url);
-    final isM3u8 = M3u8Utils.isM3u8Url(url);
+    // 🔴🔴 2026-10-23：改为可变 —— 嗅探出「HTML 播放器页」内嵌的 m3u8 后
+    // 会把这里改成 true（见下方 _sniffM3u8FromHtmlEntry 调用处）。
+    var isM3u8 = M3u8Utils.isM3u8Url(url);
     var hasNetworkError = false;
 
-    /// 安全排空响应流，避免连接被半开占用。
-    Future<void> drain(http.StreamedResponse response) async {
-      try {
-        await response.stream.drain<void>();
-      } catch (_) {}
+    /// 🔴 2026-10-23（第三轮）：**整源预算截止时间**。
+    ///
+    /// 原来每个网络操作各自吃满自己的 timeout：M3U8 解析 8 秒 + 测速 12 秒，
+    /// 串起来最多 20 秒，而外层批处理的硬超时只有 8 秒 —— 于是必然出现
+    /// 「外层已放弃、内层还在跑」的情况（实测内层多跑 2~4 秒，
+    /// 日志里同时出现 `outer-timeout-abandoned` 与 `note=unavailable`）。
+    ///
+    /// 现在整源共享一个截止时间，每个操作只允许用「剩余预算」，
+    /// 内层保证在外层超时之前自己收口，给出明确结论。
+    final deadline = DateTime.now().add(timeout);
+
+    /// 剩余预算（不小于 0）。
+    Duration remaining() {
+      final left = deadline.difference(DateTime.now());
+      return left.isNegative ? Duration.zero : left;
     }
 
-    /// 测量首个分片的响应延迟（RTT），优先使用 HEAD，失败则回退到 GET 读少量数据。
-    Future<int?> _measureLatency(
-      String targetUrl, {
-      Map<String, String>? headers,
-      Duration probeTimeout = const Duration(seconds: 4),
+    /// 播放是否正在取流。写进日志便于事后核对「播放中测速」的实际档位。
+    final playbackActive = PlaybackActivity.instance.isActive;
+
+    /// 只识别分辨率模式下返回的速度占位：-1.0 = 可用但速度未知。
+    const double resolutionOnlySpeed = -1.0;
+
+    /// 统一的测速日志前缀，事后 grep `[SpeedTestRes]` 即可还原整轮测速。
+    String logTag(String extra) =>
+        '[SpeedTestRes] source=$sourceType url=$url $extra '
+        'pa=$playbackActive sample=${sampleBytes}B '
+        'segConc=${resolutionOnly ? 0 : maxConcurrency}';
+
+
+    /// 🔴 2026-10-23（改动2）：把**实测速度值**写进日志。
+    ///
+    /// 原实现只打印 source/url/resolved/resolution，且打印发生在 M3U8 解析之后、
+    /// 速度测出之前，因此全日志没有任何速度数值，事后无法核实「播放中测速
+    /// 到底有多慢」。现在每次测速（含失败与降级）都打一条 `[SpeedTestSpeed]`。
+    void logSpeed(
+      double? speedBytesPerSec, {
+      required String resolved,
+      int? segmentCount,
+      int? latencyMs,
+      Duration? elapsed,
+      String? note,
+    }) {
+      final s = speedBytesPerSec;
+      final showRate = s != null && s >= 0;
+      debugPrint(
+        '[SpeedTestSpeed] source=$sourceType url=$url resolved=$resolved '
+        'speed=${s == null ? 'null' : s.toStringAsFixed(0)} B/s '
+        'speedKBps=${showRate ? (s / 1024).toStringAsFixed(1) : 'n/a'} '
+        'speedMbps=${showRate ? (s * 8 / 1000000).toStringAsFixed(2) : 'n/a'} '
+        'latency=${latencyMs ?? -1}ms '
+        'elapsed=${elapsed?.inMilliseconds ?? -1}ms '
+        'sample=${sampleBytes}B segs=${segmentCount ?? 0} '
+        'pa=$playbackActive${note != null ? ' note=$note' : ''}',
+      );
+    }
+
+    /// 🔴🔴 2026-10-23：嗅探「HTML 播放器页」，取出内嵌的真正 m3u8 地址。
+    ///
+    /// 实测（Windows 真机）：jinyingzy.com 的播放地址
+    /// `https://hd.kuktxu.com/play/eXD5yD8e` 没有 `.m3u8` 后缀，服务器返回
+    /// 1593 字节的 HTML（`content-type: text/html`），页面里用 hls.js 播
+    /// `https://hd.kuktxu.com/play/eXD5yD8e/index.m3u8`。
+    ///
+    /// 只读前 64KB 就够判断并提取，不会变成一次大下载。
+    ///
+    /// 返回 null = 不是 HTML 播放器页（或嗅探失败），调用方按原逻辑处理。
+    Future<String?> _sniffM3u8FromHtmlEntry(
+      String url, {
+      required Map<String, String> headers,
+      required Duration timeout,
     }) async {
       final client = _createSpeedTestClient();
       try {
-        try {
-          final sw = Stopwatch()..start();
-          final headReq = http.Request('HEAD', Uri.parse(targetUrl));
-          if (headers != null && headers.isNotEmpty) {
-            headReq.headers.addAll(headers);
-          }
-          final headResp = await client.send(headReq).timeout(probeTimeout);
-          await drain(headResp);
-          if (headResp.statusCode >= 200 && headResp.statusCode < 400) {
-            return sw.elapsedMilliseconds;
-          }
-        } catch (_) {}
-
-        try {
-          final sw = Stopwatch()..start();
-          final getReq = http.Request('GET', Uri.parse(targetUrl));
-          if (headers != null && headers.isNotEmpty) {
-            getReq.headers.addAll(headers);
-          }
-          final getResp = await client.send(getReq).timeout(probeTimeout);
-          var received = 0;
-          const maxProbeBytes = 8 * 1024;
-          await for (final chunk in getResp.stream) {
-            received += chunk.length;
-            if (received >= maxProbeBytes) break;
-          }
-          await drain(getResp);
-          if (getResp.statusCode >= 200 && getResp.statusCode < 400) {
-            return sw.elapsedMilliseconds;
-          }
-        } catch (_) {}
+        final req = http.Request('GET', Uri.parse(url));
+        if (headers.isNotEmpty) {
+          req.headers.addAll(headers);
+        }
+        final resp = await client.send(req).timeout(timeout);
+        if (resp.statusCode != 200) return null;
+        final chunks = <int>[];
+        await for (final chunk in resp.stream) {
+          chunks.addAll(chunk);
+          if (chunks.length >= 64 * 1024) break;
+        }
+        final body = utf8.decode(chunks, allowMalformed: true);
+        if (!M3u8Utils.looksLikeHtmlContent(body)) return null;
+        return M3u8Utils.extractM3u8FromHtml(body, baseUrl: url);
+      } catch (_) {
         return null;
       } finally {
         client.close();
       }
     }
 
-    /// 对单个 URL 做下载测速，读取最多 [maxBytes] 字节后停止并排空剩余流。
+    /// 对单个 URL 做下载测速，读取最多 [maxBytes] 字节后**立即停止**。
     /// 返回正数表示实测速度；返回 -1.0 表示 Dart 网络层握手/连接/超时失败，
     /// 不代表源站不可播放（原生播放器网络层通常可正常访问）。
-    Future<double?> _measureSpeed(
+    ///
+    /// 🔴 2026-10-23：同时返回首字节延迟（latencyMs）。
+    ///
+    /// 原实现先用 [_measureLatency] 单独发一次 HEAD（或 GET 8KB）探测 RTT，
+    /// 紧接着 [_measureSpeed] 又对**同一个分片**再发一次 GET 下载样本 ——
+    /// 两次请求打同一个 URL，多付一个完整 RTT（实测 0.6~1.6 秒/源）。
+    /// 现在一次请求同时得到延迟与速度：send 之后开始读流，记录首个数据块
+    /// 到达时刻即为首字节延迟，传输计时段保持原语义（不含首包等待）。
+    /// 🔴🔴 2026-10-23（第六轮）：额外返回**样本字节**（分片开头若干 KB）。
+    ///
+    /// 用途：从码流里读 SPS 拿**真实分辨率**。
+    /// 资源站的 media playlist 没有 RESOLUTION，只能靠码率反推，而码率与
+    /// 分辨率没有必然关系（实测 661kbps 的流真实是 1920x818 = 1080P 级别）。
+    /// 测速本来就在下载分片，把开头这几十 KB 留下来几乎零成本。
+    Future<
+        ({
+          double? speed,
+          int? latencyMs,
+          int? totalBytes,
+          bool isText,
+          Uint8List? probeSample,
+        })> _measureSpeed(
       String targetUrl, {
       Map<String, String>? headers,
       required int maxBytes,
@@ -1097,100 +1225,249 @@ class LunaTVService {
         // 按分片拉取一致；整段 GET 易被节流或超时，导致可流畅播放的源被误判为“仅可用”。
         // 仅在不含 Range 时补充，避免覆盖调用方显式设置的分片范围。
         req.headers.putIfAbsent('Range', () => 'bytes=0-${maxBytes - 1}');
+        final requestStopwatch = Stopwatch()..start();
         final streamedResponse = await client.send(req).timeout(measureTimeout);
+
+        // 🔴 2026-10-23（第三轮）：从 Content-Range 读出**分片总大小**。
+        //
+        // 这一行原本要单独发一次 Range 探测请求才能拿到（分片码率估算），
+        // 现在测速请求本身就带 Range 头，响应头里已经写着
+        // `Content-Range: bytes 0-262143/1234567`，末位就是分片总大小。
+        // 配合 playlist 的 #EXTINF 时长即可算出码率 → 分辨率，
+        // 整轮测速因此少一次串行 RTT（高延迟源一次就 1.5~2 秒）。
+        int? totalBytes;
+        final contentRange = streamedResponse.headers['content-range'];
+        if (contentRange != null) {
+          final match =
+              RegExp(r'bytes\s+\d+-\d+/(\d+)').firstMatch(contentRange);
+          totalBytes = int.tryParse(match?.group(1) ?? '');
+        } else if (streamedResponse.statusCode == 200) {
+          // 🔴 2026-10-23（第三轮）：**服务器不支持 Range** 时会忽略 Range 头
+          // 直接返回 200 + 完整 body，此时 `content-length` 就是分片总大小，
+          // 同样可以拿来推算码率。
+          //
+          // ⚠️ 206 响应里 content-length 只是**本次返回的部分长度**
+          // （例如 262144），不是分片总大小，所以只有 200 时才用它兜底。
+          totalBytes = int.tryParse(
+            streamedResponse.headers['content-length'] ?? '',
+          );
+        }
+
+        // 🔴🔴 2026-10-23：判断响应**是不是文本**（HTML 播放器页 / m3u8 清单）。
+        //
+        // 直链媒体（mp4/ts/flv…）与分片都是二进制，不受影响；
+        // 但「HTML 播放器页」只有 1~2KB，1ms 就下载完 → 会算出 18MB/s 的
+        // **假速度**，把实际一播放就卡死的源显示成最快的源。
+        // 这里提前识别文本类响应，让上层不采信它的速度值。
+        final contentTypeLower =
+            (streamedResponse.headers['content-type'] ?? '').toLowerCase();
+        final typeSaysText = contentTypeLower.contains('text/') ||
+            contentTypeLower.contains('mpegurl') ||
+            contentTypeLower.contains('javascript') ||
+            contentTypeLower.contains('json') ||
+            contentTypeLower.contains('xml');
 
         if (streamedResponse.statusCode == 200 ||
             streamedResponse.statusCode == 206) {
           final transferStopwatch = Stopwatch()..start();
           var received = 0;
+          int? firstByteMs;
+          var isText = typeSaysText;
+          // 🔴 2026-10-23（第六轮）：留一份分片开头的样本字节用于 SPS 探测。
+          //
+          // 实测 SPS 位于分片开头 602 字节处，64KB 足够覆盖各种封装的头部。
+          final probeBuilder = BytesBuilder(copy: false);
           await for (final chunk in streamedResponse.stream) {
+            firstByteMs ??= requestStopwatch.elapsedMilliseconds;
+            if (received == 0 && chunk.length >= 8) {
+              // 首个数据块的前 8 字节：绝大多数是可打印 ASCII → 文本。
+              //
+              // ⚠️ 不能只看单个字节（'#'=m3u8、'<'=HTML）：二进制分片也可能
+              // 恰好以 0x23/0x3C 开头，那样会把正常分片误判成文本 → 速度被
+              // 丢弃 → 好源被误判成「不可用」。连续 8 字节里 7 个以上可打印
+              // 才是文本，误判概率可忽略。
+              var printable = 0;
+              for (var i = 0; i < 8; i++) {
+                final b = chunk[i];
+                if (b == 0x0A ||
+                    b == 0x0D ||
+                    b == 0x09 ||
+                    (b >= 0x20 && b <= 0x7E)) {
+                  printable++;
+                }
+              }
+              if (printable >= 7) isText = true;
+            }
+            if (probeBuilder.length < _kResolutionProbeBytes) {
+              final need = _kResolutionProbeBytes - probeBuilder.length;
+              probeBuilder.add(chunk.length <= need ? chunk : chunk.sublist(0, need));
+            }
             received += chunk.length;
             if (received >= maxBytes) break;
           }
-          await drain(streamedResponse);
+          // 🔴🔴 2026-10-23（第四轮）：**不要 drain 剩余响应体**。
+          //
+          // 原实现在读完 maxBytes 样本后调用 `drain(streamedResponse)`，
+          // 意图是「释放连接」，但实际行为是**把分片剩下的部分整个下载完**：
+          //   · 服务器支持 Range 时返回 206，剩余量 = 总量 - 样本量
+          //   · 服务器忽略 Range 时返回 200，剩余量 = 整个分片
+          //
+          // 实测反推（Windows 真机日志）：
+          //   modujx17  speed=90.4KB/s elapsed=10258ms → 分片总量约 827KB
+          //   maoyanplay speed=159.8KB/s elapsed=7790ms → 分片总量约 964KB
+          //   bdzy1    speed=128.9KB/s elapsed=7354ms → 分片总量约 798KB
+          // 样本只要 256KB，多下的 300~700KB 占了单源耗时的 **50% 以上**。
+          // 慢速源尤其致命：多下 600KB @90KB/s 就是多等 6.7 秒。
+          //
+          // 测速只要样本，不需要 body 读完；连接由 `client.close()` 释放
+          // （finally 里统一关闭），不会泄漏。
           transferStopwatch.stop();
-          final seconds = transferStopwatch.elapsedMilliseconds / 1000.0;
-          return seconds > 0 ? (received / seconds) : 0.0;
+          // 🔴 2026-10-23：计时改用微秒。原实现用 elapsedMilliseconds，
+          // 传输耗时不足 1 ms 时 seconds==0 → 返回 0.0 → UI 判为「不可用」。
+          // 播放中降档到 128/256KB 样本后，在千兆宽带或局域网近端 CDN 上
+          // 单次传输经常低于 1 ms，于是「好源被误判为不可用」。微秒计时可
+          // 正确给出数百 MB/s 的真实值。
+          final micros = transferStopwatch.elapsedMicroseconds;
+          final speed = micros <= 0 ? 0.0 : received * 1000000 / micros;
+          return (
+            speed: speed,
+            latencyMs: firstByteMs ?? requestStopwatch.elapsedMilliseconds,
+            totalBytes: totalBytes,
+            isText: isText,
+            probeSample: probeBuilder.isEmpty ? null : probeBuilder.takeBytes(),
+          );
         }
-        await drain(streamedResponse);
-        return null;
+        // 🔴 2026-10-23（第四轮）：错误响应同样不 drain —— 错误页/占位页的
+        // body 再长也没有读取价值，等它读完纯属白等。
+        return (
+          speed: null,
+          latencyMs: null,
+          totalBytes: totalBytes,
+          isText: typeSaysText,
+          probeSample: null,
+        );
       } on HandshakeException catch (_) {
-        return -1.0;
+        return (
+            speed: -1.0,
+            latencyMs: null,
+            totalBytes: null,
+            isText: false,
+            probeSample: null,
+          );
       } on SocketException catch (_) {
-        return -1.0;
+        return (
+            speed: -1.0,
+            latencyMs: null,
+            totalBytes: null,
+            isText: false,
+            probeSample: null,
+          );
       } on TimeoutException catch (_) {
-        return -1.0;
+        return (
+            speed: -1.0,
+            latencyMs: null,
+            totalBytes: null,
+            isText: false,
+            probeSample: null,
+          );
       } on http.ClientException catch (_) {
-        return -1.0;
+        return (
+            speed: -1.0,
+            latencyMs: null,
+            totalBytes: null,
+            isText: false,
+            probeSample: null,
+          );
       } catch (_) {
-        return null;
+        return (
+            speed: null,
+            latencyMs: null,
+            totalBytes: null,
+            isText: false,
+            probeSample: null,
+          );
       } finally {
         client.close();
       }
     }
 
-    /// 快速可用性探测：HEAD 失败后尝试 GET 读少量数据，
-    /// 任何 2xx/3xx 均视为可用。
-    Future<({Duration responseTime, bool available})> _probeAvailability(
-      String targetUrl, {
-      bool drainStream = true,
+    /// 🔴 2026-10-23（第六轮）：取 AES-128 解密 key（16 字节）。
+    ///
+    /// 资源站的 media playlist 分片普遍是 AES-128 密文，要从码流读 SPS 拿
+    /// **真实分辨率**必须先解密。key 只有 16 字节、整条 playlist 共用一个，
+    /// 一次请求即可，且**与分片测速并发**发起 —— 不增加串行 RTT。
+    Future<Uint8List?> _fetchAesKey(
+      String keyUri, {
+      Map<String, String>? headers,
+      required Duration timeout,
     }) async {
-      final probeStopwatch = Stopwatch()..start();
-      final probeHeaders = _buildVideoHeaders(targetUrl);
-
-      Future<bool> tryHead() async {
-        final client = http.Client();
+      try {
+        final client = _createSpeedTestClient();
         try {
-          final headReq = http.Request('HEAD', Uri.parse(targetUrl));
-          headReq.headers.addAll(probeHeaders);
-          final headResponse = await client.send(headReq).timeout(
-            const Duration(seconds: 4),
-          );
-          if (drainStream) await drain(headResponse);
-          return headResponse.statusCode >= 200 && headResponse.statusCode < 400;
-        } catch (_) {
-          return false;
+          final resp = await client
+              .get(Uri.parse(keyUri), headers: headers)
+              .timeout(timeout);
+          if (resp.statusCode != 200) return null;
+          final bytes = resp.bodyBytes;
+          if (bytes.length < 16) return null;
+          return Uint8List.sublistView(bytes, 0, 16);
         } finally {
           client.close();
         }
+      } catch (_) {
+        return null;
       }
-
-      Future<bool> tryGet() async {
-        final client = http.Client();
-        try {
-          final getReq = http.Request('GET', Uri.parse(targetUrl));
-          getReq.headers.addAll(probeHeaders);
-          final getResponse = await client.send(getReq).timeout(
-            const Duration(seconds: 4),
-          );
-          if (drainStream) {
-            var received = 0;
-            const maxProbeBytes = 16 * 1024;
-            await for (final chunk in getResponse.stream) {
-              received += chunk.length;
-              if (received >= maxProbeBytes) break;
-            }
-            await drain(getResponse);
-          }
-          return getResponse.statusCode >= 200 && getResponse.statusCode < 400;
-        } catch (_) {
-          return false;
-        } finally {
-          client.close();
-        }
-      }
-
-      if (await tryHead()) {
-        return (responseTime: probeStopwatch.elapsed, available: true);
-      }
-      if (await tryGet()) {
-        return (responseTime: probeStopwatch.elapsed, available: true);
-      }
-      return (responseTime: probeStopwatch.elapsed, available: false);
     }
 
     String? detectedResolution;
     var testUrl = url;
+
+    /// 🔴 2026-10-23（第三轮）：打印分辨率日志。
+    ///
+    /// 原来这条日志紧跟在 M3U8 解析之后打印，而**码率推算出的分辨率**
+    /// 要等测速请求拿到 Content-Range 总大小才知道。于是日志里的
+    /// `resolution=` 有时是 null、有时是旧值。
+    ///
+    /// 现在统一在「拿到最终结论、准备打速度日志之前」打印，
+    /// 保证一条 `[SpeedTestRes]` 就是该源的最终分辨率，
+    /// 且每个源只有一条（不再出现解析后一条、fallback 再一条）。
+    void logResolution({String suffix = ''}) {
+      debugPrint(
+        logTag(
+          'resolved=$testUrl resolution=$detectedResolution$suffix'
+          '${resolutionOnly ? ' mode=resolution-only' : ''}',
+        ),
+      );
+    }
+
+    // 🔴🔴 2026-10-23：嗅探「HTML 播放器页」入口，取出真正的 m3u8 地址。
+    //
+    // 实测（Windows 真机，jinyingzy.com 源）：
+    //   源给的播放地址 `https://hd.kuktxu.com/play/eXD5yD8e` **没有 .m3u8 后缀**，
+    //   服务器返回 1593 字节的 **HTML 播放器页**（content-type: text/html），
+    //   里面用 hls.js 播放 `https://hd.kuktxu.com/play/eXD5yD8e/index.m3u8`。
+    //
+    // 旧逻辑按「URL 后缀」判定，于是：
+    //   · 测速走 direct 分支，把 1593 字节 HTML 1ms 下载完 → **假 18MB/s**
+    //     （界面显示这个源极快，实际一播放就卡死）；
+    //   · 播放时 AdFilterEngine 判定「非 M3U8 地址」→ 跳过代理 → 播放器
+    //     直接打开 HTML → **画面卡住、总时长读不出来**。
+    //
+    // 现在：URL 不像直链媒体时，先花一次请求嗅探内容；确认是 HTML 播放器页
+    // 就把内嵌的 m3u8 取出来，按真正的 HLS 流程解析与测速。
+    var effectiveUrl = url;
+    if (!isM3u8 && !M3u8Utils.looksLikeDirectMediaUrl(url)) {
+      final sniffed = await _sniffM3u8FromHtmlEntry(
+        url,
+        headers: headers,
+        timeout: remaining(),
+      );
+      if (sniffed != null) {
+        debugPrint('[SpeedTestSniff] HTML 播放器页 → 内嵌 m3u8: $sniffed');
+        effectiveUrl = sniffed;
+        isM3u8 = true;
+      }
+    }
 
     // 1. M3U8 源：先解析出真正要测速的分片 URL 与分辨率，再对分片测速。
     // 这样比直接对 playlist URL 测速更准确，也能正确识别 master playlist 的真实分辨率。
@@ -1198,72 +1475,211 @@ class LunaTVService {
       try {
         final m3u8Client = _createSpeedTestClient();
         try {
-          final analysis = await M3u8Utils.analyzeM3u8ForSpeedTest(
-            url,
+          // 🔴 2026-10-23（第八轮）：解析走**带短重试**的版本。
+          //
+          // 原来这里对源站抖动**零容错**：一次连接被对端关掉，整个源就
+          // 判不出分辨率（resolution=null）。
+          final analysis = await _analyzeM3u8WithRetry(
+            effectiveUrl,
             headers: headers,
-            timeout: const Duration(seconds: 8),
-            maxSegments: math.max(maxConcurrency, 5),
+            maxSegments: math.max(maxConcurrency, 2),
             client: m3u8Client,
+            deadline: deadline,
+            cancelToken: cancelToken,
           );
         // 实测解析出的分辨率优先于缓存/文本推断，因为 M3U8 文本是真实的。
         detectedResolution = analysis.resolution ?? detectedResolution;
         testUrl = analysis.playlistUrl;
-        debugPrint(
-          '[SpeedTestRes] source=$sourceType url=$url resolved=$testUrl resolution=$detectedResolution',
-        );
+
+        // 🔴 2026-10-23（第三轮）：外层已放弃本源 → 立即停止，不再发请求。
+        if (cancelToken?.isCancelled ?? false) {
+          logResolution(suffix: ' (cancelled)');
+          logSpeed(
+            resolutionOnlySpeed,
+            resolved: testUrl,
+            elapsed: stopwatch.elapsed,
+            note: 'cancelled',
+          );
+          return (
+            responseTime: stopwatch.elapsed,
+            speed: resolutionOnlySpeed,
+            resolution: detectedResolution,
+          );
+        }
+
+        // 🔴 2026-10-23：只识别分辨率模式——不下载任何分片，直接返回。
+        // 正在播放的源由播放器自己拉流，再测一次既污染速度值又白抢带宽。
+        if (resolutionOnly) {
+          logResolution();
+          logSpeed(
+            resolutionOnlySpeed,
+            resolved: testUrl,
+            elapsed: stopwatch.elapsed,
+            note: 'resolution-only',
+          );
+          return (
+            responseTime: stopwatch.elapsed,
+            speed: resolutionOnlySpeed,
+            resolution: detectedResolution,
+          );
+        }
 
         if (analysis.segmentUrls.isNotEmpty) {
-          final firstSegment = analysis.segmentUrls.first;
-          final latencyMs = await _measureLatency(
-            firstSegment,
-            headers: headers,
-            probeTimeout: const Duration(seconds: 4),
-          );
-          if (latencyMs != null && latencyMs >= 0) {
-            final segmentSpeeds = await Future.wait(
-              analysis.segmentUrls
-                  .take(maxConcurrency)
-                  .map(
-                    (u) => _measureSpeed(
-                      u,
-                      headers: headers,
-                      maxBytes: sampleBytes,
-                      measureTimeout: timeout,
-                    ),
+          // 🔴 2026-10-23：延迟与速度合并为一次请求（见 [_measureSpeed] 注释）。
+          // 原先这里先 [_measureLatency] 探测一次、再 [_measureSpeed] 下载一次，
+          // 对同一个分片重复发两遍请求，白付一个 RTT。
+          // 🔴🔴 2026-10-23（第六轮）：加密源**并发**取 AES-128 key。
+          //
+          // 资源站的 media playlist 普遍带 `#EXT-X-KEY`，分片是密文；
+          // 要从码流读 SPS 拿真实分辨率必须先解密。
+          // key 请求与分片测速**并发**发起（Future 启动后不立刻 await），
+          // 因此不增加串行 RTT。
+          final keyFuture = analysis.encryptionKeyUri != null
+              ? _fetchAesKey(
+                  analysis.encryptionKeyUri!,
+                  headers: headers,
+                  timeout: remaining(),
+                )
+              : null;
+
+          final measurements = await Future.wait(
+            analysis.segmentUrls
+                .take(maxConcurrency)
+                .map(
+                  (u) => _measureSpeed(
+                    u,
+                    headers: headers,
+                    maxBytes: sampleBytes,
+                    measureTimeout: remaining(),
                   ),
-            );
-            if (segmentSpeeds.any((s) => s == -1.0)) {
-              hasNetworkError = true;
-            }
-            final validSpeeds = segmentSpeeds
-                .whereType<double>()
-                .where((s) => s > 0)
-                .toList();
-            if (validSpeeds.isNotEmpty) {
-              final avgSpeed =
-                  validSpeeds.reduce((a, b) => a + b) / validSpeeds.length;
-              return (
-                responseTime: Duration(milliseconds: latencyMs),
-                speed: avgSpeed,
-                resolution: detectedResolution,
-              );
-            }
-          } else {
+                ),
+          );
+
+          // ��� key 与测速并发，这里取结果（早已完成或失败）。
+          final aesKey = keyFuture != null ? await keyFuture : null;
+          final aesIv = _hexIvToBytes(analysis.encryptionIv);
+          if (measurements.any((m) => m.speed == -1.0)) {
             hasNetworkError = true;
           }
-        } else {
+          final valid = measurements
+              .where((m) => m.speed != null && m.speed! > 0)
+              .toList();
+          if (valid.isNotEmpty) {
+            final avgSpeed =
+                valid.map((m) => m.speed!).reduce((a, b) => a + b) / valid.length;
+            // 取各分片中最快的首字节延迟，代表该源的最佳响应表现。
+            final latencyMs = valid
+                .map((m) => m.latencyMs)
+                .whereType<int>()
+                .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
+
+            // 🔴🔴🔴 2026-10-23（第六轮）：**从码流 SPS 读真实分辨率**（最权威）。
+            //
+            // 背景：资源站大量用「media playlist + AES-128 加密 TS」交付，
+            // 播放列表里没有 RESOLUTION，只能靠码率反推，而**码率与分辨率没有
+            // 必然关系**。实测 `play.xluuss.com` 的源：
+            //   真实分辨率 1920x818（宽屏电影，1080P 级别），码率仅 661kbps
+            //   → 旧口径落档到 360P（错的，同片源在另一站点的 master playlist
+            //     里写着 RESOLUTION=1920x818 → 判 1080P，同一个视频两个结论）。
+            //
+            // SPS 里的宽高是**编码器写入的真实值**，最权威；拿到后再按
+            // 「接近哪个标准档」归类（宽屏电影 1920x818 → 1080P）。
+            final probeSample = valid
+              .map((m) => m.probeSample)
+              .firstWhere((e) => e != null, orElse: () => null);
+            if (probeSample != null) {
+              final probed = MediaResolutionProbe.probe(
+                probeSample,
+                aesKey: aesKey,
+                aesIv: aesIv,
+              );
+              if (probed != null) {
+                detectedResolution = M3u8Utils.nearestResolutionLabelFromSize(
+                  probed.width,
+                  probed.height,
+                );
+                debugPrint(
+                  '[SpeedTestRes] SPS 实测分辨率: '
+                  '${probed.width}x${probed.height} -> $detectedResolution'
+                  '${aesKey != null ? ' (AES-128 解密后)' : ''}',
+                );
+              }
+            }
+
+            // 🔴 2026-10-23（第三轮）：SPS 读不到时，用「测速响应头的分片总大小
+            // + 首个分片的 #EXTINF 时长」推算码率 → 分辨率（**兜底**）。
+            //
+            // 原来这一步要在解析阶段单独发一次 Range 请求才能拿到分片总大小，
+            // 与测速请求串行叠加（高延迟源一次 RTT 就 1.5~2 秒）。
+            // 现在测速请求本身就带 Range 头，响应头 `Content-Range` 的末位
+            // 就是分片总大小，配合 playlist 里的分片时长即可算出码率，
+            // **完全省掉这一次串行 RTT**。
+            final segDuration = analysis.firstSegmentDuration;
+            if (detectedResolution == null &&
+                segDuration != null &&
+                segDuration > 0 &&
+                measurements.isNotEmpty) {
+              final totalBytes = measurements.first.totalBytes;
+              if (totalBytes != null && totalBytes > 0) {
+                final kbps = totalBytes * 8 / (segDuration * 1000);
+                detectedResolution = M3u8Utils.resolutionFromBitrateKbps(kbps);
+                if (detectedResolution != null) {
+                  debugPrint(
+                    '[SpeedTestRes] 码率推算分辨率(兜底): '
+                    '${kbps.toStringAsFixed(0)}kbps -> $detectedResolution',
+                  );
+                }
+              }
+            }
+
+            logResolution();
+            logSpeed(
+              avgSpeed,
+              resolved: testUrl,
+              segmentCount: valid.length,
+              latencyMs: latencyMs,
+              elapsed: stopwatch.elapsed,
+              note: 'segment-avg',
+            );
+            return (
+              responseTime: Duration(milliseconds: latencyMs ?? -1),
+              speed: avgSpeed,
+              resolution: detectedResolution,
+            );
+          }
+        } else if (!hasNetworkError) {
           // 无分片（可能是纯子 playlist），回退到 playlist URL 测速。
-          final speed = await _measureSpeed(
+          //
+          // 🔴 2026-10-23：网络层已经失败时**不再回退**——对连不上的源再测
+          // 一次 playlist URL 只是白等一个 measureTimeout（实测 5~13 秒/源）。
+          // （解析阶段抛异常时本来就会直接跳到外层 catch，这里是双保险。）
+          final measured = await _measureSpeed(
             analysis.playlistUrl,
             headers: headers,
             maxBytes: 32 * 1024,
-            measureTimeout: timeout,
+            measureTimeout: remaining(),
           );
+          final speed = measured.speed;
           if (speed == -1.0) {
             hasNetworkError = true;
+          } else if (measured.isText) {
+            // 🔴 2026-10-23：下到的是文本（HTML 播放器页）而非媒体流，
+            // 速度值无意义（见 direct 分支的说明）。
+            debugPrint(
+              '[SpeedTestSniff] 回退测速下到的是文本，不作为速度值: '
+              '${analysis.playlistUrl}',
+            );
           } else if (speed != null && speed > 0) {
+            logResolution();
+            logSpeed(
+              speed,
+              resolved: analysis.playlistUrl,
+              latencyMs: measured.latencyMs,
+              elapsed: stopwatch.elapsed,
+              note: 'playlist-fallback',
+            );
             return (
-              responseTime: stopwatch.elapsed,
+              responseTime: Duration(milliseconds: measured.latencyMs ?? -1),
               speed: speed,
               resolution: detectedResolution,
             );
@@ -1281,27 +1697,78 @@ class LunaTVService {
       } on TimeoutException catch (_) {
         hasNetworkError = true;
         debugPrint('speedTest M3U8 解析失败（超时） $url');
+      } on http.ClientException catch (_) {
+        // 🔴 2026-10-23：ClientException（连接被对端关闭、响应头未收全）
+        // 同样是网络层失败，必须置位，否则会对 playlist URL 再测一次。
+        hasNetworkError = true;
+        debugPrint('speedTest M3U8 解析失败（连接异常） $url');
       } catch (e) {
         debugPrint('speedTest M3U8 解析失败 $url: $e');
       }
     } else {
       // 2. 非 M3U8 源：直接对 URL 做下载测速。
       detectedResolution ??= M3u8Utils.extractResolutionFromText(url);
-      debugPrint(
-        '[SpeedTestRes] source=$sourceType url=$url resolved=$url resolution=$detectedResolution',
-      );
+
+      // 🔴 2026-10-23：只识别分辨率模式——不做下载测速。
+      if (resolutionOnly) {
+        logResolution();
+        logSpeed(
+          resolutionOnlySpeed,
+          resolved: url,
+          elapsed: stopwatch.elapsed,
+          note: 'resolution-only',
+        );
+        return (
+          responseTime: stopwatch.elapsed,
+          speed: resolutionOnlySpeed,
+          resolution: detectedResolution,
+        );
+      }
+
       try {
-        final speed = await _measureSpeed(
+        final measured = await _measureSpeed(
           url,
           headers: headers,
           maxBytes: sampleBytes,
-          measureTimeout: timeout,
+          measureTimeout: remaining(),
         );
+        final speed = measured.speed;
         if (speed == -1.0) {
           hasNetworkError = true;
-        } else if (speed != null && speed > 0) {
+        } else if (measured.isText) {
+          // 🔴🔴 2026-10-23：下到的是**文本**（HTML 播放器页 / 清单），
+          // 不是媒体流。这种响应的「速度」毫无意义 —— HTML 页只有 1~2KB，
+          // 1ms 就传完，会算出 18MB/s 的假速度，把实际一播放就卡死的源
+          // 显示成最快的源（真机实测 jinyingzy.com 就是这样）。
+          //
+          // 这种情况说明这个 URL 本身不是可直连播放的媒体地址，
+          // 前面嗅探也没能从 HTML 里挖出 m3u8 ⇒ 按「不可用」处理。
+          debugPrint(
+            '[SpeedTestSniff] 响应是文本内容，不作为速度值: $url',
+          );
+          logResolution();
+          logSpeed(
+            null,
+            resolved: url,
+            elapsed: stopwatch.elapsed,
+            note: 'text-not-media',
+          );
           return (
             responseTime: stopwatch.elapsed,
+            speed: null,
+            resolution: detectedResolution,
+          );
+        } else if (speed != null && speed > 0) {
+          logResolution();
+          logSpeed(
+            speed,
+            resolved: url,
+            latencyMs: measured.latencyMs,
+            elapsed: stopwatch.elapsed,
+            note: 'direct',
+          );
+          return (
+            responseTime: Duration(milliseconds: measured.latencyMs ?? -1),
             speed: speed,
             resolution: detectedResolution,
           );
@@ -1311,26 +1778,35 @@ class LunaTVService {
       }
     }
 
-    // 3. 测速失败时做可用性探测：可访问则标记为可用（速度未知）。
-    try {
-      final probe = await _probeAvailability(testUrl);
-      if (probe.available || hasNetworkError) {
-        return (
-          responseTime: probe.responseTime,
-          speed: -1.0,
-          resolution: detectedResolution,
-        );
-      }
-    } catch (_) {
-      hasNetworkError = true;
-    }
+    // 3. 🔴 2026-10-23（第二轮调整）：**不再做可用性探测**。
+    //
+    // 用户明确要求：「不用可用性探测，只要能连接开始测速就是可用的」。
+    //
+    // 原实现测速失败后会再发一轮 HEAD + GET 探测，白等 4~8 秒，而结论
+    // 与测速本身的信息高度重叠。实测真实站点：连不上的源单源耗 5~13 秒，
+    // 其中大半花在这轮注定失败的探测上，直接拖慢整轮测速。
+    //
+    // 现在的可用性判定规则（全部由测速流程自身产生，无额外请求）：
+    //   · 连上并开始下载、拿到数据 → 可用，速度为实测值
+    //   · 网络层异常（TLS 握手失败 / 连接被关闭 / 超时）→ 可用但速度未知
+    //     （speed = -1.0，UI 显示绿色「可用」）。沿用既有宽容策略：Dart 的
+    //     网络栈与原生播放器不同，Dart 连不上不等于原生播放器播不了。
+    //   · 其余情况（HTTP 错误码、内容不是 M3U8 等）→ 不可用（speed = 0.0）
 
     debugPrint(
-      '[SpeedTestRes] source=$sourceType url=$url resolved=$testUrl resolution=$detectedResolution (fallback)',
+      logTag(
+        'resolved=$testUrl resolution=$detectedResolution (fallback)',
+      ),
     );
     stopwatch.stop();
     if (hasNetworkError) {
       debugPrint('speedTest 最终判定网络层异常但可能可播放: $url');
+      logSpeed(
+        -1.0,
+        resolved: testUrl,
+        elapsed: stopwatch.elapsed,
+        note: 'network-error-playable',
+      );
       return (
         responseTime: stopwatch.elapsed,
         speed: -1.0,
@@ -1338,12 +1814,110 @@ class LunaTVService {
       );
     }
     debugPrint('speedTest 最终判定不可用: $url');
+    logSpeed(
+      0.0,
+      resolved: testUrl,
+      elapsed: stopwatch.elapsed,
+      note: 'unavailable',
+    );
     return (
       responseTime: stopwatch.elapsed,
       speed: 0.0,
       resolution: detectedResolution,
     );
   }
+
+  /// 🔴 2026-10-23（第八轮）：M3U8 解析带**短重试**。
+  ///
+  /// 实测（Windows 真机 22:33~22:35 一轮测速）：
+  /// `www.maoyanzy.com` 源 `https://play.maoyanplay.top/20260907/XZ6JZYEt/index.m3u8`
+  /// 报 `ClientException: Connection closed before full header was received`，
+  /// 解析直接失败 → 该源 `resolution=null`。
+  /// 而**同一个 URL 用 curl 直连一次就成功**（HTTP 200，master playlist，
+  /// 带 `RESOLUTION=864x368`）—— 说明是源站偶发断连，不是源失效。
+  ///
+  /// 问题在于：`LunaTVService._get` 有 `maxRetryCount` 重试，
+  /// 但**测速的 M3U8 解析这条路径没有** —— 源站抖一下，这个源就整个
+  /// 判不出分辨率（界面上的清晰度列直接空掉）。
+  ///
+  /// 重试策略：
+  ///   · 只重试**网络层**异常（连接被关闭 / Socket / 超时 / TLS 握手）；
+  ///   · HTTP 4xx/5xx 由 `analyzeM3u8ForSpeedTest` 直接返回空分片
+  ///     （不抛异常），天然不会进重试 —— 403/404 重试多少次都没用；
+  ///   · TLS 握手失败最多再试 1 次：实测这批源站的 HTTPS 本身是坏的
+  ///     （curl 直连同样报 `unexpected eof while reading`），多试只是白等；
+  ///   · 每次尝试都用**剩余预算**做超时，预算不够就放弃重试；
+  ///   · 退避 250ms / 500ms，期间检查取消令牌。
+  ///
+  /// 复用同一个 [client]：连接池复用省掉重复 TLS 握手，
+  /// 对高延迟源尤其划算。
+  static Future<M3u8Analysis> _analyzeM3u8WithRetry(
+    String url, {
+    required Map<String, String> headers,
+    required int maxSegments,
+    required http.Client client,
+    required DateTime deadline,
+    SpeedTestCancelToken? cancelToken,
+  }) async {
+    Duration left() {
+      final l = deadline.difference(DateTime.now());
+      return l.isNegative ? Duration.zero : l;
+    }
+
+    const maxAttempts = 3;
+    Object? lastError;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (cancelToken?.isCancelled ?? false) {
+        throw TimeoutException('测速已取消', left());
+      }
+      final budget = left();
+      if (budget <= Duration.zero) break;
+
+      try {
+        return await M3u8Utils.analyzeM3u8ForSpeedTest(
+          url,
+          headers: headers,
+          maxSegments: maxSegments,
+          client: client,
+          // 🔴 2026-10-23（第三轮）：解析阶段**不再发码率估算请求**，
+          // 解析超时收紧到「整源剩余预算」之内。
+          //
+          // 原来这里固定 8 秒、测速固定 12 秒，两者串起来最多 20 秒，
+          // 而外层硬超时只有 8 秒 → 必然「外层放弃、内层还在跑」。
+          // 现在解析只能用剩余预算，测速同样，保证整源在 timeout 内收口。
+          timeout: budget,
+        );
+      } catch (e) {
+        lastError = e;
+        // TLS 握手失败：源站 HTTPS 本身坏了（curl 同样失败），最多再试 1 次。
+        final maxForError = (e is HandshakeException) ? 2 : maxAttempts;
+        if (attempt >= maxForError) break;
+        if (!_isTransientNetworkError(e)) break;
+
+        final backoff = Duration(milliseconds: 250 * attempt);
+        // 剩余预算不够「退避 + 至少 1 秒解析」就不再试了。
+        if (left() <= backoff + const Duration(seconds: 1)) break;
+
+        debugPrint(
+          '[SpeedTestRes] M3U8 解析第$attempt 次失败($e)，'
+          '${backoff.inMilliseconds}ms 后重试: $url',
+        );
+        await Future.delayed(backoff);
+      }
+    }
+    throw lastError ?? StateError('M3U8 解析失败且无异常信息: $url');
+  }
+
+  /// 判断异常是否属于**值得重试**的网络层抖动。
+  ///
+  /// 包含：连接被对端关闭（ClientException）、Socket 错误、
+  /// 超时、TLS 握手失败。
+  /// 不包含：HTTP 状态码错误（解析阶段不会抛）、其它编程错误。
+  static bool _isTransientNetworkError(Object e) =>
+      e is SocketException ||
+      e is http.ClientException ||
+      e is TimeoutException ||
+      e is HandshakeException;
 
   /// 对单个 URL 做轻量级可用性探测，返回是否可用及响应时间。
   /// 只做 HEAD/GET，不解析 M3U8、不测下载速度。

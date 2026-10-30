@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/live_source_config.dart';
 import '../../services/cache_service.dart';
+import '../../services/glass_style_service.dart';
 import '../../services/live_service.dart';
 import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
@@ -331,7 +332,12 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
         Expanded(
           child: ReorderableListView.builder(
             buildDefaultDragHandles: false,
-            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            // 底部留出浮动磨砂导航栏总高，避免最后一个直播源被导航栏永久遮挡。
+            padding: EdgeInsets.only(
+              top: AppSpacing.sm,
+              bottom: AppSpacing.sm +
+                  GlassStyleService.navBarTotalHeight(context),
+            ),
             itemCount: _sources.length,
             onReorder: (oldIndex, newIndex) async {
               await LiveSourceStorage.reorderCombined(_sources, oldIndex, newIndex);

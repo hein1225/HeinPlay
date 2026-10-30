@@ -22,6 +22,9 @@ class OtherSettingsPage extends StatefulWidget {
 
 class _OtherSettingsPageState extends State<OtherSettingsPage> {
   bool _windowsFullscreenAlwaysOnTop = false;
+  // 强制 OpenGL ES 渲染（默认 false = Vulkan 优先）。
+  // 全局项：直播与点播同时生效，故放在「其他」而非点播设置。
+  bool _forceOpenGl = false;
   bool _logEnabled = false;
   String _logPath = '';
   HttpServer? _logServer;
@@ -44,6 +47,7 @@ class _OtherSettingsPageState extends State<OtherSettingsPage> {
     final windowsFullscreenAlwaysOnTop =
         await UserDataService.getWindowsFullscreenAlwaysOnTop();
     final logEnabled = await UserDataService.getLogEnabled();
+    final forceOpenGl = await UserDataService.getForceOpenGl();
     String logPath = '';
     if (logEnabled) {
       await AppLogger.initialize();
@@ -53,6 +57,7 @@ class _OtherSettingsPageState extends State<OtherSettingsPage> {
     if (!mounted) return;
     setState(() {
       _windowsFullscreenAlwaysOnTop = windowsFullscreenAlwaysOnTop;
+      _forceOpenGl = forceOpenGl;
       _logEnabled = logEnabled;
       _logPath = logPath;
       _appVersion = appVersion;
@@ -65,6 +70,15 @@ class _OtherSettingsPageState extends State<OtherSettingsPage> {
   Future<void> _setWindowsFullscreenAlwaysOnTop(bool value) async {
     await UserDataService.setWindowsFullscreenAlwaysOnTop(value);
     setState(() => _windowsFullscreenAlwaysOnTop = value);
+  }
+
+  Future<void> _setForceOpenGl(bool value) async {
+    await UserDataService.saveForceOpenGl(value);
+    setState(() => _forceOpenGl = value);
+    showSettingsSnackBar(
+      context,
+      value ? '已强制 OpenGL ES（下次播放生效）' : '已恢复 Vulkan 优先（下次播放生效）',
+    );
   }
 
   Future<void> _setLogEnabled(bool value) async {
@@ -210,6 +224,17 @@ class _OtherSettingsPageState extends State<OtherSettingsPage> {
             subtitle: '清除海报、图片与豆瓣数据缓存，保留播放记录、搜索记录、跳过设置等数据',
             icon: Icons.cleaning_services_outlined,
             onTap: _clearCache,
+          ),
+          buildSwitchTile(
+            context: context,
+            title: '强制 OpenGL ES 渲染',
+            // 仅 mpv 后端消费：内核同时带 Vulkan 与 GLES 两端，原生按设备
+            // 探测选路；打开此项则跳过 Vulkan 一律 GLES（驱动异常的兜底）。
+            // 全局生效：直播与点播都走这条路线，故不在点播设置里。
+            subtitle: '仅对 MPV 播放器有效，直播与点播同时生效；默认关闭即 Vulkan 优先'
+                '（设备支持时），播放闪退或画面异常时可开启改走 OpenGL ES',
+            value: _forceOpenGl,
+            onChanged: _setForceOpenGl,
           ),
           const SizedBox(height: AppSpacing.lg),
           buildSectionTitle('日志与调试'),

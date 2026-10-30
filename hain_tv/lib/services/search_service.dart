@@ -11,6 +11,7 @@ import 'douban_service.dart';
 import 'local_storage_service.dart';
 import 'lunatv_service.dart';
 import 'm3u8_utils.dart';
+import 'playback_activity.dart';
 
 class SearchService {
   static const double _similarityThreshold = 0.6;
@@ -566,11 +567,53 @@ class SearchService {
     return map.values.toList();
   }
 
+  /// 测速档位：按播放状态决定并发数、单分片采样字节、分片内并发。
+  ///
+  /// 🔴 2026-10-23：播放进行中时整体降档，把带宽让给播放缓冲。
+  ///
+  /// | 状态         | 外层并发 | 单分片采样 | 分片内并发 | 在途峰值 |
+  /// |--------------|---------|-----------|-----------|---------|
+  /// | 无播放       | 2       | 512KB     | 3         | 6×512KB  |
+  /// | 播放取流中   | 1       | 256KB     | 1         | 1×256KB  |
+  ///
+  /// 峰值在途下载量从 3MB 降到 256KB（≈12 倍），采样量仍远大于 TCP 慢启动
+  /// 窗口，测出的速度具有代表性。
+  ///
+  /// 🔴 2026-10-23：播放中采样 128KB → 256KB。128KB 样本在高速网络下单次
+  /// 传输耗时可能不足 1ms，量化误差过大；256KB 把误差减半，同时占用仍
+  /// 只有空闲档的 1/2。
+  ///
+  /// 🔴 2026-10-23（第二轮调整）：播放中**批次并发 1 → 2**。
+  ///
+  /// 上一轮 Windows 实测发现「播放期间测速太慢」的**主因不是单源测速慢，
+  /// 而是源与源之间完全串行**：详情页一次要测 20+ 个源，播放中每源最坏
+  /// 8 秒（外层超时），串行下来整轮要 2~3 分钟，源列表上的速度迟迟不出。
+  ///
+  /// 改并发 2 后整轮约缩短一半。带宽代价可控：
+  ///   播放中在途峰值 = 2 源 × 256KB = 512KB
+  ///   空闲档在途峰值 = 2 源 × 3 分片 × 512KB = 3MB
+  /// 播放档仍只有空闲档的 1/6，对正在播放的视频流影响很小。
+  @visibleForTesting
+  static ({int concurrency, int sampleBytes, int segmentConcurrency})
+      speedTestBudget({required bool playbackActive}) {
+    return playbackActive
+        ? (concurrency: 2, sampleBytes: 256 * 1024, segmentConcurrency: 1)
+        : (concurrency: 2, sampleBytes: 512 * 1024, segmentConcurrency: 3);
+  }
+
   static Future<List<SourceOption>> speedTestSources(
     List<SourceOption> sources, {
     /// 每次有源测速完成时回调当前已排序的完整列表，供 UI 实时刷新。
     void Function(List<SourceOption> sortedSources)? onProgress,
-    int concurrency = 4,
+    // 🔴 2026-10-23：并发从 4 降到 2。
+    //   测速与播放**并行**跑（详情页后台测速，播放页同时起播），并发过高会
+    //   抢光带宽与连接池：
+    //     · 荣耀平板实测：24 源测速持续 68s，活跃源首包被拖到 10.5s；
+    //     · Windows server 实测：测速请求与本地代理抢连接，反复出现
+    //       `analyzeM3u8ForSpeedTest 失败: HandshakeException`，叠加
+    //       换源/换播放器的资源重建 → **软件卡死**。
+    //   降并发后测速总时长变长（后台无感），但播放侧不再被拖慢。
+    int concurrency = 2,
     /// 播放记录中的源标识（格式 source+id）。存在时优先对该源做真实测速。
     String? playedSourceKey,
     /// 为 true 时对所有源做真实下载测速与分辨率分析；否则仅测速优先级源（13 个）。
@@ -586,7 +629,18 @@ class SearchService {
     const speedTestCount = 13;
     const priorityFastCount = 4;
     const perSourceTimeout = Duration(seconds: 8);
-    const probeConcurrency = 8;
+    // 🔴 2026-10-23（第三轮）：**内部预算比外层硬超时早 1 秒收口**。
+    //
+    // `Future.timeout` 只放弃等待，不会中止底层 HTTP 请求。原来内层的
+    // 解析超时 8 秒 + 测速超时 12 秒，串起来最多 20 秒，于是内层必然
+    // 在外层放弃之后还继续跑 2~4 秒：白占带宽，日志里还会同时出现
+    // `outer-timeout-abandoned` 与 `note=unavailable` 两条互相矛盾的记录。
+    //
+    // 现在内层拿 7 秒预算，保证**在外层 8 秒之前自己收口并给出结论**，
+    // 外层超时基本不再触发。
+    const innerBudget = Duration(seconds: 7);
+    // 🔴 2026-10-23：探测并发 8 → 4，同样为播放侧让出带宽与连接。
+    const probeConcurrency = 4;
 
     /// 为每个源补充从 sourceName/remarks 推断的分辨率，避免服务端未返回时完全空白。
     SourceOption _inferResolution(SourceOption option) {
@@ -691,8 +745,69 @@ class SearchService {
     final totalToTest = sourcesToSpeedTest.length;
     var completedCount = 0;
 
-    for (var i = 0; i < sourcesToSpeedTest.length; i += concurrency) {
-      final batchEnd = (i + concurrency).clamp(0, sourcesToSpeedTest.length);
+    // 🔴 2026-10-23：播放中给播放缓冲让路。
+    //
+    //   测速与播放并行跑时，两者**物理带宽共享**（连接池独立，但网卡共享）。
+    //   原先只有固定并发 2（外层）× 3（分片内层）= 最多 6 条 512KB 并发流，
+    //   在慢网络下会把带宽吃满，直接拖垮播放缓冲。
+    //
+    //   现在按 [PlaybackActivity] 的实时状态自适应，档位见
+    //   [speedTestBudget]：
+    //     · 无播放        → 维持原档（并发 2 / 采样 512KB / 分片并发 3）
+    //     · 播放取流中    → 降档（并发 2 / 采样 256KB / 分片并发 1），
+    //                       在途峰值 2×1×256KB = 512KB，
+    //                       仅为空闲档（2×3×512KB = 3MB）的 1/6，
+    //                       测速结果仍然有效
+    //     · 缓冲告急      → 完全停手，等缓冲恢复再继续（超时就放弃本轮）
+    //
+    //   ⚠️ 档位与 [speedTestBudget] 的实际返回值必须一致。
+    //     2026-10-24 修正：本注释曾停留在「并发 1 / 采样 128KB / 降 24 倍」
+    //     的旧档（改动 4 把播放中批次并发 1→2、采样 128KB→256KB 后未同步），
+    //     与同文件 592-595 行的正确说明自相矛盾 —— 过期注释就是记忆漂移源。
+    //
+    //   注：这里**不使用令牌桶限速**。限速会让 `received/seconds` 测出来的
+    //   速度被限速值污染，慢源会被误判成快源；改用「降采样量」控制占用，
+    //   既让出带宽又不失真。
+    //
+    /// 播放缓冲告急时等待缓冲恢复；超时则返回 false，放弃本轮剩余测速。
+    ///
+    /// 上限取 60 秒：[PlaybackActivity] 的告急持续上限是 45 秒，超过后
+    /// 会自动解除告急、退回普通降档，因此正常情况下这里都会等到恢复。
+    Future<bool> _waitForPlaybackBandwidth({
+      Duration maxWait = const Duration(seconds: 60),
+    }) async {
+      if (!PlaybackActivity.instance.mustYield) return true;
+      final deadline = DateTime.now().add(maxWait);
+      while (DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (!PlaybackActivity.instance.mustYield) return true;
+      }
+      return false;
+    }
+
+    var i = 0;
+    while (i < sourcesToSpeedTest.length) {
+      // 每批开始前重新读取播放状态：播放可能在上一批期间才起播。
+      final budget = speedTestBudget(
+        playbackActive: PlaybackActivity.instance.isActive,
+      );
+      final effConcurrency = budget.concurrency;
+      final effSampleBytes = budget.sampleBytes;
+      final effSegmentConcurrency = budget.segmentConcurrency;
+
+      // 🔴 2026-10-23：**正在播放的源不测速，只识别分辨率**。
+      //
+      //   原因有二：
+      //     1. 该源的流量正被播放器占用，再测一次会让测出的速度被自身
+      //        播放流污染 —— 表现为「一开始播放，源的速度就显示很慢」，
+      //        进而误导换源排序；
+      //     2. 测速纯属重复消耗带宽，对正在播放的源没有任何决策价值。
+      //
+      //   跳过的源只做 M3U8 解析以拿到真实分辨率，速度记为 -1.0
+      //   （语义：可用但速度未知），与阶段 1 探测的「可用」语义一致。
+      final playingSourceKey = PlaybackActivity.instance.currentSourceKey;
+
+      final batchEnd = (i + effConcurrency).clamp(0, sourcesToSpeedTest.length);
       await Future.wait([
         for (var j = i; j < batchEnd; j++)
           () async {
@@ -709,14 +824,40 @@ class SearchService {
             // 获取真实分辨率，避免旧缓存把源锁死在低分辨率。
             final cachedResolution = null;
 
+            // 正在播放的源 → 只识别分辨率，不测速。
+            final isPlayingSource = playingSourceKey != null &&
+                playingSourceKey == '${option.source}+${option.id}';
+
+            final cancelToken = SpeedTestCancelToken();
             final metrics = await LunaTVService.speedTestEpisode(
               episodeUrl,
               sourceType: option.source,
               cachedResolution: cachedResolution,
+              // 播放中用小样本，测完即弃，把带宽让给缓冲。
+              sampleBytes: effSampleBytes,
+              maxConcurrency: effSegmentConcurrency,
+              resolutionOnly: isPlayingSource,
+              // 🔴 2026-10-23（第三轮）：内层预算比外层硬超时早 1 秒收口，
+              // 让每个源都拿到**明确结论**而不是被外层放弃。
+              timeout: innerBudget,
+              cancelToken: cancelToken,
             )
                 .timeout(perSourceTimeout)
                 .catchError((_) {
+              // 外层超时 → 通知内层立刻停止，别再白跑几秒。
+              cancelToken.cancel();
               // 单源测速超时视为可用但速度未知，避免把可播放源误判为不可用。
+              //
+              // 🔴 2026-10-23：外层超时后内部请求**不会立刻中止**，仍可能在
+              // 几秒后跑完并打印 `note=unavailable`。若不区分，事后看日志会
+              // 误以为该源被判定为「不可用」，而它其实是被外层放弃的。
+              // 这里补一条明确的放弃日志。
+              debugPrint(
+                '[SpeedTestSpeed] source=${option.source} url=$episodeUrl '
+                'speed=null sample=${effSampleBytes}B '
+                'pa=${PlaybackActivity.instance.isActive} '
+                'note=outer-timeout-abandoned',
+              );
               return (
                 responseTime: Duration.zero,
                 speed: -1.0,
@@ -763,8 +904,20 @@ class SearchService {
           }(),
       ]);
 
-      if (i + concurrency < sourcesToSpeedTest.length) {
-        await Future.delayed(const Duration(milliseconds: 150));
+      i = batchEnd;
+
+      // 缓冲告急时把带宽完全让给播放：等待缓冲恢复，超时则放弃本轮剩余测速。
+      if (i < sourcesToSpeedTest.length) {
+        if (!await _waitForPlaybackBandwidth()) {
+          debugPrint(
+            '[SpeedTest] 播放缓冲持续告急，放弃本轮剩余测速'
+            '（已完成 $completedCount/$totalToTest）',
+          );
+          break;
+        }
+        await Future.delayed(
+          Duration(milliseconds: PlaybackActivity.instance.isActive ? 400 : 150),
+        );
       }
     }
 
@@ -964,6 +1117,8 @@ class SearchService {
     bool exactMatch = false,
     bool fuzzy = false,
     void Function(List<SourceOption> sources)? onProgress,
+    /// 🔴 详情页后台源搜索的单次请求超时（可传更短的值快速失败）。
+    Duration? timeout,
   }) async {
     final variants = generateSearchVariants(keyword, fuzzy: fuzzy);
 
@@ -975,6 +1130,7 @@ class SearchService {
           keyword: variant,
           source: source,
           forceRefresh: forceRefresh,
+          timeout: timeout,
         );
         responses.add(response);
 

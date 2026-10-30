@@ -38,6 +38,21 @@
 -keep class software.solid.fluttervlcplayer.** { *; }
 -dontwarn org.videolan.libvlc.**
 
+# 🔴 HeinPlay mpv（自写壳）：JNI 按**类名与方法名**查找，R8 混淆后必然崩。
+#   · JNI_OnLoad 里 FindClass("com/heinplay/hain_tv/MpvPlayerView") —— 类名不能改；
+#   · 事件线程 CallVoidMethod(view, onMpvEvent, ...) —— 方法名与签名不能改；
+#   · MpvCore 的 external fun 与 libheinplay_mpv_jni.so 的 Java_com_heinplay_*
+#     符号一一对应，同样不能改。
+-keep class com.heinplay.hain_tv.MpvPlayerView { *; }
+-keep class com.heinplay.hain_tv.MpvCore { *; }
+-keep class com.heinplay.hain_tv.MpvViewFactory { *; }
+-keep class com.heinplay.hain_tv.MpvPlugin { *; }
+-keepclassmembers class com.heinplay.hain_tv.MpvPlayerView {
+    public void onMpvEvent(java.lang.String, double, boolean);
+}
+# native 方法由 System.loadLibrary 动态解析，R8 不要因「找不到实现」而报错。
+-dontwarn com.heinplay.hain_tv.MpvCore
+
 # SharedPreferences / JSON
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;

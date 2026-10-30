@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:fvp/fvp.dart' as fvp;
 import 'package:hain_tv/app_windows.dart';
 import 'package:hain_tv/platform/device_utils.dart';
 import 'package:hain_tv/services/portable_storage_windows.dart';
+import 'package:hain_tv/utils/desktop_heartbeat.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
@@ -31,40 +31,27 @@ void main() async {
   await windowManager.ensureInitialized();
   // 显式设置窗口标题，避免中文在原生标题栏出现乱码。
   await windowManager.setTitle('海因影视');
-  // Windows 默认使用 FVP 作为 video_player 后端（基于 libmdk）。
-  // 不传 video.decoders，让 fvp 使用内置默认解码器列表（包含 D3D11/DXVA/CUDA/FFmpeg 等），
-  // 兼容性最好。关闭 FFmpeg TLS 严格验证，避免非标准端口/自签证书源被服务器拒绝。
-  fvp.registerWith(options: {
-    'platforms': ['windows'],
-    'lowLatency': 1,
-    // 补 KeyFrame(=Fast) 标志：fvp 包默认 seek 标志缺该位会退化为精确 seek
-    // （逐帧解码到目标位置），点播续播/拖进度条会长时间卡顿（详见
-    // player_backend_factory.dart 中 Android 段的同一说明）。
-    'fastSeek': true,
-    'global': {
-      // 关闭 FFmpeg TLS 严格验证，兼容非标准端口/自签证书源。
-      // analyzeduration=500000(0.5s)/probesize=2MB：缩短 FFmpeg 媒体探测窗口。
-      // 直播组播(RTP over HTTP)流默认要等满 5s analyzeduration 才“分析完成”就绪，
-      // 导致换台约 5 秒；调小后首次 initialize 即走低延迟探测，换台降至 <1s，
-      // 与 VLC 等播放器一致。直播低延迟的 +nobuffer 等选项仍由 setBufferRange 在
-      // open 后补充（fvp 内部 _lowLatency 路径）。
-      // reconnect*/http_persistent：HLS 子分片(视频段)请求偶发连接失败/复用异常时自动
-      // 重连，避免 Windows 上“出声无画面→卡死”。
-      'avformat': 'tls_verify=0:analyzeduration=500000:probesize=2097152'
-          ':reconnect=1:reconnect_streamed=1:reconnect_delay_max=2:http_persistent=1',
-      // 关键根因修复：强制 Windows fvp 使用 FFmpeg 内置 IO(demuxer.io=0)，而非 MDK 自带
-      // 的 mdkio 模块(demuxer.io=1)。mdkio 在 Windows 上对 HLS 子分片(视频段)请求不继承
-      // player 级 avio.headers（fvp 经 VideoPlayerController.networkUrl 传入的 UA/Referer/
-      // Origin），导致视频分片被 CDN 拒绝→出声无画面卡死；安卓因源差异/MDK 版本差异正常，
-      // 而代理能播正是因所有段被 Dart 客户端带完整 header 拉取、绕开了 MDK 的 IO 层。
-      // 改用 FFmpeg avio 后，fvp 设置的 player 级 avio.headers 会随 HLS 子请求继承，
-      // 直连即可正常播放，无需退回代理。
-      'demuxer.io': '0',
-      'ffmpeg.loglevel': 'info',
-    },
-  });
-  // Windows 版复用 TV 版页面布局，标记为 TV 模式以确保焦点、遥控逻辑生效。
+  // 🔴🔴 2026-10-16：**已移除 fvp**（原 fvp.registerWith 调用）。
+  //
+  //   Windows 版此前用 FVP/libmdk 作为 video_player 后端，现全平台统一走
+  //   **mpv**（官方内核 + 自写壳，见 PlayerBackendFactory.platformDefault）。
+  //   fvp 插件已从 pubspec 摘除，故此处不再注册。
+  //
+  //   随之失效的 fvp 专有配置已由自写 mpv 后端等价接管：
+  //     · tls_verify=0              → MpvPlayerView.initMpv 下发 tls-verify=no
+  //     · analyzeduration/probesize → mpv 侧 demuxer-readahead-secs + 档位缓存
+  //     · reconnect*/http_persistent → mpv 侧 network-timeout + HLS 自愈
+  //     · demuxer.io=0（子分片继承 header）→ mpv 原生按 http-header-fields 处理，
+  //       不存在 mdkio 那样的「子请求丢 header」缺陷，无需该绕行开关
+  // Windows 端与 Linux 端保持一致：isTv=true 只影响直播页/设置页里
+  // 「TV 布局 vs 电脑版布局」的分支（这些分支内部以 `isTv && isDesktop` 组合
+  // 判断，桌面端行为与手机版不同），**不**决定播放页走哪套页面。
+  // 播放页是桌面专用的 screens/windows/player_screen.dart（WindowsPlayerScreen）。
   DeviceUtils.isTvOverride = true;
+  // 🔴 2026-10-23：启动卡死诊断心跳（HB-UI 主 isolate + HB-ISO 独立 isolate）。
+  //   用于区分「Dart 主 isolate 被同步阻塞」与「只是某个 await 不返回」，
+  //   详见 [DesktopHeartbeat] 的判读表。
+  DesktopHeartbeat.start();
   // 不在此处阻塞解码封面：避免首帧前黑底等待。启动封面由原生 runner
   // （win32_window）的 IDB_SPLASH 覆盖层绘制，Flutter 首帧就绪后移除。
   runApp(const HainWindowsApp());

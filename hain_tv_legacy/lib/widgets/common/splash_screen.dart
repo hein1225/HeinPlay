@@ -142,6 +142,12 @@ class _SplashScreenState extends State<SplashScreen>
       await UserDataService.migrateLegacyAccount();
       _setProgress(0.52);
 
+      // 4.5 播放后端升级迁移（fvp -> mpv）：必须早于任何播放页读取后端，
+      // 否则老用户会带着 prefs 里的 "fvp" 进入一个没有 fvp 的版本。
+      // （migrateLegacyAccount 内部已调用一次，此处显式再调，保证即使
+      //  账号迁移被重构也不会漏掉；该迁移函数本身幂等。）
+      await UserDataService.migratePlayerBackendToMpv();
+
       // 5. 服务器测速 / 连接确认（如果用户开启自动选优）。
       final autoSelectLowLatency =
           await UserDataService.getAutoSelectLowLatencyServer();

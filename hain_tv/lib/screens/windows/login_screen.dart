@@ -8,6 +8,10 @@ import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+// 🔴 2026-10-22：隐藏登录页滚动条（桌面端 Flutter 默认常驻显示）。
+//    本文件同时被 Windows 与 Linux 桌面版引用（app_windows.dart /
+//    app_linux.dart），故一处改动两平台同时生效。
+import 'package:hain_tv/widgets/common/hidden_scrollbar.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -235,7 +239,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             Center(
-              child: SingleChildScrollView(
+              child: HiddenScrollbar(
+                child: SingleChildScrollView(
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
@@ -269,6 +274,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ],
                   ),
+                ),
                 ),
               ),
             ),

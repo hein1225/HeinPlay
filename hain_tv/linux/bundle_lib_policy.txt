@@ -1,0 +1,333 @@
+# =============================================================================
+# HeinPlay Linux AppImage —— bundle 依赖策略（**唯一真源 / single source of truth**）
+# =============================================================================
+#
+# 【为什么要有这个文件】
+#   2026-10-19 / 10-20 / 10-24 三次「Linux 版打开无反应」，根因都是同一类：
+#   **把构建机（Debian）的系统图形栈库打进 AppImage bundle**，到目标机
+#   （Bazzite / Fedora 44）上蒙蔽了系统自带的对应库 → 符号版本不匹配 →
+#   **启动即崩，表现为「双击完全无反应」**。
+#
+#   三次都是「修好 → 下次重建又回归」，因为修法散落在工作日志和人的记忆里，
+#   构建脚本自己并不知道这些约束 —— 这就是反复出现的「记忆漂移」。
+#
+# 【本文件的作用】
+#   把「哪些库绝不能自带」变成**机器可读、可自检**的策略：
+#     · src/mpv_desktop/hein_mpv_install_deps.cmake  → 构建期读取，收集依赖时跳过
+#     · scripts/build_linux_appimage.sh               → 打包前清洗 + 打包后自检
+#   两者读**同一份**文件。以后新增规则只改这里一处，不会再漏。
+#
+# 【格式】
+#   · 每行一个「库名前缀」，命中即从 bundle 中剔除（改由目标机系统提供）
+#   · 以 '#' 开头的行是注释
+#   · 以 '!' 开头的行是**保护名单**：即便命中前缀也**禁止剔除**
+#   · 列表按「家族」分组，每组都写明真机症状与根因，便于后人维护
+#
+# 【铁律】
+#   1. 判据不是「这个库好不好」，而是「**谁需要它**」：
+#      · 被**系统桌面栈**（GTK/GLib/Pango/Cairo/Wayland/EGL/GBM/DRM）需要
+#        ⇒ 目标机必然有 ⇒ 交给系统（且必须与系统同版本）。
+#      · 只被**随包组件**（mpv/FFmpeg/placebo/ass）需要
+#        ⇒ 目标机**不保证**有（纯 Wayland 发行版常缺 X11 扩展）
+#        ⇒ **必须自带**。
+#   2. 「ldd 0 not found」**不等于**「能跑」。跨发行版符号版本不匹配会让
+#      ldd 全过但启动即崩。必须在**目标发行版真机**验证。
+#      ⚠️ 反向也成立：构建机 ldd 报 not found 也可能是**假阳性** ——
+#         必须显式设置 LD_LIBRARY_PATH=<bundle>/lib 后再判。
+#   3. 「全量打包依赖」只在同发行版有效。跨发行版必须按本文件排除。
+#   4. **自检必须双向**（缺一不可）：
+#      · 方向 A：bundle 里**不该有**的系统库（会蒙蔽系统栈 → 启动即崩）
+#      · 方向 B：bundle 里**该有的**库一个都不能少（缺了 → mpv 壳 dlopen
+#        失败 → Flutter 插件静默不注册 → 表现为 MissingPluginException，
+#        应用能打开但点播/直播/回放全不可播）。
+#      ⚠️ 只做方向 A，就会漏掉 2026-10-24 的这次事故（libXpresent 被剔）。
+#   5. **Wayland 优先**：目标用户是掌机（Bazzite/SteamOS/Fedora Wayland），
+#      不得假设目标机存在任何 X11 扩展库。
+#
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# ① glibc 核心 —— 与用户内核强耦合，自带旧版会让用户系统崩溃
+#    真机症状：段错误 / 无法启动
+# -----------------------------------------------------------------------------
+libc.so.6
+libm.so.6
+libmvec.so.1
+libdl.so.2
+libpthread.so.0
+librt.so.1
+libresolv.so.2
+libnsl.so.3
+libutil.so.1
+libanl.so.1
+libgcc_s.so.1
+libstdc++.so.6
+libnss_
+ld-linux
+
+# -----------------------------------------------------------------------------
+# ② Vulkan loader —— loader 不是驱动，ICD 由系统提供
+#    loader 与 ICD 版本不匹配 → 拒绝加载 ICD → mpv 初始化失败、
+#    应用打开无反应（无窗口、无报错）
+# -----------------------------------------------------------------------------
+libvulkan.so
+
+# -----------------------------------------------------------------------------
+# ③ glvnd 转发层 —— 🔴🔴 **最致命**，直接决定 Flutter 能否拿到 EGL display
+#
+#    真机症状（2026-10-24，Bazzite/Fedora 44 掌机 69）：
+#      双击桌面图标 → **完全无反应**
+#      SSH 直跑 → "No provider of eglGetPlatformDisplayEXT found.
+#                   Requires one of: EGL_EXT_platform_base"
+#                 → exit=134 (SIGABRT)
+#
+#    根因：bundle 自带 Debian 的 libEGL.so.1 + libGLdispatch.so.0，
+#    DT_RPATH=$ORIGIN/lib 优先 → 蒙蔽目标机自带的 Mesa EGL 栈 →
+#    Flutter/Impeller 取不到 EGL display → 启动即 abort。
+#    （与 2026-10-20 的 glib 崩溃是同一个症状码 134，不同的触发库。）
+# -----------------------------------------------------------------------------
+libEGL.so
+libGLdispatch.so
+libGLESv2.so
+libGL.so
+libGLX.so
+# 🔴 2026-10-26 新增：libOpenGL.so.0（glvnd 的 GLX 1.3+ 入口库）。
+#    壳的 GLX 兜底路线（hein_glx.c：glXChooseFBConfig / glXCreatePbuffer 等
+#    GLX 1.3 接口）需要它；由目标机的 mesa-libGL 提供。
+#    Bazzite/Fedora 44 必带（gamescope 本身就依赖它）⇒ 归入系统保证集。
+libOpenGL.so
+
+# -----------------------------------------------------------------------------
+# ④ wayland 客户端栈 —— 与系统 libEGL_mesa 符号解析冲突
+#    真机症状（2026-10-20）："undefined symbol wl_fixes_interface (fatal)"
+#    原因：bundle 的 libwayland-client 是 Debian 版，没有该符号
+# -----------------------------------------------------------------------------
+libwayland-client.so
+libwayland-cursor.so
+libwayland-egl.so
+libwayland-server.so
+
+# -----------------------------------------------------------------------------
+# ⑤ X11 家族 —— 🔴 2026-10-24 改为**强制自带**（详见 ⑨ 保护名单）
+#
+#    历史：这里原本把 X11 整族都列为「交系统」。10-21 的工作日志其实
+#    已经写明教训 ——「第一版把 libXpresent.so.1 也删了，而它是
+#    libmpv.so.2 的**直接依赖** → 壳 dlopen 失败 → 整个 mpv 后端不可用」，
+#    但后续重建时又被加回黑名单 → **同一坑第三次复发**（见下）。
+#
+#    判据（Wayland 一等公民）：**纯 Wayland 发行版不保证有 X11 扩展**。
+#      · Bazzite / SteamOS / GNOME Wayland：只有装了 Xwayland 才有 X11，
+#        而 Xwayland 的 RPM 依赖只覆盖 libX11/libXext/libXfixes/libXi/
+#        libXrandr/libxcb 等一部分 —— **libXpresent / libXv / libXss
+#        不在其中**（真机实测：69 上 libXpresent.so.1 直接 not found）。
+#      · mpv 的 libmpv.so.2 **硬依赖** libXpresent/libXv/libXrandr/
+#        libXfixes/libXss/libX11/libXext。
+#      ⇒ 缺任何一个 → dlopen(libmpv) 失败 → **Flutter 插件静默不注册**
+#        → 界面上表现为 MissingPluginException → 点播/直播/回放全不可播，
+#        而应用能正常打开 —— 极难定位。
+#
+#    ⇒ 结论：**X11 全族一律随包自带**。
+#      X11 是 ABI 最稳定的一族（soname 二十年不变），自带跨发行版兼容，
+#      且能让 bundle 在**完全没有 X11 的纯 Wayland 系统**上也能加载 mpv。
+#      （X11 基础 libX11/libxcb/libXext/libXau/libXdmcp 也一并自带，
+#        保证 bundle 内部自洽，不与系统 libxcb 形成双实例。）
+#
+#    ⚠️ 与之相对，**必须交系统**的是：libdrm（GPU 用户态）、libxml2、
+#      glvnd 转发层、wayland 客户端栈 —— 它们与系统驱动/图形栈强耦合。
+# -----------------------------------------------------------------------------
+
+# libdrm：内核 DRM 用户态接口，**必须**与系统的 Mesa/libgbm 同版本，
+#   跨版本会与 GPU 驱动不匹配（自带的 libdrm + 系统的 libgbm 组合尤其危险）。
+libdrm.so
+# libxml2：被大量系统级组件（GSettings/gdk-pixbuf loader 等）依赖，
+#   必须与系统同版本。
+libxml2.so
+# libdrm：内核 DRM 用户态接口，**必须**与系统的 Mesa/libgbm 同版本，
+#   跨版本会与 GPU 驱动不匹配（自带的 libdrm + 系统的 libgbm 组合尤其危险）。
+libdrm.so
+# libxml2：被大量系统级组件（GSettings/gdk-pixbuf loader 等）依赖，
+#   必须与系统同版本。
+libxml2.so
+
+# -----------------------------------------------------------------------------
+# ⑥ GNOME/GTK 图形栈 —— 与系统 glib 配套
+#    真机症状（2026-10-20）：系统 libgobject 找不到 bundle 旧版里没有的
+#    g_string_copy → "symbol lookup error" → 打开无反应
+# -----------------------------------------------------------------------------
+libglib-2.0.so
+libgobject-2.0.so
+libgio-2.0.so
+libgmodule-2.0.so
+libgthread-2.0.so
+libgtk-3.so
+libgdk-3.so
+libatk-1.0.so
+libatk-bridge-2.0.so
+libatspi.so
+libdbus-1.so
+libpango-1.0.so
+libpangocairo-1.0.so
+libpangoft2-1.0.so
+libpangoxft-1.0.so
+libcairo.so
+libcairo-gobject.so
+libgdk_pixbuf-2.0.so
+libxkbcommon.so
+
+# -----------------------------------------------------------------------------
+# ⑦ 字体/排版/基础工具链 —— 被系统级组件依赖，必须与系统同版本
+#    真机症状（2026-10-19）：Debian libfontconfig 1.12.1 蒙蔽 Fedora 1.16.0
+#    → 系统 libpangoft2 缺 FcConfigSetDefaultSubstitute → 启动即崩
+# -----------------------------------------------------------------------------
+libfontconfig.so
+libfreetype.so
+libharfbuzz.so
+libthai.so
+libfribidi.so
+libpng16.so
+libexpat.so
+libselinux.so
+libpcre2-8.so
+
+# -----------------------------------------------------------------------------
+# ⑧ 系统通用库 —— 任何桌面发行版都必有，ABI 极稳定，**交由系统提供**
+#
+#    这些是「自检方向 B」在 2026-10-24 抓出来的真实缺失项。判定依据：
+#      · 不是图形栈的一部分（不与 GPU/EGL/GLib 强耦合）→ 自带无风险
+#      · soname 二十年不变（如 libz.so.1 / libffi.so.8）→ 跨发行版兼容
+#      · 目标机（Fedora/Bazzite）默认就装 → 交系统不会缺
+#      · 部分是**插件自身**的依赖（libepoxy ← libheinplay_mpv_desktop.so），
+#        缺失会让 Flutter 插件 dlopen 失败 → 静默不注册 → 表现为
+#        MissingPluginException，应用能打开但**完全不能播放**。
+#
+#    libepoxy.so.0 : Flutter 的 GTK runner 与 mpv 插件都要它 ⚠️ 关键项
+#    libjpeg.so    : libmpv 硬依赖（Fedora 同样是 .so.62，soname 一致）
+#    libbrotli*    : libcurl 硬依赖
+#    libz.so       : libavformat / libcrypto / libcurl 全都要
+#    libffi.so     : libp11-kit 硬依赖
+#    libsystemd.so : libpulsecommon 硬依赖
+#    libjvm.so     : 仅 libdartjni.so（Android 专用插件）引用，
+#                    Linux 桌面永不加载 → 列为系统保证集以免误报
+# -----------------------------------------------------------------------------
+libz.so
+libepoxy.so
+libjpeg.so
+libbrotlidec.so
+libbrotlicommon.so
+libffi.so
+libsystemd.so
+libltdl.so
+libgcrypt.so
+libgpg-error.so
+libcap.so
+libjvm.so
+
+# -----------------------------------------------------------------------------
+# ⑧½ 硬件解码（VAAPI / FFmpeg）—— 交系统，**禁止自带**
+#
+#   🔴 2026-10-26 真机根因（69 / Bazzite，桌面与游戏模式均中招）：
+#   现象是「能播放、有声音、但 1080p 全程 16 线程软件解码」，耗电发热，
+#   且游戏模式更严重。挖到底是**两个独立的打包缺陷**：
+#
+#   缺陷 A：libva 自带的是构建机（Debian）版本 libva.so.2.2200.0
+#     · Debian 编译时把 DRI 驱动目录**写死**为 /usr/lib/x86_64-linux-gnu/dri
+#     · 目标机 Fedora/Bazzite 的驱动在 /usr/lib64/dri
+#     · 实测日志：`Trying to open /usr/lib/x86_64-linux-gnu/dri/radeonsi_drv_video.so`
+#                 `va_openDriver() returns -1`
+#     · ⚠️ 用 LIBVA_DRIVERS_PATH=/usr/lib64/dri **救不回来**（实测仍 returns -1）：
+#       打包 libva 1.22 与目标机 Mesa 26.2.4 的驱动初始化版本不匹配
+#       （__vaDriverInit_1_23）。⇒ libva **必须**与目标机 Mesa 同版本，
+#       天然不可跨发行版自带。交系统后实测 `returns 0` + `Initialized VAAPI: 1.24`。
+#     · ⇒ 通用性结论：**不猜路径**。各发行版 libva 编译时已固化自己正确的
+#       DRI 目录（Debian=x86_64-linux-gnu/dri、Fedora/Arch=lib64|lib/dri），
+#       我们只要不自带 libva，路径问题就自动消失。
+#
+#   缺陷 B：FFmpeg 自带的是**未启用 VAAPI** 的精简构建
+#     · 实测 `strings libavcodec.so.62.11.103 | grep h264_vaapi` → 无输出；
+#       目标机系统 libavcodec 同命令 → 命中 `h264_vaapi`
+#     · mpv 侧 `hwdec=vaapi` 设置**返回 rc=0 被接受**，但 ffmpeg 无该解码器
+#       ⇒ **静默回退软解**，日志只留 `Using software decoding.`，极难发现
+#     · ⇒ 交系统后实测 `Trying hardware decoding via h264-vaapi` +
+#       `Using hardware decoding (vaapi)` + `VO: [gpu-next] ... vaapi[nv12]`
+#
+#   为何「交系统」在这里是安全的（与铁律 1 一致）：
+#     · libva / FFmpeg 属于**发行版核心多媒体栈**，任何带桌面环境的
+#       Linux 发行版必然预装，且与内核/DRM/Mesa 版本强绑定；
+#     · soname 在本代际内稳定（实测 Fedora 与 Debian 同为
+#       libavcodec.so.62 / libavformat.so.62 / libavutil.so.60 /
+#       libswscale.so.9 / libswresample.so.6），替换后 ldd 0 missing；
+#     · 反而**自带才危险**：硬解驱动是 Mesa 的一部分，版本错配即失效。
+#     · 若目标机确实没装 FFmpeg（极简系统），mpv 壳会 dlopen 失败，
+#       自检方向 B 会报出来 —— 属于「该报的错」，不应靠错误打包掩盖。
+# -----------------------------------------------------------------------------
+libva.so
+libva-drm.so
+libva-x11.so
+libva-wayland.so
+libavcodec.so
+libavformat.so
+libavutil.so
+libswscale.so
+libswresample.so
+libavfilter.so
+libavdevice.so
+
+#   libplacebo.so : 同属「必须与目标机图形栈同版本」的库。
+#     · 实测（69 真机 2026-10-26）：bundle 自带的 libplacebo.so.360
+#       **未链接 libshaderc**，导致任何 gpu-next/Vulkan 路径报
+#         `Failed initializing any SPIR-V compiler!`
+#         `Failed initializing vulkan device`
+#         `Failed initializing any suitable GPU context!`
+#       移走后改用系统 /usr/lib64/libplacebo.so.360（链接 libshaderc_shared.so.1）
+#       ⇒ `Device Name: AMD Radeon 880M (RADV STRIX1)` 正常、
+#         `Using hardware decoding (vaapi)`、`VO: [gpu-next] 1920x1080 vaapi[nv12]`。
+#     · 注意：产品主路径 vo=libmpv 走 gl_video（vo_gpu 的 GL 渲染器），
+#       **不经过 libplacebo**（已由 video/out/gpu/libmpv_gpu.c 源码证实：
+#       p->renderer = gl_video_init(...)，无任何 libplacebo 引用）。
+#       故这条规则不改变主路径行为，但保证 gpu-next/Vulkan 相关能力与
+#       诊断探针可用，且避免将来切 gpu-next 时踩同一个坑。
+libplacebo.so
+
+# -----------------------------------------------------------------------------
+# ⑨ 保护名单 —— 命中前缀但**禁止剔除**（一律随包自带）
+#
+#    !libbz2.so.1.0 —— 真机根因（2026-10-21）：libavformat.so.62 /
+#    libarchive.so.13 的 NEEDED 里是 libbz2.so.1.0；构建机 Debian 自带
+#    libbz2.so.1.0，ldd 全绿、本机自检通过；但目标机 Bazzite(Fedora) 只有
+#    libbz2.so.1（**没有 .1.0 这个 soname**）→ 壳 dlopen 失败 →
+#    插件未注册 → 点播/直播全部不可播。
+#    它是纯解压算法库，与图形栈无关，随包分发安全。
+#
+#    !libX11.so / !libxcb.so / … —— 🔴 2026-10-24 真机根因（第三次复发）：
+#    69（Bazzite 掌机，Wayland）上把 X11 整族交由系统 → 但
+#    **libXpresent.so.1 在该系统上根本不存在**（Xwayland 不带它），
+#    而它是 libmpv.so.2 的**硬依赖** → dlopen(libmpv) 失败 →
+#    Flutter 插件静默不注册 → 界面报 MissingPluginException →
+#    应用能打开但**点播/直播/回放全部不可播**。
+#    ⇒ X11 全族（含 xcb）一律自带：既保住 mpv 的硬依赖，
+#      又让 bundle 在**纯 Wayland（无 Xwayland）**的系统上也能跑。
+#      X11 是 ABI 最稳定的一族，自带跨发行版兼容。
+# -----------------------------------------------------------------------------
+!libbz2.so.1.0
+!libX11.so
+!libX11-xcb.so
+!libXext.so
+!libXau.so
+!libXdmcp.so
+!libXpresent.so
+!libXv.so
+!libXrandr.so
+!libXfixes.so
+!libXdamage.so
+!libXcomposite.so
+!libXcursor.so
+!libXi.so
+!libXinerama.so
+!libXrender.so
+!libXss.so
+!libXtst.so
+!libXxf86vm.so
+!libXxf86dri.so
+!libxcb.so
+!libxcb-

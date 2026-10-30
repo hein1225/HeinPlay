@@ -1,12 +1,40 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:hain_tv/services/m3u8_ad_filter.dart';
 import 'package:http/http.dart' as http;
 
+/// 🔴🔴 2026-10-15：M3U8 分析的高频诊断日志开关，**默认关闭**。
+///
+/// 背景：这些日志（整段 playlist 正文 + 逐变体明细 + 逐分片 Range-GET）
+/// 在真机实测中达到**每秒 40~91 条**，配合 `debugPrint` 在 release 下
+/// 依然走同步 logcat 写入，足以占满主 isolate 并让界面卡死。
+///
+/// 需要排查 M3U8 解析/测速问题时，把此常量临时改为 `true` 重新构建即可；
+/// **不要**把它默认打开后出包 —— 正常播放路径不需要这些明细。
+///
+/// ⚠️ 保留的分片码率**结论**类日志（`分片最大码率=... -> 分辨率=...`、
+///    `选定最佳变体 ...`）不在此开关内，始终输出，避免排障时反而少了线索。
+const bool kM3u8VerboseLog = false;
+
 /// M3U8 相关通用工具。
+/// 🔴 2026-10-23（第八轮）：M3U8 解析结果类型别名。
+///
+/// 之前用的是匿名 record，返回类型要整段抄一遍；
+/// 抽出别名后，调用方（测速重试逻辑）可以直接当类型用。
+typedef M3u8Analysis = ({
+  bool isMaster,
+  String? resolution,
+  List<String> segmentUrls,
+  String playlistUrl,
+  double? firstSegmentDuration,
+  /// AES-128 加密源的 key URI（已解析为绝对 URL）。
+  String? encryptionKeyUri,
+  /// AES-128 的 IV（十六进制字符串，不含 0x 前缀）。
+  String? encryptionIv,
+});
+
 class M3u8Utils {
   /// 判断 [url] 是否为 M3U8 播放列表地址。
   static bool isM3u8Url(String url) {
@@ -14,6 +42,103 @@ class M3u8Utils {
     return lower.contains('.m3u8') ||
         lower.contains('application/vnd.apple.mpegurl') ||
         lower.contains('audio/x-mpegurl');
+  }
+
+  /// 🔴🔴 2026-10-23：判断下载到的**内容**是不是 HLS 播放列表文本。
+  ///
+  /// 不能只看 URL 后缀——实测存在大量「HTML 播放器页」入口：
+  /// `https://hd.kuktxu.com/play/eXDMQ2Ve` 返回 1593 字节的 HTML，
+  /// 内含 hls.js，真正的 m3u8 藏在页面里（`.../eXDMQ2Ve/index.m3u8`）。
+  /// 这类 URL 既没有 `.m3u8` 后缀，`content-type` 又是 `text/html`。
+  static bool looksLikeM3u8Content(String content) {
+    final trimmed = content.trimLeft();
+    return trimmed.startsWith('#EXTM3U');
+  }
+
+  /// 🔴🔴 2026-10-23：判断内容是不是「HTML 播放器页」。
+  ///
+  /// ⚠️ 实测页面可能**没有 `<html>` 标签**（`hd.kuktxu.com` 的播放器页直接以
+  /// `<head>` 开头），所以判定条件必须放宽：只要含 HTML 标签特征即可。
+  static bool looksLikeHtmlContent(String content) {
+    final head = content.trimLeft().toLowerCase();
+    if (head.startsWith('#extm3u')) return false;
+    return head.contains('<html') ||
+        head.contains('<!doctype') ||
+        head.contains('<head') ||
+        head.contains('<script') ||
+        head.contains('</html>') ||
+        (head.contains('<') && head.contains('>'));
+  }
+
+  /// 🔴🔴 2026-10-23：从 HTML 播放器页里提取内嵌的 M3U8 地址。
+  ///
+  /// 覆盖的写法（实测 `hd.kuktxu.com` 用的是第 1 种）：
+  ///   1. `hls.loadSource("https://host/path/index.m3u8")`
+  ///   2. `var url = 'https://host/path/index.m3u8';`
+  ///   3. `url: "https://host/path/index.m3u8"`
+  ///   4. JSON 转义写法 `https:\/\/host\/path\/index.m3u8`
+  ///
+  /// 返回 null 表示页面里没找到 m3u8（调用方应按「非 HLS」处理）。
+  static String? extractM3u8FromHtml(String html, {String? baseUrl}) {
+    // 1) 带引号的完整 URL（最常见）
+    final quoted = RegExp(
+      r'''["']([^"'\s<>]*?\.m3u8(?:\?[^"'\s<>]*)?)["']''',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (quoted != null) {
+      final resolved = _resolveMaybeEscaped(quoted.group(1)!, baseUrl);
+      if (resolved != null) return resolved;
+    }
+    // 2) 未加引号的裸 URL（JS 里偶见）
+    final bare = RegExp(
+      r'''(https?://[^\s"'<>()]+\.m3u8(?:\?[^\s"'<>()]*)?)''',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (bare != null) {
+      final resolved = _resolveMaybeEscaped(bare.group(1)!, baseUrl);
+      if (resolved != null) return resolved;
+    }
+    // 3) 相对路径 `index.m3u8` / `./index.m3u8`
+    final relative = RegExp(
+      r'''["']((?:\./|\.\./|/)?[^"'\s<>]*?\.m3u8(?:\?[^"'\s<>]*)?)["']''',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (relative != null) {
+      final resolved = _resolveMaybeEscaped(relative.group(1)!, baseUrl);
+      if (resolved != null) return resolved;
+    }
+    return null;
+  }
+
+  /// 把 HTML 里可能带 JSON 转义（`\/`）的地址还原并按 [baseUrl] 解析成绝对地址。
+  static String? _resolveMaybeEscaped(String raw, String? baseUrl) {
+    var value = raw.replaceAll(r'\/', '/').trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) return value;
+    if (baseUrl == null || baseUrl.isEmpty) return null;
+    try {
+      final base = Uri.parse(baseUrl);
+      return base.resolve(value).toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 🔴🔴 2026-10-23：判断 URL 是否像**直链媒体文件**（mp4/flv/ts…）。
+  ///
+  /// 用于决定「要不要为这个 URL 额外做一次内容嗅探」：
+  /// 直链媒体不需要嗅探（嗅探只会白下载一大段），而**无后缀的 URL**
+  /// （如 `https://host/play/AbCd1234`）很可能是 HTML 播放器页，必须嗅探。
+  static bool looksLikeDirectMediaUrl(String url) {
+    final path = url.toLowerCase().split('?').first.split('#').first;
+    const mediaSuffixes = <String>[
+      '.mp4', '.flv', '.mkv', '.mov', '.webm', '.avi', '.wmv', '.m4v',
+      '.ts', '.m4s', '.mp3', '.aac', '.m4a', '.3gp', '.ogv', '.f4v', '.rmvb',
+    ];
+    for (final s in mediaSuffixes) {
+      if (path.endsWith(s)) return true;
+    }
+    return false;
   }
 
   /// 判断 [url] 是否看起来是媒体分片（而非播放列表）。
@@ -364,32 +489,19 @@ class M3u8Utils {
     int? bandwidth,
     String uri = '',
   }) {
-    // 1. 真实 RESOLUTION：宽度或高度任一达标即可；宽屏电影按宽度档位。
+    // 1. 真实 RESOLUTION → 走**最近邻**（长边），与尺寸实测路径同口径。
+    //
+    // 🔴 2026-10-23（第八轮）：原来这里有两套离散阈值
+    // （宽高比<0.65 的「宽屏特殊规则」+ 标准档位阈值），
+    // 和 [extractResolutionFromText] 的阈值又不一致 ——
+    // 同一个 1200x674 在这里是 1080、在文本提取里是 480。
+    //
+    // 现在统一由 [nearestResolutionLabelFromSize] 裁决：
+    // 宽高比 < 0.65 的超宽屏电影，**宽必然是长边**（宽 > 1.54×高），
+    // 所以用长边天然等价于「按宽度档位判断」，不需要额外的特判。
     if (width != null && height != null && width > 0 && height > 0) {
-      final isWideScreen = width > 0 && height / width < 0.65;
-      final effectiveWidth = isWideScreen ? width : null;
-      if (effectiveWidth != null) {
-        // 宽屏电影（如 1080x608、1920x802）解码后完整宽度通常接近 1920，
-        // 与 hls.js / LunaTV 读取 videoWidth（真实解码宽度）对齐。
-        // 宽高比 < 0.65 且宽度落在 [1000,1280) 视为裁剪后的 1080p（完整宽约 1920）；
-        // 宽度 >= 1280 才是真正的 720p 宽屏（如 1280x536）。
-        if (effectiveWidth >= 1900 || height >= 1080) return 1080;
-        if (effectiveWidth >= 1280) return 720;
-        if (effectiveWidth >= 1000) return 1080;
-        if (effectiveWidth >= 700) return 480;
-        if (effectiveWidth >= 640) return 360;
-        if (height >= 720) return 720;
-        if (height >= 480) return 480;
-        if (height >= 360) return 360;
-      } else {
-        if (width >= 3840 || height >= 2160) return 2160;
-        if (width >= 2560 || height >= 1440) return 1440;
-        if (width >= 1900 || height >= 1080) return 1080;
-        if (width >= 1280 || height >= 720) return 720;
-        if (width >= 854 || height >= 480) return 480;
-        if (width >= 640 || height >= 360) return 360;
-      }
-      return height;
+      return _heightFromLabel(nearestResolutionLabelFromSize(width, height)) ??
+          height;
     }
 
     // 2. 文本标签（含 URI/NAME）。资源站常在 URI 中写入真实码率（如 3000k），
@@ -401,14 +513,12 @@ class M3u8Utils {
       if (h != null && h > 0) return h;
     }
 
-    // 3. BANDWIDTH 最后回退。
+    // 3. BANDWIDTH 最后回退（同样走最近邻）。
     if (bandwidth != null && bandwidth > 0) {
-      final kbps = bandwidth / 1000;
-      if (kbps >= 5000) return 2160;
-      if (kbps >= 2500) return 1080;
-      if (kbps >= 1500) return 720;
-      if (kbps >= 800) return 480;
-      if (kbps >= 500) return 360;
+      final h = _heightFromLabel(
+        resolutionFromBitrateKbps(bandwidth / 1000),
+      );
+      if (h != null && h > 0) return h;
     }
 
     return 0;
@@ -419,189 +529,92 @@ class M3u8Utils {
   /// 真实解码获取 1080P、但文本解析只能得到 null 的问题。
   ///
   /// 取前 [maxProbes] 个分片的最大码率，避免首个分片常因片头/低码率 ramp-up 被低估。
-  static Future<String?> _estimateResolutionFromSegments(
-    List<String> segmentUrls,
-    List<String> lines, {
-    Map<String, String> headers = const {},
-    Duration timeout = const Duration(seconds: 4),
-    int maxProbes = 5,
-    int rangeBytes = 64 * 1024,
-    http.Client? client,
-  }) async {
-    if (segmentUrls.isEmpty) return null;
-
-    // 解析 #EXTINF 时长，按顺序与分片 URL 配对。
-    final durations = <double>[];
+  /// 🔴 2026-10-23（第三轮）：从 media playlist 文本解析**首个分片的时长**。
+  ///
+  /// 只做文本解析，**不发任何网络请求**。配合测速请求响应头里的
+  /// `Content-Range` 总大小（分片字节数），即可算出码率 →
+  /// [resolutionFromBitrateKbps] → 分辨率，
+  /// 从而省掉一次专门为估算码率而发的 Range 请求。
+  static double? _firstSegmentDuration(List<String> lines) {
     for (final raw in lines) {
       final line = raw.trim();
       if (line.startsWith('#EXTINF:')) {
         final value = line.substring(8).split(',').first.trim();
-        durations.add(double.tryParse(value) ?? 0);
-      } else if (line.isNotEmpty &&
-          !line.startsWith('#') &&
-          !line.startsWith('data:')) {
-        // 只记录有效分片行的占位，保证 durations 与 segmentUrls 顺序对齐。
+        final d = double.tryParse(value);
+        if (d != null && d > 0) return d;
       }
-    }
-
-    debugPrint(
-      '[M3U8分析] 开始分片码率估算，分片数=${segmentUrls.length}，#EXTINF=${durations.take(5).toList()}',
-    );
-
-    final probeCount = math.min(segmentUrls.length, maxProbes);
-    final requestClient = client ?? http.Client();
-    final isLocalClient = client == null;
-    try {
-      final probeFutures = <Future<double?>>[];
-      for (var i = 0; i < probeCount; i++) {
-        final url = segmentUrls[i];
-        final duration = i < durations.length ? durations[i] : 0.0;
-        if (duration <= 0) {
-          probeFutures.add(Future.value(null));
-          continue;
-        }
-        probeFutures.add(
-          _probeSegmentBitrate(
-            url,
-            duration,
-            headers: headers,
-            timeout: timeout,
-            client: requestClient,
-            maxBytes: rangeBytes,
-            index: i,
-          ),
-        );
-      }
-
-      final kbpsList = await Future.wait(probeFutures);
-      var maxKbps = 0.0;
-      for (final kbps in kbpsList) {
-        if (kbps != null && kbps > maxKbps) maxKbps = kbps;
-      }
-      final bestEstimate = _bitrateToResolutionLabel(maxKbps);
-      if (bestEstimate != null) {
-        debugPrint(
-          '[M3U8分析] 分片最大码率=${maxKbps.toStringAsFixed(0)}k -> 分辨率=$bestEstimate',
-        );
-      } else {
-        debugPrint(
-          '[M3U8分析] 分片码率估算未得到有效结果（最大码率=${maxKbps.toStringAsFixed(0)}k）',
-        );
-      }
-      return bestEstimate;
-    } finally {
-      if (isLocalClient) requestClient.close();
-    }
-  }
-
-  /// 探测单个分片的码率（kbps）。
-  ///
-  /// 优先使用 GET Range 读取 [Content-Range] 得到完整文件大小；若服务器不支持，
-  /// 则回退到 HEAD；再失败则通过实际下载耗时估算吞吐并推算文件大小。
-  static Future<double?> _probeSegmentBitrate(
-    String url,
-    double duration, {
-    Map<String, String> headers = const {},
-    Duration timeout = const Duration(seconds: 4),
-    int maxBytes = 64 * 1024,
-    http.Client? client,
-    int index = 0,
-  }) async {
-    final requestClient = client ?? http.Client();
-    final isLocalClient = client == null;
-    http.StreamedResponse? streamedResponse;
-    try {
-      final rangeHeaders = Map<String, String>.from(headers);
-      rangeHeaders['Range'] = 'bytes=0-${maxBytes - 1}';
-
-      final req = http.Request('GET', Uri.parse(url));
-      req.headers.addAll(rangeHeaders);
-      streamedResponse = await requestClient.send(req).timeout(timeout);
-
-      // 优先从 Content-Range 读取完整文件大小（最准确，且避免下载整个分片）。
-      final contentRange = streamedResponse.headers['content-range'];
-      if (streamedResponse.statusCode == 206 && contentRange != null) {
-        final match = RegExp(r'bytes\s+\d+-\d+/(\d+)').firstMatch(contentRange);
-        if (match != null) {
-          final total = int.tryParse(match.group(1)!);
-          if (total != null && total > 0) {
-            await streamedResponse.stream.drain<void>();
-            final kbps = (total * 8) / (duration * 1000);
-            debugPrint(
-              '[M3U8分析] 分片 Range-GET#${index + 1}: total=$total duration=$duration kbps=${kbps.toStringAsFixed(0)}',
-            );
-            return kbps;
-          }
-        }
-      }
-
-      // 无 Content-Range 时尝试 HEAD 获取 Content-Length。
-      try {
-        final headResp = await requestClient
-            .head(Uri.parse(url), headers: headers)
-            .timeout(timeout);
-        final length = headResp.contentLength;
-        if (length != null && length > 0) {
-          await streamedResponse.stream.drain<void>();
-          final kbps = (length * 8) / (duration * 1000);
-          debugPrint(
-            '[M3U8分析] 分片 HEAD#${index + 1}: size=$length duration=$duration kbps=${kbps.toStringAsFixed(0)}',
-          );
-          return kbps;
-        }
-      } catch (e) {
-        debugPrint('[M3U8分析] 分片 HEAD 探测失败#${index + 1}: $e');
-      }
-
-      // 最后回退：读取前 [maxBytes] 字节，按实际耗时估算吞吐。
-      if (streamedResponse.statusCode == 200 ||
-          streamedResponse.statusCode == 206) {
-        final stopwatch = Stopwatch()..start();
-        var received = 0;
-        await for (final chunk in streamedResponse.stream) {
-          received += chunk.length;
-          if (received >= maxBytes) break;
-        }
-        // ⚠️ 此处不可再 drain：stream 是 single-subscription，上面的 await for
-        // 已订阅（break 时自动 cancel），二次订阅会抛
-        // `Bad state: Stream has already been listened to`
-        // （2026-09-20 17:20 日志里 [M3U8分析] 分片探测失败#2/#3/#4 就是这个）。
-        stopwatch.stop();
-        if (received > 0 && stopwatch.elapsedMilliseconds > 0) {
-          final seconds = stopwatch.elapsedMilliseconds / 1000.0;
-          // 假设下载速率稳定，估算完整分片大小。
-          final estimatedTotal = ((received / seconds) * duration).toInt();
-          final kbps = (estimatedTotal * 8) / (duration * 1000);
-          debugPrint(
-            '[M3U8分析] 分片吞吐估算#${index + 1}: received=$received time=${seconds.toStringAsFixed(2)}s estimatedTotal=$estimatedTotal kbps=${kbps.toStringAsFixed(0)}',
-          );
-          return kbps;
-        }
-      }
-
-      try {
-        await streamedResponse.stream.drain<void>();
-      } catch (_) {
-        // 该 stream 可能已被上面的 await for 消费过（single-subscription），忽略。
-      }
-    } catch (e) {
-      debugPrint('[M3U8分析] 分片探测失败#${index + 1}: $e');
-    } finally {
-      if (isLocalClient) requestClient.close();
     }
     return null;
   }
 
-  /// 把估算/实测码率（kbps）映射到标准分辨率标签。
+  /// 🔴 2026-10-23（第三轮）：码率（kbps）→ 分辨率标签。
   ///
-  /// 阈值与 [_estimateHeight] 的 BANDWIDTH 分支保持一致。
+  /// 供调用方用「测速响应头的分片总大小 + 分片时长」推算分辨率时使用。
+  ///
+  /// 🔴🔴 2026-10-23（第六轮）：改成**按接近哪个档返回哪个**，不再用
+  /// 「离散阈值 + 对不上就掉最低档」的写法。
+  /// 旧口径 661kbps 会落到 360P，但实测该流真实是 1920x818（1080P 级别）——
+  /// 码率与分辨率本就没有必然关系，兜底口径至少不该制造突兀的「低清」印象。
+  static String? resolutionFromBitrateKbps(double kbps) {
+    return _bitrateToResolutionLabel(kbps);
+  }
+
   static String? _bitrateToResolutionLabel(double kbps) {
-    if (kbps >= 5000) return '4K';
-    if (kbps >= 2500) return '1080P';
-    if (kbps >= 1500) return '720P';
-    if (kbps >= 800) return '480P';
-    if (kbps >= 500) return '360P';
-    return null;
+    if (kbps <= 0) return null;
+    // 各档位的典型码率（kbps）作为档位中心，按最近邻归类。
+    const centers = <int, String>{
+      650: '360P',
+      1100: '480P',
+      2200: '720P',
+      4500: '1080P',
+      7000: '2K',
+      10000: '4K',
+    };
+    String? best;
+    var bestDiff = double.infinity;
+    centers.forEach((center, label) {
+      final d = (center - kbps).abs().toDouble();
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = label;
+      }
+    });
+    return best;
+  }
+
+  /// 🔴🔴 2026-10-23（第六轮）：**真实宽高 → 按接近哪个标准档归类**。
+  ///
+  /// 用户原话：「很多视频不是标准的1080、720、480、360分辨率，应该按接近
+  /// 哪个返回哪个，而不是对不上就返回360」。
+  ///
+  /// 资源站大量使用**宽屏电影**分辨率（1920x818 / 1920x800 / 1280x536），
+  /// 它们不在标准档位上。判定用**长边**（取宽高中较大者，兼顾竖屏源）：
+  ///   · 1920x818 → 长边 1920 → 1080P ✓
+  ///   · 1280x536 → 长边 1280 → 720P ✓
+  ///   · 854x480  → 长边 854  → 480P ✓
+  ///   · 640x360  → 长边 640  → 360P ✓
+  ///   · 720x1280 （竖屏）→ 长边 1280 → 720P ✓
+  static String nearestResolutionLabelFromSize(int width, int height) {
+    final longSide = width > height ? width : height;
+    // 各档位的长边基准像素。
+    const ladder = <int, String>{
+      640: '360P',
+      854: '480P',
+      1280: '720P',
+      1920: '1080P',
+      2560: '2K',
+      3840: '4K',
+    };
+    String? best;
+    var bestDiff = 1 << 30;
+    ladder.forEach((px, label) {
+      final d = (px - longSide).abs();
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = label;
+      }
+    });
+    return best ?? '360P';
   }
 
   /// 综合 RESOLUTION 属性、URI/NAME 文本标签与 BANDWIDTH 生成分辨率标签。
@@ -651,24 +664,18 @@ class M3u8Utils {
       final w = int.tryParse(m.group(1)!);
       final h = int.tryParse(m.group(2)!);
       if (w != null && h != null) {
-        final maxDim = math.max(w, h);
-        int estimatedH;
-        if (maxDim >= 3840) {
-          estimatedH = 2160;
-        } else if (maxDim >= 2560) {
-          estimatedH = 1440;
-        } else if (maxDim >= 1920) {
-          estimatedH = 1080;
-        } else if (maxDim >= 1280) {
-          estimatedH = 720;
-        } else if (maxDim >= 854) {
-          estimatedH = 480;
-        } else if (maxDim >= 640) {
-          estimatedH = 360;
-        } else {
-          estimatedH = maxDim;
+        // 🔴 2026-10-23（第八轮）：改用**最近邻**（长边），
+        // 不再用「离散阈值 + 对不上就落最低档」。
+        //
+        // 旧口径把 1200x674 判成 480P（maxDim=1200 → >=854 → 480），
+        // 而 [_estimateHeight] 对**同一个尺寸**却判 1080P ——
+        // 同一视频两个答案。现在两条路径统一走
+        // [nearestResolutionLabelFromSize]（唯一真相源）。
+        final estimatedH =
+            _heightFromLabel(nearestResolutionLabelFromSize(w, h));
+        if (estimatedH != null) {
+          bestHeight = _maxHeight(bestHeight, estimatedH);
         }
-        bestHeight = _maxHeight(bestHeight, estimatedH);
       }
     }
 
@@ -679,19 +686,12 @@ class M3u8Utils {
     for (final m in bitrateRe.allMatches(lower)) {
       final kbps = int.tryParse(m.group(1)!);
       if (kbps != null && kbps >= 500) {
-        int? h;
-        if (kbps >= 5000) {
-          h = 2160;
-        } else if (kbps >= 2500) {
-          h = 1080;
-        } else if (kbps >= 1500) {
-          h = 720;
-        } else if (kbps >= 800) {
-          h = 480;
-        } else {
-          h = 360;
+        // 🔴 2026-10-23（第八轮）：码率也走**最近邻**（档位中心），
+        // 与尺寸路径、码率兜底路径保持同一套口径。
+        final h = _heightFromLabel(resolutionFromBitrateKbps(kbps.toDouble()));
+        if (h != null) {
+          bestHeight = _maxHeight(bestHeight, h);
         }
-        bestHeight = _maxHeight(bestHeight, h);
       }
     }
 
@@ -701,19 +701,10 @@ class M3u8Utils {
       final mbps = int.tryParse(m.group(1)!);
       if (mbps != null && mbps >= 1) {
         final kbps = mbps * 1000;
-        int? h;
-        if (kbps >= 5000) {
-          h = 2160;
-        } else if (kbps >= 2500) {
-          h = 1080;
-        } else if (kbps >= 1500) {
-          h = 720;
-        } else if (kbps >= 800) {
-          h = 480;
-        } else {
-          h = 360;
+        final h = _heightFromLabel(resolutionFromBitrateKbps(kbps.toDouble()));
+        if (h != null) {
+          bestHeight = _maxHeight(bestHeight, h);
         }
-        bestHeight = _maxHeight(bestHeight, h);
       }
     }
 
@@ -729,14 +720,24 @@ class M3u8Utils {
     }
 
     // 常见别名。
+    //
+    // 🔴🔴 2026-10-23（第六轮）：别名只在**非 URL host** 的文本里匹配。
+    //
+    // 实测 `https://hd.kuktxu.com/play/eXD5yD8e` 被判成 720P —— 命中的是
+    // **主机名里的 `hd`**（kuktxu 的「高清站」域名），与视频清晰度毫无关系。
+    // 这类域名极常见（hd./cdn./vod. 前缀），误判面很大。
+    //
+    // 维度/码率/像素/中文这些**有明确数值语义**的规则仍然看原文（含 URL path），
+    // 只有 hd / sd / fhd 这种「无数字的单词别名」需要排除 host。
+    final aliasText = _stripUrlHosts(text).toLowerCase();
     if (RegExp(r'(?:^|[^a-z0-9])(?:fhd|fullhd|full\s*hd)(?:$|[^a-z0-9])')
-        .hasMatch(lower)) {
+        .hasMatch(aliasText)) {
       bestHeight = _maxHeight(bestHeight, 1080);
     }
-    if (RegExp(r'(?:^|[^a-z0-9])hd(?:$|[^a-z0-9])').hasMatch(lower)) {
+    if (RegExp(r'(?:^|[^a-z0-9])hd(?:$|[^a-z0-9])').hasMatch(aliasText)) {
       bestHeight = _maxHeight(bestHeight, 720);
     }
-    if (RegExp(r'(?:^|[^a-z0-9])sd(?:$|[^a-z0-9])').hasMatch(lower)) {
+    if (RegExp(r'(?:^|[^a-z0-9])sd(?:$|[^a-z0-9])').hasMatch(aliasText)) {
       bestHeight = _maxHeight(bestHeight, 480);
     }
 
@@ -762,6 +763,17 @@ class M3u8Utils {
   static int? _maxHeight(int? a, int b) {
     if (a == null || b > a) return b;
     return a;
+  }
+
+  /// 🔴 2026-10-23：把文本里所有 URL 的 **host 段**抹掉（保留 path/query）。
+  ///
+  /// 用于「无数字的清晰度别名」（hd / sd / fhd）匹配：主机名里的 `hd`
+  /// 与视频清晰度无关，path 里的 `hd`（如 `/hd/` 目录）才可能是线索。
+  static String _stripUrlHosts(String text) {
+    return text.replaceAllMapped(
+      RegExp(r'https?://[^/\s?#]+', caseSensitive: false),
+      (_) => ' ',
+    );
   }
 
   /// 按清晰度对变体降序排序：综合分辨率优先，码率为次优先级。
@@ -799,17 +811,25 @@ class M3u8Utils {
   /// 以及前 [maxSegments] 个真实分片 URL。
   /// 对于 master playlist 会递归进入最佳 variant 子 playlist；
   /// 对于 media playlist 直接收集分片并从 URL 推断分辨率。
-  static Future<({
-    bool isMaster,
-    String? resolution,
-    List<String> segmentUrls,
-    String playlistUrl,
-  })> analyzeM3u8ForSpeedTest(
+  static Future<M3u8Analysis> analyzeM3u8ForSpeedTest(
     String url, {
     Map<String, String> headers = const {},
     Duration timeout = const Duration(seconds: 3),
     int maxSegments = 2,
     http.Client? client,
+    /// 🔴 2026-10-23（第三轮）：**码率估算不再单独发请求**。
+    ///
+    /// 原实现为「按分片码率推断分辨率」额外发 1~5 次 Range 请求，
+    /// 与测速请求串行叠加，高延迟源要多付 1.5~2 秒 RTT。
+    /// 现在码率改由**测速请求的 Content-Range 总大小 + 首个分片的
+    /// #EXTINF 时长**推算（在 [LunaTVService.speedTestEpisode] 里完成），
+    /// 完全省掉这一次串行 RTT。
+    ///
+    /// 保留这两个参数只为兼容旧调用点，解析阶段不再使用。
+    @Deprecated('码率估算已并入测速请求，不再单独发探测请求')
+    int estimateProbes = 5,
+    @Deprecated('码率估算已并入测速请求，不再单独发探测请求')
+    int estimateRangeBytes = 64 * 1024,
   }) async {
     if (!isM3u8Url(url)) {
       return (
@@ -817,9 +837,18 @@ class M3u8Utils {
         resolution: null,
         segmentUrls: [url],
         playlistUrl: url,
+        firstSegmentDuration: null,
+        encryptionKeyUri: null,
+        encryptionIv: null,
       );
     }
     try {
+      // 🔴 2026-10-23：只有**自己创建**的 client 才关闭。
+      //
+      // 原实现无条件 `httpClient.close()`，把调用方传进来的 client 也关了 ——
+      // 调用方（speedTestEpisode / 端到端脚本）继续用同一个 client 发请求时
+      // 会直接抛 `ClientException: Client is already closed`。
+      final ownsClient = client == null;
       final httpClient = client ?? http.Client();
       try {
         final response = await httpClient
@@ -831,6 +860,9 @@ class M3u8Utils {
           resolution: null,
           segmentUrls: const <String>[],
           playlistUrl: url,
+          firstSegmentDuration: null,
+          encryptionKeyUri: null,
+          encryptionIv: null,
         );
       }
       final bytes = response.bodyBytes;
@@ -845,6 +877,9 @@ class M3u8Utils {
           resolution: extractResolutionFromText(url),
           segmentUrls: const <String>[],
           playlistUrl: url,
+          firstSegmentDuration: null,
+          encryptionKeyUri: null,
+          encryptionIv: null,
         );
       }
       // 简单校验：M3U8 文本应以 #EXTM3U 开头或至少包含 #EXT 标签；
@@ -856,6 +891,9 @@ class M3u8Utils {
           resolution: extractResolutionFromText(url),
           segmentUrls: const <String>[],
           playlistUrl: url,
+          firstSegmentDuration: null,
+          encryptionKeyUri: null,
+          encryptionIv: null,
         );
       }
       final baseUri = Uri.parse(url);
@@ -863,18 +901,33 @@ class M3u8Utils {
 
       // 1. Master playlist：选择最佳 variant 后递归分析。
       final variants = _parseStreamVariants(lines);
-      // 调试日志：用于排查“同源 LunaTV 1080p、海因影视 360P/720P”问题。
-      // TODO: 问题确认后可调低日志级别或移除。
-      debugPrint('[M3U8分析] URL=$url');
-      debugPrint(
-        '[M3U8分析] 内容长度=${content.length} 摘要(前800)=${content.length > 800 ? content.substring(0, 800) : content}',
-      );
-      debugPrint('[M3U8分析] 解析到变体数=${variants.length}');
-      for (var i = 0; i < variants.length; i++) {
-        final v = variants[i];
-        debugPrint(
-          '[M3U8分析] 变体#$i bw=${v.bandwidth} res=${v.resolutionLabel} height=${v.height} uri=${v.uri.length > 120 ? '${v.uri.substring(0, 120)}...' : v.uri}',
-        );
+      // 🔴🔴 2026-10-15 修复「界面卡死」：大幅削减本函数的日志量。
+      //
+      //   原实现把**整个 M3U8 内容的前 800 字符**逐条 debugPrint，且为**每个
+      //   variant** 各打一条。真机/模拟器日志实测：播放期间与退出播放后，
+      //   这套日志以**每秒 40~91 条**的密度刷屏数秒（连带分片 Range-GET 的
+      //   日志），造成主 isolate 被同步 IO 占满 —— 用户看到的是「软件界面卡死」。
+      //
+      //   机制：`debugPrint` 并非空操作。它走 `debugPrintThrottled`，内部有
+      //   定时器与 Zone 调度，**release 下依然写 logcat**。每秒九十次
+      //   同步系统调用足以让 UI 掉帧到不可交互。
+      //   （源码原 TODO 已写明「问题确认后可调低日志级别或移除」—— 现执行。）
+      //
+      //   ⚠️ 只删「必然刷屏」的两类，**保留**后续的分片码率结论类日志：
+      //      · `内容长度=... 摘要(前800)=...`  ← 整段 playlist 正文，最长的一条
+      //      · `变体#N ...` 的逐条循环            ← 变体多时成倍放大
+      //   这两条是刷屏主因，且其信息（几个变体、选定哪个）已被下面那条
+      //   「选定最佳变体」概览覆盖，删除不丢诊断能力。
+      if (kM3u8VerboseLog) {
+        debugPrint('[M3U8分析] URL=$url');
+        debugPrint('[M3U8分析] 内容长度=${content.length}');
+        debugPrint('[M3U8分析] 解析到变体数=${variants.length}');
+        for (var i = 0; i < variants.length; i++) {
+          final v = variants[i];
+          debugPrint(
+            '[M3U8分析] 变体#$i bw=${v.bandwidth} res=${v.resolutionLabel} height=${v.height}',
+          );
+        }
       }
       if (variants.isNotEmpty) {
         final best = variants.first;
@@ -891,12 +944,17 @@ class M3u8Utils {
           timeout: timeout,
           maxSegments: maxSegments,
           client: client,
+          estimateProbes: estimateProbes,
+          estimateRangeBytes: estimateRangeBytes,
         );
         return (
           isMaster: true,
           resolution: best.resolutionLabel ?? child.resolution,
           segmentUrls: child.segmentUrls,
           playlistUrl: resolvedUri,
+          firstSegmentDuration: child.firstSegmentDuration,
+          encryptionKeyUri: child.encryptionKeyUri,
+          encryptionIv: child.encryptionIv,
         );
       }
 
@@ -920,12 +978,17 @@ class M3u8Utils {
             timeout: timeout,
             maxSegments: maxSegments,
             client: client,
+            estimateProbes: estimateProbes,
+            estimateRangeBytes: estimateRangeBytes,
           );
           return (
             isMaster: false,
             resolution: child.resolution,
             segmentUrls: child.segmentUrls,
             playlistUrl: resolved,
+            firstSegmentDuration: child.firstSegmentDuration,
+            encryptionKeyUri: child.encryptionKeyUri,
+            encryptionIv: child.encryptionIv,
           );
         }
         segmentUrls.add(resolved);
@@ -933,37 +996,66 @@ class M3u8Utils {
       }
 
       String? urlResolution = extractResolutionFromText(url);
-      // Media playlist 文本无分辨率线索时，用分片码率估算；避免回退到缓存/搜索的 360P。
-      if (urlResolution == null && segmentUrls.isNotEmpty) {
-        urlResolution = await _estimateResolutionFromSegments(
-          segmentUrls,
-          lines,
-          headers: headers,
-          timeout: const Duration(seconds: 3),
-          client: httpClient,
-        );
+      // 🔴 2026-10-23（第三轮）：解析阶段**不再为码率估算发请求**。
+      //
+      // 原实现在这里对分片发 Range 请求拿总大小算码率（→分辨率），
+      // 与后面的测速请求串行叠加：media playlist 3 次串行 RTT，
+      // master playlist 更要 4 次。实测高延迟源单次 RTT 1.5~2 秒，
+      // 这一发就是整轮测速慢的主因之一。
+      //
+      // 现在只**解析**首个分片的 #EXTINF 时长（零请求），
+      // 码率改由测速请求的 Content-Range 总大小推算，
+      // 由调用方 [LunaTVService.speedTestEpisode] 用
+      // [resolutionFromBitrateKbps] 换算成分辨率。
+      final firstDuration = _firstSegmentDuration(lines);
+
+      // 🔴 2026-10-23：解析 `#EXT-X-KEY`（AES-128）。
+      //
+      // 资源站的 media playlist 普遍带 key，分片是**密文**。要拿真实分辨率
+      // 必须先解密，这里把 key URI / IV 带出去，测速阶段并发取 key。
+      String? keyUri;
+      String? keyIv;
+      for (final raw in lines) {
+        final l = raw.trim();
+        if (!l.startsWith('#EXT-X-KEY:')) continue;
+        if (!l.contains('METHOD=AES-128')) continue;
+        final u = RegExp(r'URI="([^"]+)"').firstMatch(l)?.group(1);
+        if (u == null || u.isEmpty) continue;
+        keyUri = u.startsWith('http://') || u.startsWith('https://')
+            ? u
+            : baseUri.resolve(u).toString();
+        final ivm = RegExp(r'IV=0x([0-9a-fA-F]+)').firstMatch(l);
+        keyIv = ivm?.group(1);
+        break;
       }
+
       debugPrint(
-        '[M3U8分析] 未解析到变体（Media playlist），从URL推断分辨率: $urlResolution，片段数: ${segmentUrls.length}',
+        '[M3U8分析] 未解析到变体（Media playlist），从URL推断分辨率: $urlResolution，'
+        '片段数: ${segmentUrls.length} 首片时长: $firstDuration'
+        '${keyUri != null ? ' 加密=AES-128' : ''}',
       );
       return (
         isMaster: false,
         resolution: urlResolution,
         segmentUrls: segmentUrls,
         playlistUrl: url,
+        firstSegmentDuration: firstDuration,
+        encryptionKeyUri: keyUri,
+        encryptionIv: keyIv,
       );
       } finally {
-        httpClient.close();
+        if (ownsClient) httpClient.close();
       }
     } catch (e) {
       debugPrint('analyzeM3u8ForSpeedTest 失败: $e');
+      // 🔴 2026-10-23：网络层异常必须**向上抛出**，不能在这里吞掉。
+      //
+      // 原实现吞掉异常后返回空分片，调用方无法区分「内容不是 M3U8」
+      // 与「根本连不上」，于是会对 playlist URL 再测一次（再等一个
+      // measureTimeout），实测连不上的源单源要耗 5~13 秒。
+      // 抛出去后调用方能置位 hasNetworkError，直接跳过回退测速。
+      rethrow;
     }
-    return (
-      isMaster: false,
-      resolution: extractResolutionFromText(url),
-      segmentUrls: const <String>[],
-      playlistUrl: url,
-    );
   }
 
   /// 检查 M3U8 内容是否仍包含非空的媒体片段行。

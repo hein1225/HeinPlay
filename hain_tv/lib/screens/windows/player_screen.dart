@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,14 +7,18 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:hain_tv/models/play_record.dart';
 import 'package:hain_tv/models/source_option.dart';
+import 'package:hain_tv/services/playback_activity.dart';
 import 'package:hain_tv/models/skip_segment.dart';
 import 'package:hain_tv/models/video_detail.dart';
 import 'package:hain_tv/player/player_backend_factory.dart';
+import 'package:hain_tv/player/mpv_desktop_backend.dart';
+import 'package:hain_tv/player/vlc_backend.dart';
 import 'package:hain_tv/player/video_player_backend.dart';
 import 'package:hain_tv/player/switch_gate.dart';
 import 'package:hain_tv/services/ad_filter_engine.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/play_record_service.dart';
+import 'package:hain_tv/services/playback_position_handoff.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
@@ -57,6 +62,108 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   // 导致播放源被重置到列表首位。
   String? _initialSourceKey;
   VideoPlayerBackend? _backend;
+
+  /// 桌面 mpv 的 Flutter 外部纹理 id（原生经事件通道回传）。
+  /// 非空时用 `Texture(textureId)` 叠加出画，见 [_buildVideoLayer]。
+  int? _mpvTextureId;
+
+  /// 起播纹理预热：驱动 Flutter 持续产帧，催促 native 的首次 populate。
+  ///
+  /// 🔴 为什么需要：native 侧 render context 要等到**首次 populate** 才创建
+  ///    （那时才拿到 Flutter 的 GL 上下文），而 mpv 又要等 render context
+  ///    才能 loadfile 出帧。于是「没有帧 ⇒ Flutter 不重绘 ⇒ populate 不来 ⇒
+  ///    没有帧」形成闭环，实测每次干等 15 秒（23:30:38 open → 23:30:53 populate）。
+  ///    这里每 80ms 主动 setState 一次，强制 Flutter 产帧并采样外部纹理。
+  ///
+  /// ⚠️ 不能用 `_mpvTextureId != null` 当跳过条件：textureId 在 init 阶段就已
+  ///    回传（tid=93825295593600），但 populate 一次都没发生 —— 有 id ≠ 已采样。
+  int _textureWarmupTick = 0;
+  Timer? _textureWarmupTimer;
+
+  void _startTextureWarmup() {
+    _textureWarmupTimer?.cancel();
+    debugPrint('[MPV-DIAG] 起播纹理预热开始：主动驱动重绘，催促首次 populate');
+    _textureWarmupTimer = Timer.periodic(const Duration(milliseconds: 80), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _textureWarmupTick++);
+    });
+    // 兜底：最多催 8 秒。链路一旦打通，mpv 自己的帧会持续驱动重绘。
+    Timer(const Duration(seconds: 8), () {
+      if (_textureWarmupTimer != null) {
+        _textureWarmupTimer!.cancel();
+        _textureWarmupTimer = null;
+        debugPrint('[MPV-DIAG] 起播纹理预热结束（8 秒上限）');
+      }
+    });
+  }
+
+  /// 包一层预热用的纹理层。
+  ///
+  /// 🔴 不能只 `setState` 重建：`Texture(textureId:)` 的 id 不变时
+  ///    `updateRenderObject` 不会 `markNeedsPaint`，该 RenderObject 保持干净，
+  ///    引擎可能直接复用上一帧 layer tree —— raster 线程**根本不采样**外部纹理，
+  ///    populate 依旧不会来。用随 tick 变化的 Key 强制重建这一层。
+  Widget _warmupTexture(int textureId) {
+    final t = _textureWarmupTick;
+    if (t == 0) return Texture(textureId: textureId);
+    return RepaintBoundary(
+      key: ValueKey<int>(t),
+      child: Texture(textureId: textureId),
+    );
+  }
+
+  /// 上一次上报给壳的视频层物理像素尺寸（避免每帧重复下发）。
+  int _reportedViewW = 0;
+  int _reportedViewH = 0;
+
+  /// 把视频层控件的**物理像素**尺寸上报给桌面 mpv 壳。
+  ///
+  /// 🔴🔴🔴 2026-10-22 Windows 黑屏根因（关键，且极易漏）：
+  ///   TV 版 `lib/screens/tv/player_screen.dart` 里有 `_reportVideoViewSize()`
+  ///   + `LayoutBuilder` 上报控件尺寸，但 **Windows 版走的是本文件
+  ///   `lib/screens/windows/player_screen.dart`，这里从来没有上报过**。
+  ///   于是壳侧 `g_mpv.view_w/view_h` 恒为 0，pump 的尺寸决策只能退到
+  ///   `video-out-params`（视频自身尺寸 1920x1080），而引擎回调 populate
+  ///   按控件尺寸（1264x681）要纹理 → 两者不符 → 每帧互相重建 →
+  ///   共享句柄每帧被换掉 → 引擎采样的永远是空纹理 →
+  ///   **点播/直播都黑屏，且不报任何错**（用户实测现象）。
+  ///
+  ///   实测日志铁证：56 秒内 1251 条「D3D11 纹理已重建」，
+  ///   尺寸在 1920x1080 ⇄ 1264x681 之间每 10~20ms 交替一次。
+  void _reportVideoViewSize(BoxConstraints constraints) {
+    final backend = _backend;
+    if (backend == null) return;
+    if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) return;
+    // 🔴🔴 必须 duck-typing，**不能**写 `backend is MpvDesktopBackend`！
+    //    本文件下方 _attachMpvTextureListener 已有血泪教训：`is` 判断在
+    //    AOT release 下没有命中（见那段注释的 78 真机日志实证）。
+    //    若这里也用 `is`，则 setViewSize 永远不会下发 → view_w 恒为 0
+    //    → 又回到黑屏。只认「暴露了 updateViewSize 这个能力」。
+    final dynamic dyn = backend;
+    void Function(int, int)? update;
+    try {
+      final Object? fn = dyn.updateViewSize;
+      if (fn is void Function(int, int)) update = fn;
+    } catch (_) {
+      update = null;
+    }
+    if (update == null) return;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final w = (constraints.maxWidth * dpr).round();
+    final h = (constraints.maxHeight * dpr).round();
+    if (w <= 0 || h <= 0) return;
+    if (w == _reportedViewW && h == _reportedViewH) return;
+    _reportedViewW = w;
+    _reportedViewH = h;
+    debugPrint('[MPV-DIAG] 视频层尺寸上报 ${w}x$h '
+        '(逻辑 ${constraints.maxWidth.toStringAsFixed(1)}x'
+        '${constraints.maxHeight.toStringAsFixed(1)} dpr=$dpr)');
+    update(w, h);
+  }
+
   final PlayerSwitchGate _switchGate = PlayerSwitchGate();
   late int _currentEpisodeIndex;
   bool _controlsVisible = true;
@@ -140,10 +247,17 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   DateTime? _lastSkipSeekAt;
 
   final List<StreamSubscription> _subscriptions = [];
+
+  /// 全局播放活动会话 id（后台测速据此让路），dispose 时释放。
+  int? _playbackSessionId;
   Timer? _controlsTimer;
   Timer? _clockTimer;
   Timer? _autoSwitchTimer;
   Timer? _readyRecoveryTimer;
+  /// 「就绪后再定位」定时器：起播慢的后端（VLC / 弱源）在 open 返回时
+  /// `_duration` 仍为 0，此时不能把续播恢复点钳成 0（否则从头播）。
+  /// 等时长上报后再 seek 到恢复点。
+  Timer? _initialPositionRestoreTimer;
   DateTime _currentTime = DateTime.now();
 
   // 固定快进快退步长
@@ -186,6 +300,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _pendingInitialPositionMs = widget.initialPositionMs;
     widget.sourcesNotifier?.addListener(_onSourcesChanged);
     _loadSkipConfig();
+    // 申请播放会话：后台测速据此给播放缓冲让路
+    _playbackSessionId = PlaybackActivity.instance.openSession();
+    // 🔴 2026-10-23：上报当前播放的源，供测速跳过该源（只识别分辨率）。
+    _syncPlaybackSourceKey();
+    // 播放页一打开就可能在拉流（open→initialize→play），
+    // 起播加载阶段同样需要带宽，先行标记为取流中。
+    PlaybackActivity.instance.reportPlaying(_playbackSessionId ?? -1, true);
     _initBackend();
     _initWakelock();
     _startClock();
@@ -315,13 +436,76 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     }
   }
 
-  Future<void> _initBackend() async {
+  /// [autoOpen] 为 true 时，建好后端后立即起播当前集（首播路径）。
+  ///
+  /// 🔴 2026-10-23：切集路径需要「只重建后端、不自动起播」，
+  ///   否则会与 [_openEpisodeImpl] 形成递归（建后端 → 起播 → 释放后端 → 重建 → …）。
+  Future<void> _initBackend({bool autoOpen = true}) async {
     final backend = PlayerBackendFactory.create(_currentPlayerBackend);
     _backend = backend;
     _backend?.fit = _videoFit;
+    // 🔴 桌面 mpv 出画：原生异步回传 textureId，须「挂载 → 等 id → setState 重建」。
+    //    换后端必须丢弃旧 id，否则会继续渲染已 dispose 的后端纹理。
+    _mpvTextureId = null;
+    // 🔴🔴 2026-10-23 修复「vlc 切回 mpv 后播放比例异常、且无法再改比例」：
+    //   视频层尺寸上报带去重缓存（尺寸没变就不重复上报），而 native 侧 FBO
+    //   是按**上一次上报的尺寸**建的。切到 VLC 时视频层换成 libvlc 的
+    //   PlatformView，切回 mpv 时又换回 Texture —— 若缓存命中导致「不再上报」，
+    //   native 侧 FBO 尺寸就停留在旧值 → 画面按旧尺寸渲染 → 比例错乱；
+    //   而比例设置本身也是按该尺寸换算的，所以「改了也不生效」。
+    //   日志实证：切回 mpv 后**没有**出现「[MPV-DIAG] 视频层尺寸上报」，
+    //   而首次进入 mpv 播放时是有的（1264x681）。
+    //   故换后端时清空缓存，强制下一次 build 重新上报当前控件尺寸。
+    _reportedViewW = 0;
+    _reportedViewH = 0;
+    // 🔴🔴 2026-10-21 点播黑屏真因（日志实锤）：
+    //    原先写的是 `if (backend is MpvDesktopBackend)`。78 真机日志里
+    //    整段点播**从未出现**「桌面播放页收到 mpv textureId」，而同一次运行
+    //    的直播段（live_player.dart 用的是按能力判断）正常打印
+    //    「直播页收到 mpv textureId=...」并出画。
+    //    结论：`is MpvDesktopBackend` 在 AOT release 下没有命中，
+    //    监听器从未挂上 → `_mpvTextureId` 恒为 null → `Texture(textureId)`
+    //    那一层永远不构建 → 壳侧渲染帧涨到 #301、share_ok=yes、FBO 无错，
+    //    但 Flutter 一次都不来采样（populate=0）→ 有声音无画面。
+    //    改为 duck-typing：只认「暴露了 textureReadyStream 这个能力」，不认类型。
+    {
+      Stream<int>? stream;
+      try {
+        final dynamic dyn = backend;
+        final Object? s = dyn.textureReadyStream;
+        if (s is Stream<int>) stream = s;
+      } catch (_) {
+        stream = null;
+      }
+      debugPrint('[MPV-DIAG] 桌面 attach backend=${backend.runtimeType} '
+          'stream=${stream == null ? "null" : "ok"}');
+      if (stream != null) {
+        _subscriptions.add(
+          stream.listen((tid) {
+            if (!mounted) return;
+            debugPrint('桌面播放页收到 mpv textureId=$tid，重建视频层出画');
+            setState(() => _mpvTextureId = tid);
+          }),
+        );
+        // 时序兜底：init 通常早于本监听建立，那一帧事件已经丢了，
+        // 订阅后立刻主动读一次当前值。
+        try {
+          final dynamic dyn = backend;
+          final Object? cur = dyn.currentTextureId;
+          if (cur is int && cur >= 0) {
+            debugPrint('桌面播放页补取 mpv textureId=$cur（监听建立时已有）');
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() => _mpvTextureId = cur);
+            });
+          }
+        } catch (_) {}
+      }
+    }
     _subscriptions
       ..add(
         backend.positionStream.listen((position) {
+          _reportBufferHealth(position);
           if (!mounted) return;
           _position = position;
           // 只有当控制栏（进度条）真的在画面上时才重建 UI。
@@ -345,6 +529,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       )
       ..add(
         backend.playingStream.listen((playing) {
+          PlaybackActivity.instance.reportPlaying(_playbackSessionId ?? -1, playing);
           if (mounted) setState(() => _playing = playing);
         }),
       )
@@ -360,7 +545,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         }),
       );
 
-    await _openEpisodeImpl(_currentEpisodeIndex);
+    // 🔴 2026-10-23：首播必须带 isFirstOpen —— 后端刚由本方法建好，
+    //   若 _openEpisodeImpl 走「切集释放」分支会把它置空，
+    //   `_backend?.open(...)` 被 ?. 短路，open() 根本不执行，
+    //   表现为「尝试播放」后直接超时、屏幕上无任何画面。
+    if (autoOpen) {
+      await _openEpisodeImpl(_currentEpisodeIndex, isFirstOpen: true);
+    }
   }
 
   void _safeSeekToSeconds(double targetSeconds) {
@@ -496,6 +687,50 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     return _duration.inMilliseconds > 0;
   }
 
+  /// 「就绪后再定位」：起播慢的后端（VLC / 弱源）在 open() 返回时
+  /// `_duration` 仍为 0，此时若直接用 `_duration` 给恢复点做上限钳制，
+  /// 恢复点会被压成 0 —— 新后端便从头播放（实测 mpv→vlc 切到 1311s 处
+  /// 却从 0 开始播）。这里挂一个定时器轮询时长，一旦拿到有效时长就 seek
+  /// 到恢复点；超时仍未就绪则放弃定位（绝不阻断播放）。
+  static const Duration _kInitialPositionRestoreTimeout = Duration(seconds: 30);
+
+  void _scheduleInitialPositionRestore() {
+    _initialPositionRestoreTimer?.cancel();
+    final targetMs = _pendingInitialPositionMs;
+    final deadline = DateTime.now().add(_kInitialPositionRestoreTimeout);
+    _initialPositionRestoreTimer = Timer.periodic(
+      const Duration(milliseconds: 300),
+      (t) {
+        if (!mounted || _backend == null) {
+          t.cancel();
+          _initialPositionRestoreTimer = null;
+          return;
+        }
+        final durMs = _duration.inMilliseconds;
+        if (durMs > 0) {
+          t.cancel();
+          _initialPositionRestoreTimer = null;
+          final maxMs = durMs > 500 ? durMs - 500 : durMs;
+          final clampedMs = targetMs.clamp(0, maxMs);
+          _backend?.seek(Duration(milliseconds: clampedMs));
+          debugPrint(
+            '[HeinPlay] 就绪后定位到恢复点: ${clampedMs}ms（时长=${durMs}ms）',
+          );
+          _pendingInitialPositionMs = 0;
+          return;
+        }
+        if (DateTime.now().isAfter(deadline)) {
+          t.cancel();
+          _initialPositionRestoreTimer = null;
+          debugPrint(
+            '[HeinPlay] 恢复点定位超时（时长始终未就绪），放弃定位: ${targetMs}ms',
+          );
+          _pendingInitialPositionMs = 0;
+        }
+      },
+    );
+  }
+
   /// open() 成功但有效时长未就绪时的恢复监听。
   ///
   /// VLC 等后端起播/渲染较慢，若直接判失败会误报“播放失败”。这里先标记已起播，
@@ -543,7 +778,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   Future<void> _openEpisode(int index) =>
       _switchGate.run(() => _openEpisodeImpl(index));
 
-  Future<void> _openEpisodeImpl(int index) async {
+  Future<void> _openEpisodeImpl(int index, {bool isFirstOpen = false}) async {
     final episodes = _currentVideoDetail.episodes;
     if (index < 0 || index >= episodes.length) return;
 
@@ -551,6 +786,39 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _autoSwitchTimer = null;
     _readyRecoveryTimer?.cancel();
     _readyRecoveryTimer = null;
+
+    // 🔴 切集：先停止播放、保存播放记录、释放旧后端，再加载新集。
+    //    桌面端须先 pause，避免播放中直接 release 阻塞 UI 线程。
+    //    首次进入播放页时 _backend 为 null，helper 自动退化为空操作。
+    if (!isFirstOpen) {
+      // 🔴🔴 桌面端：复用同一个后端实例切集（只换 URL）——
+      //   不关壳 → 纹理 id 不变 → 视频层不重建 → **不闪屏**；
+      //   也不与新实例抢渲染线程 → **不卡死**。
+      final reuseBackend = _reuseDesktopBackend;
+      await _stopSaveAndReleaseBackend(
+        pauseBeforeDispose: true,
+        keepBackend: reuseBackend,
+      );
+      if (reuseBackend) {
+        debugPrint('[HeinPlay] 桌面端切换集：复用后端实例（不重建，避免闪屏/卡死）');
+      } else {
+        debugPrint('[HeinPlay] 旧后端已释放（播放记录已落盘），进入重建/起播阶段');
+      }
+      // 🔴 2026-10-23 修复：切集必须清零上一集的续播位置。
+      //   播放记录是「每部剧一条」（含 index=集号、playTime=该集秒数），
+      //   上一集的位置套到新集上会直接落在错误的时间点（用户实测：记录错乱）。
+      _pendingInitialPositionMs = 0;
+      debugPrint('[HeinPlay] 切换集：目标 index=$index，续播位置已归零（避免沿用上一集）');
+      if (!reuseBackend) {
+        // 🔴 2026-10-23 修复：释放后必须重建后端。
+        //    _stopSaveAndReleaseBackend 会把 _backend 置 null，而下面 tryOpen 用的是
+        //    `_backend?.open(...)` —— _backend 为 null 时 Dart 的 ?. 直接短路，
+        //    open() 根本不会被调用，tryOpen 只能轮询 _duration 到超时 →
+        //    每次切集白等 15 秒后判失败（用户实测：加载反而变慢、记录读不出来）。
+        //    autoOpen:false = 只重建后端，不在此递归触发起播。
+        await _initBackend(autoOpen: false);
+      }
+    }
 
     setState(() {
       _initialized = false;
@@ -575,6 +843,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       final startTime = DateTime.now();
       try {
         debugPrint('PlayerScreen 尝试播放 [$_currentPlayerBackend]: $url');
+        _startTextureWarmup();
         await _backend
             ?.open(
               url,
@@ -584,6 +853,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                   : null,
             )
             .timeout(openTimeout);
+
+        // 🔴 2026-10-23：桌面端复用同一实例换源时，显式把播放态拉回来。
+        //   mpv 的 pause 是持久属性，native open 只做 loadfile，不会复位 pause；
+        //   一旦残留 pause=yes，新源会停在首帧不动。play() 幂等（set pause no）。
+        if (_reuseDesktopBackend) {
+          await _backend?.play();
+        }
 
         // 等待播放器真正就绪（获取到有效时长），总耗时不超过 openTimeout
         final elapsed = DateTime.now().difference(startTime);
@@ -686,18 +962,39 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       // 2026-09-20 17:20 日志实证第 1 次会话「起播稳定」读到的 position 已是续播点
       // 125000ms（即本段先动了手），随后冻结；而换源后未走本段的两次会话
       // （起播稳定时 position=1520ms）全部一次定位成功。
-      if (_currentPlayerBackend == PlayerBackendType.fvp) {
-        _pendingInitialPositionMs = 0;
-      } else if (_pendingInitialPositionMs > 0) {
-        final maxMs = _duration.inMilliseconds > 500
-            ? _duration.inMilliseconds - 500
-            : _duration.inMilliseconds;
-        final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
-        await Future.delayed(Duration(milliseconds: 200));
-        if (mounted) {
-          _backend?.seek(Duration(milliseconds: clampedMs));
+      // 🔴 2026-10-16：原「fvp 后端跳过本段」的特判已删除（fvp 已摘除）。
+      //   历史背景：fvp 的起点定位由 VideoPlayerBackendImpl 在 initialize() 后立即
+      //   执行，若此处再赶在 open 后 ~200ms 抢先 seek，会把 libmdk 打进冻结
+      //   （2026-09-20 17:20 日志实证）。该缺陷属 libmdk 专有，mpv/exo/vlc 无此问题，
+      //   故不再需要后端特判。
+      if (_pendingInitialPositionMs > 0) {
+        // 🔴🔴 2026-10-23 修复「切播放器后从头播放」（mpv→vlc 实测复现）：
+        //   原实现用 `_duration` 给恢复点做上限钳制，而**起播慢的后端
+        //   （VLC / 弱源）此时 `_duration` 仍是 0** → maxMs=0 →
+        //   恢复点被 clamp 成 0 → 紧接着 seek(0) 并把 `_pendingInitialPositionMs`
+        //   清零 → **恢复点彻底丢失，新后端从头播**（实测：切到 1311s 处，
+        //   VLC 却从 0 开始播；第二次切换时因为源已在开头反而「看起来正常」）。
+        //
+        //   修法：时长未就绪时**不钳制、不清零**，改为挂一个「就绪后再定位」的
+        //   定时器；时长一到立刻 seek 到恢复点。
+        final durMs = _duration.inMilliseconds;
+        if (durMs <= 0) {
+          debugPrint(
+            '[HeinPlay] 恢复点待定位（时长未就绪）: ${_pendingInitialPositionMs}ms',
+          );
+          _scheduleInitialPositionRestore();
+        } else {
+          final maxMs = durMs > 500 ? durMs - 500 : durMs;
+          final clampedMs = _pendingInitialPositionMs.clamp(0, maxMs);
+          await Future.delayed(Duration(milliseconds: 200));
+          if (mounted) {
+            _backend?.seek(Duration(milliseconds: clampedMs));
+          }
+          debugPrint(
+            '[HeinPlay] 已定位到恢复点: ${clampedMs}ms（时长=${durMs}ms）',
+          );
+          _pendingInitialPositionMs = 0;
         }
-        _pendingInitialPositionMs = 0;
       }
       _showControlsWithoutFocusShift();
     } else if (autoSwitchSource && _sources.length > 1) {
@@ -782,11 +1079,17 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         continue;
       }
 
-      await _backend?.dispose();
-      for (final sub in _subscriptions) {
-        sub.cancel();
+      // 🔴 桌面端自动换源：复用同一后端实例（只换 URL）——
+      //   不关壳 → 纹理 id 不变、视频层不重建（不闪屏），
+      //   也不与新实例抢渲染线程（不卡死）。
+      final reuseBackend = _reuseDesktopBackend;
+      if (!reuseBackend) {
+        await _backend?.dispose();
+        for (final sub in _subscriptions) {
+          sub.cancel();
+        }
+        _subscriptions.clear();
       }
-      _subscriptions.clear();
 
       setState(() {
         _currentVideoDetail = response.data!;
@@ -801,34 +1104,39 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         _error = null;
       });
 
+      _syncPlaybackSourceKey();
       _loadSkipConfig();
 
-      final backend = PlayerBackendFactory.create(_currentPlayerBackend);
-      _backend = backend;
-      _backend?.fit = _videoFit;
-      _subscriptions
-        ..add(
-          backend.positionStream.listen((position) {
-            if (!mounted) return;
-            _position = position;
-            // 同 _initBackend：控制栏隐藏时不必重建整页（详见那里的说明）。
-            if (_controlsVisible) setState(() {});
-            _checkSkipSegments(position);
-          }),
-        )
-        ..add(backend.durationStream.listen(_onDurationUpdate))
-        ..add(
-          backend.bufferedStream.listen((buffered) {
-            if (!mounted) return;
-            _buffered = buffered;
-            if (_controlsVisible) setState(() {});
-          }),
-        )
-        ..add(
-          backend.playingStream.listen((playing) {
-            if (mounted) setState(() => _playing = playing);
-          }),
-        );
+      if (!reuseBackend) {
+        final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+        _backend = backend;
+        _backend?.fit = _videoFit;
+        _subscriptions
+          ..add(
+            backend.positionStream.listen((position) {
+              _reportBufferHealth(position);
+              if (!mounted) return;
+              _position = position;
+              // 同 _initBackend：控制栏隐藏时不必重建整页（详见那里的说明）。
+              if (_controlsVisible) setState(() {});
+              _checkSkipSegments(position);
+            }),
+          )
+          ..add(backend.durationStream.listen(_onDurationUpdate))
+          ..add(
+            backend.bufferedStream.listen((buffered) {
+              if (!mounted) return;
+              _buffered = buffered;
+              if (_controlsVisible) setState(() {});
+            }),
+          )
+          ..add(
+            backend.playingStream.listen((playing) {
+              PlaybackActivity.instance.reportPlaying(_playbackSessionId ?? -1, playing);
+              if (mounted) setState(() => _playing = playing);
+            }),
+          );
+      }
 
       var url = newEpisodes[targetEpisodeIndex].trim();
       final filteredUrl = await AdFilterEngine.filterM3u8(
@@ -877,7 +1185,18 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   }
 
   Future<void> _switchSource(int index) =>
-      _switchGate.run(() => _switchSourceImpl(index));
+      _switchGate.run(
+        () => _switchSourceImpl(index),
+        label: 'windows 换源 #$index',
+        onTimeout: () {
+          // 🔴 熔断后必须复位 UI 状态，否则「切换中」遮罩永久停留 = 看起来卡死。
+          if (!mounted) return;
+          setState(() {
+            _switchingSource = false;
+            _error = '切换播放源超时，请重试';
+          });
+        },
+      );
 
   Future<void> _switchSourceImpl(int index) async {
     if (index < 0 || index >= _sources.length) return;
@@ -887,50 +1206,107 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _autoSwitchTimer = null;
 
     setState(() => _switchingSource = true);
-    final option = _sources[index];
-    final response = await LunaTVService.getDetail(
-      source: option.source,
-      id: option.id,
-      title: option.title,
-    );
+    try {
+      final option = _sources[index];
+      debugPrint(
+        '[HeinPlay] 换源开始: index=$index source=${option.source} id=${option.id}',
+      );
+      final response = await LunaTVService.getDetail(
+        source: option.source,
+        id: option.id,
+        title: option.title,
+      ).timeout(
+        // 🔴 2026-10-23：详情请求必须带超时。个别源（如 iqiyizyapi.com）
+        //   的 /api/detail 会 404 或长时间不返回，不能让换源流程无限期挂住。
+        const Duration(seconds: 25),
+        onTimeout: () {
+          debugPrint('[HeinPlay] 换源详情请求超时: source=${option.source}');
+          throw TimeoutException('换源详情请求超时', const Duration(seconds: 25));
+        },
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (!response.success || response.data == null) {
+      // 🔴 2026-10-23 换源分段埋点：用于精确定位「换源卡死」卡在哪一步。
+      debugPrint(
+        '[HeinPlay] 换源详情已返回: index=$index success=${response.success} '
+        'episodes=${response.data?.episodes.length ?? -1}',
+      );
+
+      if (!response.success || response.data == null) {
+        setState(() {
+          _switchingSource = false;
+          _error = response.message ?? '切换播放源失败';
+        });
+        return;
+      }
+
+      final previousEpisodeIndex = _currentEpisodeIndex;
+      // 🔴 停止播放 → 保存播放记录 → 释放旧后端（桌面端先 pause）。
+      //   桌面端改为「复用同一后端实例、只换 URL」：不关壳 → 纹理 id 不变 →
+      //   视频层不重建（不闪屏），也不与新实例抢渲染线程（不卡死）。
+      final reuseBackend = _reuseDesktopBackend;
+      final previousPositionMs = await _stopSaveAndReleaseBackend(
+        pauseBeforeDispose: true,
+        keepBackend: reuseBackend,
+      ).timeout(
+        // 🔴 2026-10-23：释放旧后端带超时。该步骤内部含「保存播放记录」，
+        //   一旦存储层或原生回调不返回，整个换源（连同闸门队列）都会挂死。
+        const Duration(seconds: 30),
+        onTimeout: () {
+          debugPrint('[HeinPlay] 停止/释放旧后端超时，继续走换源起播');
+          return 0;
+        },
+      );
+      if (reuseBackend) {
+        debugPrint('[HeinPlay] 桌面端换源：复用后端实例（不重建，避免闪屏/卡死）');
+      } else {
+        debugPrint('[HeinPlay] 旧后端已释放（播放记录已落盘），进入重建/起播阶段');
+      }
+      // 🔴 2026-10-23 换源分段埋点：确认释放阶段完成并带上恢复点。
+      debugPrint(
+        '[HeinPlay] 换源释放阶段完成: reuseBackend=$reuseBackend '
+        '恢复点=${previousPositionMs}ms',
+      );
+
+      if (!mounted) return;
+
+      // 🔴 2026-10-23：新源可能没有剧集（详情为空/404）。此时 clamp(0, -1)
+      //   会抛 ArgumentError（min > max），把整条换源流程打断。
+      final maxEpisodeIndex = response.data!.episodes.length - 1;
+      final safeEpisodeIndex =
+          maxEpisodeIndex < 0 ? 0 : previousEpisodeIndex.clamp(0, maxEpisodeIndex);
+
+      setState(() {
+        _currentVideoDetail = response.data!;
+        _currentSourceIndex = index;
+        _currentEpisodeIndex = safeEpisodeIndex;
+        _switchingSource = false;
+        _skipConfig = null;
+        _skippedSegments.clear();
+        _lastSkipSeekAt = null;
+        _autoNextTriggered = false;
+      });
+
+      _syncPlaybackSourceKey();
+      _loadSkipConfig();
+      // 切换源后恢复上次播放位置
+      _pendingInitialPositionMs = previousPositionMs;
+      if (reuseBackend) {
+        // 桌面端：不重建后端，直接用同一实例起播新源（mpv loadfile 换 URL）。
+        await _openEpisodeImpl(_currentEpisodeIndex, isFirstOpen: true);
+      } else {
+        _initBackend();
+      }
+    } catch (e) {
+      // 🔴 2026-10-23：换源任何异常都要落到这里，不能让异常冒泡成「无响应」。
+      debugPrint('[HeinPlay] 换源失败: $e');
+      if (!mounted) return;
       setState(() {
         _switchingSource = false;
-        _error = response.message ?? '切换播放源失败';
+        _error = '切换播放源失败: $e';
       });
-      return;
     }
-
-    final previousEpisodeIndex = _currentEpisodeIndex;
-    final previousPositionMs = _position.inMilliseconds;
-
-    await _backend?.dispose();
-    for (final sub in _subscriptions) {
-      sub.cancel();
-    }
-    _subscriptions.clear();
-
-    setState(() {
-      _currentVideoDetail = response.data!;
-      _currentSourceIndex = index;
-      _currentEpisodeIndex = previousEpisodeIndex.clamp(
-        0,
-        response.data!.episodes.length - 1,
-      );
-      _switchingSource = false;
-      _skipConfig = null;
-      _skippedSegments.clear();
-      _lastSkipSeekAt = null;
-      _autoNextTriggered = false;
-    });
-
-    _loadSkipConfig();
-    // 切换源后恢复上次播放位置
-    _pendingInitialPositionMs = previousPositionMs;
-    _initBackend();
   }
 
   void _togglePlay() {
@@ -1217,10 +1593,14 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
                     label = 'ExoPlayer';
                     break;
                   case PlayerBackendType.fvp:
-                    label = 'FVP';
+                    // fvp 已摘除，仅保留分支以满足穷尽 switch。
+                    label = 'FVP（已移除）';
                     break;
                   case PlayerBackendType.vlc:
                     label = 'VLC';
+                    break;
+                  case PlayerBackendType.mpv:
+                    label = 'MPV';
                     break;
                 }
                 return FocusableWidget(
@@ -1274,6 +1654,138 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     });
   }
 
+
+  /// 🔴🔴 统一「停止播放 → 保存播放记录 → 释放旧后端」收尾链（2026-10-23 全平台统一）。
+  ///
+  /// 【背景】切换播放器 / 切换播放源 / 切换集 三种操作原先都只把 `_initialized`
+  ///   置假，然后直接让旧后端 open() 新地址。平台播放器（ExoPlayer / AVPlayer /
+  ///   libmpv / libvlc）在 open() 新源时**不会**自行停止旧的音频与解码线程，
+  ///   于是切换瞬间出现「旧源仍在后台出声 + 新源同时起播」的双重解码，
+  ///   低端电视/手机上表现为卡顿、音画不同步、内存与 CPU 峰值飙升。
+  ///
+  /// 【用法】任何要换后端/换源/换集的地方，**必须先 await 本方法**，再走后续
+  ///   的 setState + _initBackend / _openEpisodeImpl 流程。
+  ///
+  /// 【顺序】save → dispose，不可颠倒：
+  ///   · dispose 之后 _position/_duration 都停止更新，播放记录就写不准；
+  ///   · 且 `_isPlaybackReadyForRecord()` 里 `_backend != null` 的前置条件失效，
+  ///     会直接跳过保存，用户进度丢失。
+  ///
+  /// 【返回】旧后端的最后播放位置（ms），调用方应赋给 `_pendingInitialPositionMs`
+  ///   以恢复续播。
+  ///
+  /// [pauseBeforeDispose] 为 true 时先 pause 并等一小段时间再 dispose。桌面端
+  /// （VLC / mpv 原生壳）播放中直接 release 媒体播放器会等待网络/解码线程退出，
+  /// 在卡顿源上可能永久阻塞 UI 线程，故桌面必须走这条路。
+  /// 桌面端（Windows / Linux）换源/换集时是否**复用同一个后端实例**。
+  ///
+  /// 桌面壳里的 mpv 是**进程级全局单例**（native 侧 g_mpv，壳只向 Flutter
+  /// 注册一次纹理）。换源时若把旧后端连壳一起关掉再重建，会连带：
+  ///   ① 重建 mpv + EGL 两阶段 + 纹理注册 → **纹理 id 变化** → Flutter 必须
+  ///      重建 `Texture(textureId:)` 与 PlatformView → 中间一帧黑屏 → **闪屏**；
+  ///   ② 旧实例的延迟 dispose 与新实例的创建在桌面端抢同一个渲染线程 →
+  ///      表现为**换源/换播放器时软件卡死**（Windows server 实测）。
+  /// 复用同一实例、只换 URL（mpv loadfile 语义），上述问题都不发生。
+  bool get _reuseDesktopBackend =>
+      DeviceUtils.isComputer &&
+      (_backend is MpvDesktopBackend || _backend is VlcBackend);
+
+  Future<int> _stopSaveAndReleaseBackend({
+    bool pauseBeforeDispose = false,
+    bool keepBackend = false,
+  }) async {
+    final lastPositionMs = _position.inMilliseconds;
+
+    debugPrint('[HeinPlay] 切换操作开始：停止播放 → 保存播放记录 → 释放旧后端');
+    // 1) 先落一次播放记录（节流窗口内也强制写，因为这是用户主动切换的明确意图）。
+    // 🔴🔴 2026-10-23：这里必须带超时 + 计时日志。
+    //   实测卡死现场（Windows 12:55:13 换源到 iqiyizyapi.com）：本行打印后
+    //   再无任何日志，进程最终被强杀；本次新增的计时日志用于下次精确定位，
+    //   超时则**继续切换**，绝不让「存记录」拖死整条切源链路。
+    if (!_recordSaveInFlight && _isPlaybackReadyForRecord()) {
+      final sw = Stopwatch()..start();
+      debugPrint('[HeinPlay] 保存播放记录开始');
+      try {
+        await _savePlayRecordToLunaTV().timeout(const Duration(seconds: 20));
+        debugPrint(
+          '[HeinPlay] 保存播放记录完成 耗时=${sw.elapsedMilliseconds}ms',
+        );
+      } catch (e) {
+        debugPrint(
+          '[HeinPlay] 保存播放记录异常/超时（继续切换）: $e '
+          '耗时=${sw.elapsedMilliseconds}ms',
+        );
+      }
+    }
+
+    // 🔴🔴 桌面端换源/换集：保留同一个后端实例，只换 URL。
+    //   不关壳 → 纹理 id 不变 → 视频层不重建 → **不闪屏**；
+    //   也不与新实例抢渲染线程 → **不卡死**。
+    //   订阅保持不变（继续用同一个后端的流），所以必须**先于**退订返回。
+    if (keepBackend && _reuseDesktopBackend) {
+      debugPrint('[HeinPlay] 桌面端：保留后端实例（不关壳、不重建），仅换 URL');
+      // 🔴🔴 2026-10-23：这里**不能**再调 pause()。
+      //   mpv 的 pause 是**持久属性**（native: set pause yes），而 native open
+      //   只做 loadfile(url, replace) —— 不会把 pause 复位。残留 pause=yes 时，
+      //   新源解码完会**停在首帧不动**（看起来就是换源后黑屏/卡住）。
+      //   旧播放的停止由 loadfile replace 本身完成，无需在此 pause。
+      // 旧的时长/进度会让「等待播放就绪」判据立刻命中（_duration > 0 即返回
+      // true），换源后就会误判为已就绪 → 画面还没出来就当成功。必须清零。
+      if (mounted) {
+        setState(() {
+          _initialized = false;
+          _duration = Duration.zero;
+          _position = Duration.zero;
+        });
+      }
+      return lastPositionMs;
+    }
+
+    // 1.5) 可选：先暂停旧后端，让原生播放线程停止拉流/解码，
+    //      避免直接在播放中 dispose 触发原生释放阻塞 UI 线程。
+    if (pauseBeforeDispose) {
+      try {
+        await _backend?.pause().timeout(const Duration(seconds: 2));
+      } catch (_) {
+        // 忽略暂停异常（如控制器尚未 attach），继续释放。
+      }
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+
+    // 2) 停止并释放旧后端。必须先 await dispose 完成再返回，
+    //    否则平台播放器会在后台继续播放。
+    final previousBackend = _backend;
+    _backend = null;
+    // 先摘引用并等一帧，让视频层（PlatformView）先卸载，再释放原生播放器。
+    // 否则 Android 侧重建 platformView 时 surface 回调可能打到已释放的
+    // player handle 上（fvp 时代实测 SIGSEGV 闪退，mpv/exo 同样有风险）。
+    if (mounted) {
+      setState(() => _initialized = false);
+      // 🔴 2026-10-23：endOfFrame 在无帧调度时可能长时间不返回（窗口最小化/
+      //   后台/渲染阻塞），必须带超时，否则释放旧后端这一步就能把切源挂死。
+      await WidgetsBinding.instance.endOfFrame.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {},
+      );
+    }
+    // 🔴 2026-10-23：必须先退订、再 dispose。
+    //    dispose() 会关闭后端的全部 StreamController，若此时订阅仍挂着，
+    //    期间到达的原生事件会抛「Cannot add new events after calling close」
+    //    并中断整个切换流程（表现为播放记录存不下去、切换变慢甚至直接失败）。
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+    // 🔴 2026-10-23：原生 dispose 可能阻塞（等网络/解码线程退出），
+    //   必须带超时，避免整个切源流程（含闸门队列）永久挂死。
+    try {
+      await previousBackend?.dispose().timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('[HeinPlay] 释放旧后端异常/超时（继续）: $e');
+    }
+    return lastPositionMs;
+  }
+
   Future<void> _switchPlayerBackend(PlayerBackendType type) async {
     if (type == _currentPlayerBackend) return;
 
@@ -1288,25 +1800,31 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       type,
     );
 
-    // 切换播放器前保存当前进度，初始化完成后恢复
-    _pendingInitialPositionMs = _position.inMilliseconds;
-
-    // 切换前先暂停旧后端，让原生播放线程停止拉流/解码，
-    // 避免直接在播放中 dispose 触发 libvlc/libmdk 原生释放阻塞 UI 线程导致“软件未响应”卡死。
-    // 尤其 VLC：播放中直接 release 媒体播放器会等待网络/解码线程退出，易在卡顿源上永久阻塞。
-    try {
-      await _backend?.pause().timeout(const Duration(seconds: 2));
-    } catch (_) {
-      // 忽略暂停异常（如控制器尚未 attach），继续释放。
-    }
-    await Future.delayed(const Duration(milliseconds: 150));
-    // 必须先 await dispose 旧后端，否则 ExoPlayer 等平台播放器会在后台继续播放。
-    await _backend?.dispose();
-    _backend = null;
-    for (final sub in _subscriptions) {
-      sub.cancel();
-    }
-    _subscriptions.clear();
+    // 🔴 停止播放 → 保存播放记录 → 释放旧后端（桌面端须先 pause，见 helper 说明）。
+    //
+    // 🔴🔴 2026-10-23 修复「切播放器后从头播放」：
+    //   恢复点改为走**全平台统一链路**（保存播放记录 → 读取播放记录 → 恢复播放），
+    //   即 [PlaybackPositionHandoff.capture]。原先只取内存里的 `_position`，
+    //   一旦旧后端此刻没上报 position（刚起播 / 后端异常），恢复点就是 0 →
+    //   新后端必然从头播。capture 会「落盘后再读回」，记录里已有的进度就能兜底。
+    final restoreMs = await PlaybackPositionHandoff.capture(
+      livePositionMs: _position.inMilliseconds,
+      canSaveRecord: _isPlaybackReadyForRecord(),
+      title: _currentVideoDetail.title,
+      year: _currentVideoDetail.year,
+      source: _currentVideoDetail.source,
+      id: _currentVideoDetail.id,
+      cover: _currentVideoDetail.poster,
+      index: _currentEpisodeIndex + 1,
+      totalEpisodes: _currentVideoDetail.episodes.length,
+      durationMs: _duration.inMilliseconds,
+    );
+    _pendingInitialPositionMs = restoreMs;
+    debugPrint('切换播放器：$_currentPlayerBackend → $type 恢复点=${restoreMs}ms');
+    await _stopSaveAndReleaseBackend(
+      pauseBeforeDispose: true,
+    );
+    debugPrint('[HeinPlay] 旧后端已释放（播放记录已落盘），进入重建/起播阶段');
 
     // 切换播放器后端时重置本地代理（VLC/fvp 共用同一个 LocalM3u8Proxy 单例）。
     // 否则旧后端的 keep-alive 连接残留会让新后端经代理拉流时连接池被占满而阻塞，
@@ -1314,7 +1832,14 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     // 重置后下一次 filterM3u8 会创建全新代理实例（新端口 + 新连接池）。
     try {
       debugPrint('切换播放器：重置本地代理 (旧后端=$_currentPlayerBackend -> 新后端=$type)');
-      await AdFilterEngine.dispose();
+      // 🔴 2026-10-23：必须带超时。代理关闭会等待在途分片下载结束（优雅关闭），
+      //   弱网源上可能耗时数十秒；不能让它把整条切换链路拖住。
+      await AdFilterEngine.dispose().timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {
+          debugPrint('[HeinPlay] 重置本地代理超时（继续切换新后端）');
+        },
+      );
     } catch (_) {
       // 忽略代理重置异常，继续初始化新后端。
     }
@@ -1424,7 +1949,16 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
   /// 视频未就绪（黑屏卡死、duration 仍为 0）时不落盘，
   /// 防止用 playTime=0/totalTime=0 覆盖掉上次正常的续播进度。
   bool _isPlaybackReadyForRecord() {
-    return _initialized && _backend != null && _duration.inMilliseconds > 0;
+    if (!(_initialized && _backend != null && _duration.inMilliseconds > 0)) {
+      return false;
+    }
+    // 🔴 2026-10-23：起播定位尚未落地时，位置流恒为 0（mpv 要等 file-loaded
+    //    才真正起播，慢源实测可达 12 秒）。此时写盘会用 playTime=0 覆盖掉
+    //    切换前刚保存的有效进度 —— 真机（荣耀平板 V8 Pro 2026-10-23）
+    //    实测：换源前存了 431s，换源后被覆盖成 0s，
+    //    用户侧表现为「换源后读取播放记录失败 / 进度丢失」。
+    if (_pendingInitialPositionMs > 0) return false;
+    return true;
   }
 
   /// Windows 播放页键盘快捷键处理。
@@ -1892,10 +2426,13 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     switch (type) {
       case PlayerBackendType.exo:
         return 'ExoPlayer';
+      // fvp 已摘除，保留分支仅为穷尽 switch（历史存储值由迁移兜底）
       case PlayerBackendType.fvp:
-        return 'FVP';
+        return 'FVP（已移除）';
       case PlayerBackendType.vlc:
         return 'VLC';
+      case PlayerBackendType.mpv:
+        return 'MPV';
     }
   }
 
@@ -2075,8 +2612,24 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     }
   }
 
+
+  /// 上报播放缓冲水位，供后台测速让路判断。
+  ///
+  /// 缓冲剩余量 = 缓冲末端 - 当前播放位置；低于阈值说明播放器正在等数据，
+  /// 此时后台测速应完全停手，把带宽全部让给缓冲。
+  void _reportBufferHealth(Duration position) {
+    final id = _playbackSessionId;
+    if (id == null) return;
+    final remaining = _buffered - position;
+    PlaybackActivity.instance.reportBufferStarved(
+      id,
+      remaining < const Duration(seconds: 3),
+    );
+  }
   @override
   void dispose() {
+    _textureWarmupTimer?.cancel();
+    _textureWarmupTimer = null;
     disposeWindowsFullscreen();
     _mouseInactivityTimer?.cancel();
     _mouseInactivityTimer = null;
@@ -2089,8 +2642,15 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     _clockTimer?.cancel();
     _autoSwitchTimer?.cancel();
     _readyRecoveryTimer?.cancel();
+    _initialPositionRestoreTimer?.cancel();
     for (final sub in _subscriptions) {
       sub.cancel();
+    }
+    // 释放播放会话：后台测速恢复全速
+    final sessionId = _playbackSessionId;
+    if (sessionId != null) {
+      PlaybackActivity.instance.closeSession(sessionId);
+      _playbackSessionId = null;
     }
 
     // 立即保存播放记录到 LunaTV
@@ -2174,6 +2734,21 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         );
       }
     });
+    _syncPlaybackSourceKey();
+  }
+
+  /// 🔴 2026-10-23：把当前正在播放的源标识上报给 [PlaybackActivity]。
+  ///
+  /// 测速据此**跳过正在播放的源**（该源只识别分辨率、不测速），避免测出的
+  /// 速度被自身播放流污染（表现为「一开始播放源速度就显示很慢」），也避免
+  /// 对同一份流量重复占用带宽。换源后需要重新上报。
+  void _syncPlaybackSourceKey() {
+    final sessionId = _playbackSessionId;
+    if (sessionId == null) return;
+    final key = _sources.isNotEmpty && _currentSourceIndex < _sources.length
+        ? '${_sources[_currentSourceIndex].source}+${_sources[_currentSourceIndex].id}'
+        : '${_currentVideoDetail.source}+${_currentVideoDetail.id}';
+    PlaybackActivity.instance.reportCurrentSource(sessionId, key);
   }
 
   /// 保存播放记录：先写入本地确保立即可见，再异步上传 LunaTV。
@@ -2186,6 +2761,24 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     try {
       final totalSec = _duration.inSeconds;
       final rawPos = _position.inSeconds;
+      // 🔴 2026-10-23：起播位置为 0 时**不得覆盖**已有的有效进度。
+      //   真机（荣耀平板 V8 Pro 2026-10-23 14:58，换源到 zuidazy.co）：
+      //   mpv 的 file-loaded 迟了 12 秒，期间位置流恒为 0，被节流保存写盘成
+      //   playTime=0s，把切换前刚保存的 431s 抹掉 ——
+      //   用户侧表现为「换源后读取播放记录失败 / 进度丢失」。
+      //   这里做双保险：既拦「起播定位未落地」，也拦「位置为 0 且已有进度」。
+      if (rawPos <= 0) {
+        final existing = await PlayRecordService.getLatestLocalByTitle(
+          _currentVideoDetail.title,
+          year: _currentVideoDetail.year,
+        );
+        if (existing != null && existing.playTime > 0) {
+          debugPrint(
+            '[HeinPlay] 起播位置为 0，保留既有进度 playTime=${existing.playTime}s（不覆盖）',
+          );
+          return;
+        }
+      }
       final playSec = rawPos < 0 ? 0 : (rawPos > totalSec ? totalSec : rawPos);
       final record = PlayRecord(
         id: _currentVideoDetail.id,
@@ -2204,6 +2797,9 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       );
 
       await PlayRecordService.save(record);
+      debugPrint(
+        '[HeinPlay] 播放记录已保存: index=${record.index} playTime=${record.playTime}s totalTime=${record.totalTime}s',
+      );
     } catch (e) {
       // 保存失败不阻塞退出
       debugPrint('保存播放记录失败: $e');
@@ -2212,17 +2808,109 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     }
   }
 
+  /// 🔴🔴 2026-10-27 起播死锁修复：`_initialized` 尚未置位时，先把 mpv 的
+  ///   Texture 挂进 widget 树，让引擎有东西可绘制 → populate 被调 →
+  ///   native 建 render context → 补发 loadfile → 时长就绪。
+  ///
+  ///   详见 [_buildVideo] 里的四环死锁注释。
+  Widget _buildEarlyTextureLayer() {
+    final tid = _mpvTextureId;
+    if (tid == null) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 尺寸必须照旧上报给壳（壳据此建 FBO），否则 mpv 的 letterbox 无依据。
+        _reportVideoViewSize(constraints);
+        return Container(
+          color: Colors.black,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _warmupTexture(tid),
+              // 加载指示器**叠在**纹理之上：纹理在树里才能出画，
+              // 但此时还没有任何内容可显示，遮罩只是观感。
+              Center(child: TechLoadingIndicator()),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildVideo() {
-    // 切换源/播放器期间由切换遮罩显示加载提示，避免与视频层加载图标重叠。
-    if (_switchingSource) {
-      return ColoredBox(color: Colors.black);
-    }
+    // 🔴🔴 2026-10-23 修复（Windows 换源黑屏根因）：
+    //   换源期间**绝不能**把视频层从 widget 树里卸载。
+    //
+    //   原先这里 `if (_switchingSource) return ColoredBox(color: Colors.black);`
+    //   会把 VLC 的 VlcPlayer（PlatformView）整个摘掉 → PlatformView detach →
+    //   libvlc 的 controller 失去 attach → 随后 VLC 原地换源里的
+    //   `setMedia(source, autoPlay: true)` 落在**未 attach** 的 controller 上
+    //   （setMediaFromMedia 被静默跳过）→ 媒体在播但**没有画面输出** → 换源黑屏。
+    //   日志实证：换源瞬间紧跟「忽略 controller 未 attach 的 transient 调用」，
+    //   而「原地换源成功」却看不到画面。
+    //
+    //   修法：视频层保持挂载（PlatformView 不 detach → controller 始终 attach），
+    //   切换提示由上层的 _buildSwitchingOverlay() 叠加呈现。
+    //   换「播放器」时后端本身会被释放重建（_backend 变 null → 这里返回加载指示器），
+    //   那种情况下 PlatformView 本就要重建，不受影响。
     if (!_initialized || _backend == null) {
+      // 🔴🔴🔴 2026-10-27 起播 15 秒空等的**真根因**修复（Linux 桌面端点播）。
+      //
+      //   69 真机日志闭环（2026-10-27 20:07:52 ~ 20:08:06）：
+      //     20:07:52 native:「open 早于 render context：已暂存 …」
+      //             → mpv 尚未 loadfile
+      //     20:07:52 Dart  :「init 返回 textureId」（纹理已注册）
+      //     20:08:06 native:「首次 populate」⇒ 才建 render context、才补发 loadfile
+      //     20:08:06 Dart  :「视频层尺寸上报」⇒ **这一刻视频层才第一次进树**
+      //
+      //   四环死锁：
+      //     ① mpv 的 render context 只能在**首次 populate** 里创建（Flutter 的
+      //        resource_context 只有 populate 回调时才是 current）；
+      //     ② 引擎只在 Flutter **真的绘制了该 Texture 层**时才调 populate；
+      //     ③ 而 Texture 只在 `_initialized == true` 时才挂进 widget 树
+      //        （本函数原来直接 return LoadingIndicator）；
+      //     ④ `_initialized` 要等 `_waitForPlayerReady` 拿到**有效时长**才置位，
+      //        而时长必须有 loadfile + file-loaded ⇒ 永远等不到。
+      //   ⇒ 双方互等 15 秒，直到 openTimeout 超时。
+      //
+      //   修法：mpv 后端下，只要 textureId 已到手，就**先把 Texture 挂进树**
+      //   （加载指示器叠在上面）。于是 ② 立刻成立 → populate 被调 →
+      //   render context 建好 → deferred 的 loadfile 补发 → 时长就绪 →
+      //   `_initialized` 置位 → 正常显示。起播从 15 秒降到秒级。
+      //
+      //   为什么之前三次「主动催帧」都无效：预热 tick 重建的子树里
+      //   **根本没有 Texture**（此处直接 return 了 LoadingIndicator），
+      //   催的是空气。
+      if (Platform.isLinux && _backend != null && _mpvTextureId != null) {
+        return _buildEarlyTextureLayer();
+      }
       return Center(
         child: TechLoadingIndicator(),
       );
     }
-    return Container(color: Colors.black, child: _backend!.buildVideoWidget());
+    // 🔴 桌面 mpv：原生只给零尺寸锚点，真正出画的是叠上去的 Texture。
+    //    比例不在此层设 FittedBox——与 TV 页同一教训：写死 1920x1080 会
+    //    造成「mpv 铺满拉伸一次 + FittedBox 再错一次」的双重变形，
+    //    正确做法是裸 Texture 铺满，比例交给 mpv 的 keepaspect/panscan。
+    //
+    // 🔴🔴 2026-10-22：必须用 LayoutBuilder 把控件**物理像素**尺寸上报给壳。
+    //    壳据此建 FBO（= 控件尺寸），mpv 才会在该范围内按 video-params
+    //    做 letterbox；否则壳退回按视频尺寸建 FBO，与引擎回调互相重建
+    //    → 黑屏（详见 _reportVideoViewSize 的注释）。
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _reportVideoViewSize(constraints);
+        return Container(
+          color: Colors.black,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_mpvTextureId != null) _warmupTexture(_mpvTextureId!),
+              _backend!.buildVideoWidget(),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildError() {

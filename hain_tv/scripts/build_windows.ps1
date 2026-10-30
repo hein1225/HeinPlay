@@ -10,65 +10,30 @@ $projectDir = Resolve-Path (Join-Path $scriptDir "..")
 # 产物统一输出到「仓库根 dist」——所有平台的最终产物（APK / zip / AppImage / HAP）都归在一处。
 # 若本工程被单独复制出仓库（父目录无 .git），则回退到工程内 dist，保证脚本仍可独立使用。
 $repoRoot = Split-Path -Parent $projectDir
-if (Test-Path (Join-Path $repoRoot ".git")) {
+# 🔴 2026-10-22：兼容「仅同步 hain_tv 子树」的远程构建场景。
+#    win_build_remote.sh 只把 hain_tv/ 推到 Windows 侧，$repoRoot 下没有 .git，
+#    原逻辑会回退到 $projectDir\dist；但我们回收产物的脚本固定取
+#    C:\heinplay\dist\*.zip，两边对不上 → 产物明明构建成功却收不回来。
+#    故额外认一个显式标记：只要 $repoRoot\dist 目录已存在（由同步脚本预建），
+#    就按仓库根 dist 输出。
+$forceRepoDist = Test-Path (Join-Path $repoRoot "dist")
+if ((Test-Path (Join-Path $repoRoot ".git")) -or $forceRepoDist) {
     $distDir = Join-Path $repoRoot "dist"
 } else {
     Write-Warning "未在 $repoRoot 检测到仓库根（无 .git），产物将输出到工程内: $projectDir\dist"
     $distDir = Join-Path $projectDir "dist"
 }
 
-# PUB_CACHE 必须指向项目本地缓存（项目约定），fvp 的 mdk-sdk 已预缓存于此。
-# 若构建进程未继承该环境变量，CMake 会落到全局缓存去下载坏 URL（GitHub latest 的
-# mdk-sdk-windows-x64.7z 已 404），导致配置阶段直接 FATAL_ERROR。这里强制设置以保证命中缓存。
-$projectPubCache = Join-Path $projectDir ".pub-cache"
-$env:PUB_CACHE = $projectPubCache
-
-# 兜底：若 fvp 的 mdk-sdk 缓存缺失（如 pub-cache 被清或 fvp 升级），自动从正确的 GitHub 发布
-# 资产（v0.38.0 的 mdk-sdk-windows-x64-vs2026.7z）下载并解压到对应 fvp 版本目录，避免 fvp 去请求
-# 已失效的 latest/download 链接。正常情况缓存已存在，此处不会联网。
-$sevenZip = "C:\Program Files\7-Zip\7z.exe"
-function Ensure-MdkSdk {
-    $lockRaw = Get-Content (Join-Path $projectDir "pubspec.lock") -Raw -ErrorAction SilentlyContinue
-    if ($lockRaw -notmatch '(?s)\n  fvp:.*?version: "([^"]+)"') {
-        Write-Warning "无法从 pubspec.lock 解析 fvp 版本，跳过 mdk-sdk 兜底检查"
-        return
-    }
-    $fvpVer = $Matches[1]
-    $fvpWin = Join-Path $projectPubCache "hosted/pub.dev/fvp-$fvpVer/windows"
-    $marker = Join-Path $fvpWin "mdk-sdk/lib/cmake/FindMDK.cmake"
-    if (Test-Path $marker) {
-        Write-Output "mdk-sdk 缓存已存在 (fvp $fvpVer)，跳过下载"
-        return
-    }
-    $url = "https://github.com/wang-bin/mdk-sdk/releases/download/v0.38.0/mdk-sdk-windows-x64-vs2026.7z"
-    $tmp = Join-Path $projectDir ".build_tmp"
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-    $zip = Join-Path $tmp "mdk-sdk.7z"
-    Write-Output "mdk-sdk 缓存缺失，预下载 ($url) ..."
-    try {
-        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 180
-    }
-    catch {
-        Write-Warning "mdk-sdk 预下载失败: $_（将回退 fvp 默认下载，可能失败）"
-        return
-    }
-    if (-not (Test-Path $sevenZip)) {
-        Write-Warning "未找到 7z.exe ($sevenZip)，无法解压 mdk-sdk"
-        return
-    }
-    $extract = Join-Path $tmp "extract"
-    Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
-    & $sevenZip x -y $zip -o"$extract" | Out-Null
-    $src = Join-Path $extract "mdk-sdk"
-    if (Test-Path $src) {
-        Copy-Item -Path $src -Destination (Join-Path $fvpWin "mdk-sdk") -Recurse -Force
-        Write-Output "mdk-sdk 已缓存到 $fvpWin"
-    }
-    else {
-        Write-Warning "解压后未找到 mdk-sdk 目录"
-    }
+# PUB_CACHE 统一指向团队工具目录（唯一存放位置），工程内不再保留缓存副本。
+# 🔴 2026-10-22：此前本脚本把 PUB_CACHE 指向工程内 .pub-cache，导致每个工程
+#   各自下载一份（约 2.1GB），与 /opt/team/tool-deps/cache/pub-cache 完全重复。
+#   现统一到 team 目录，三工程共用同一份缓存。
+$teamPubCache = "/opt/team/tool-deps/cache/pub-cache"
+if (Test-Path $teamPubCache) {
+    $env:PUB_CACHE = $teamPubCache
+} else {
+    Write-Warning "未找到统一 pub 缓存 $teamPubCache，将使用 Flutter 默认位置"
 }
-Ensure-MdkSdk
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 

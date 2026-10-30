@@ -17,7 +17,7 @@ API 21 的稳定版本，并使用独立的依赖缓存，与主工程工具链�
 | JDK | `D:\heinplay-legacy\jdk-21.0.2`（由 `android/gradle.properties` 的 `org.gradle.java.home` 钉死） |
 | 目标 API | minSdk **21** / targetSdk 36 |
 | 应用包名 | `com.heinplay.hain_tv_legacy` |
-| 播放后端 | **fvp-only**（ExoPlayer/media3 与 VLC 后端已移除） |
+| 播放后端 | **mpv-only**（官方 libmpv 内核 + 自编译壳；ExoPlayer/media3、VLC 与 fvp 后端均已移除） |
 | 签名 | `android/app/heinplay-tvlegacy.jks`（口令见 `android/key-tvlegacy.properties`，两者均不入库） |
 
 ## 构建
@@ -31,7 +31,7 @@ API 21 的稳定版本，并使用独立的依赖缓存，与主工程工具链�
 
 产物输出到**仓库根** `dist/heinplay-<version>-tvLegacy.apk`。
 
-冷构建约 70 分钟（含 fvp 的 MDK 原生 CMake 编译）；增量通常几分钟。
+冷构建约 70 分钟（含 libmpv 与自写壳的原生 CMake 编译）；增量通常几分钟。
 
 ## CI 构建（GitHub Actions）
 
@@ -63,3 +63,24 @@ API 21 的稳定版本，并使用独立的依赖缓存，与主工程工具链�
 - 本工程持有 `lib/` 的独立副本，因此 tvLegacy 用户的应用内更新检测由本副本自行处理。
 - 共享约定（播放后端、手柄输入、平台判定等）仍以主工程为参照，但**不再自动同步** ——
   两侧各自维护，改动按需对搬。
+
+## 本工程内的范围收敛（2026-09-27）
+
+本工程只构建 tvLegacy（Android TV），因此已把**其他平台的代码与配置**清理干净：
+
+| 已清理 | 内容 |
+|---|---|
+| Dart 入口 | `main.dart` / `main_linux.dart` / `main_mobile.dart` / `main_ohos.dart` / `main_windows.dart` |
+| Dart App 层 | `app_linux.dart` / `app_mobile.dart` / `app_windows.dart` |
+| UI 目录 | `screens/mobile/`、`screens/windows/`、`widgets/mobile/`、`widgets/windows/`、`widgets/linux/` |
+| Android flavor | `productFlavors` 中的 `tv` 与 `mobile`；`android/app/src/tv/`、`android/app/src/mobile/` |
+| 签名配置 | `tv` / `mobile` 的 signingConfigs 与 `key.properties` / `key-mobile.properties` 读取逻辑 |
+
+清理依据是**从 `lib/main_tv.dart` 出发的 import 可达性分析**：以上文件全部不可达，
+删除后 `lib/` 从 131 个 Dart 文件降到 97 个（= 可达集合），构建与 `flutter analyze` 均通过。
+
+> **刻意保留**：`lib/platform/windows_window_utils.dart`、`desktop_fullscreen_mixin.dart`、
+> `lib/services/portable_storage_windows.dart`、`lib/services/app_info_service.dart`
+> 及 `win32` / `window_manager` 依赖 —— 它们被 **TV 主链路**（`screens/live_player_screen.dart`、
+> `services/*`）在顶层 import，删除会直接编译失败；其 Windows 专属调用点都在
+> `Platform.isWindows` 分支内，Android 上永不执行。这与主工程「保留 ohos 分支」同一思路。

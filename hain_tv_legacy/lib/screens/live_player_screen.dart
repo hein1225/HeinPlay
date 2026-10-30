@@ -20,6 +20,8 @@ import '../utils/windows_logger.dart';
 import '../widgets/common/tech_loading_indicator.dart';
 import '../widgets/live/live_player.dart';
 
+import '../utils/log_redactor.dart';
+
 /// 全屏直播播放页。
 ///
 /// 手机端手势：
@@ -457,7 +459,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       );
       debugPrint(
         '[LiveLastChannel] save sourceId=${widget.source.id} '
-        'name=${ch.name} url=${ch.currentUrl}',
+        'name=${ch.name} url=${LogRedactor.redact(ch.currentUrl)}',
       );
     } catch (e, st) {
       debugPrint('[LiveLastChannel] save ERROR: $e\n$st');

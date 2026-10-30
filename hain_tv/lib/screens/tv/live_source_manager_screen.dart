@@ -28,9 +28,6 @@ class _TvLiveSourceManagerScreenState
   bool _loading = true;
   bool _sortMode = false;
 
-  List<LiveSourceConfig> get _userConfigs =>
-      _allConfigs.where((c) => !c.isBuiltin).toList();
-
   final _remoteInputService = RemoteInputService();
   StreamSubscription<void>? _liveSourcesChangedSub;
   bool _qrDialogShowing = false;

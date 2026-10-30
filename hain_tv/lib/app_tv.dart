@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:hain_tv/screens/tv/login_screen.dart';
+import 'package:hain_tv/player/mpv_desktop_backend.dart';
+import 'package:hain_tv/utils/app_logger.dart';
 import 'package:hain_tv/services/gamepad_input_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
@@ -15,13 +20,31 @@ class HainTvApp extends StatefulWidget {
   State<HainTvApp> createState() => _HainTvAppState();
 }
 
-class _HainTvAppState extends State<HainTvApp> {
+class _HainTvAppState extends State<HainTvApp> with WindowListener {
   /// 全局导航 key：供 MaterialApp 管理路由栈（搜索跳转已迁移到 TvShell 的常驻 Tab）。
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
+    // 🔴🔴 2026-10-21 修复「关闭软件卡死」：
+    //    本类此前完全没有窗口关闭处理：既没 addListener(this)，也没 setPreventClose。
+    //    于是用户点关闭 → 窗口被直接销毁 → Flutter 引擎进入拆除流程，但
+    //    mpv 的渲染线程/事件线程仍在跑、EGL 上下文仍被持有、libmpv 从没收到
+    //    dispose → 进程退不掉，表现就是「点关闭后软件卡死」。
+    //    78 日志实证：最后一条是 'FlutterEngineRemoveView ... cannot be removed'，
+    //    之后没有任何 'mpv 已完全关闭' / '事件线程已 join'，即 shutdown 从未执行。
+    //    修法：接管关闭流程，先停 mpv 再销毁窗口，并加超时与 exit 兜底。
+    //
+    // 🔴 2026-10-23 更正过期描述：本类**不是** Linux 桌面的入口。
+    //    Linux 发行版入口是 main_linux.dart → HainLinuxApp（桌面界面 + 桌面播放页）；
+    //    main.dart 现已补上 Linux 分支，同样走 HainLinuxApp。
+    //    本类只服务 Android TV 与「未特指 target」的 TV 形态。
+    if (Platform.isLinux || Platform.isWindows) {
+      windowManager.addListener(this);
+      // 让本回调成为唯一退出路径，保证 mpv 一定被关闭。
+      windowManager.setPreventClose(true);
+    }
     ThemeModeService.instance.addListener(_onThemeChanged);
     ThemeModeService.instance.init();
     // 手柄适配（A=确认/B=返回/方向键）：在按键进入 Flutter 的第一站做映射，
@@ -54,8 +77,44 @@ class _HainTvAppState extends State<HainTvApp> {
 
   @override
   void dispose() {
+    if (Platform.isLinux || Platform.isWindows) {
+      windowManager.removeListener(this);
+    }
     ThemeModeService.instance.removeListener(_onThemeChanged);
     super.dispose();
+  }
+
+  /// 窗口关闭：**先把 mpv 内核彻底关掉**，再销毁窗口，最后无条件退出。
+  ///
+  /// 顺序不能反。mpv 的 render context 释放时要求 EGL 上下文 current，
+  /// 一旦窗口先没了、EGL surface 失效，mpv_render_context_free 就会挂住，
+  /// 进程永远退不出去——这正是之前「关闭卡死」的成因。
+  @override
+  Future<void> onWindowClose() async {
+    debugPrint('HainTvApp 收到窗口关闭请求，开始关闭 mpv');
+    // ① 关 mpv：让壳侧走完整 shutdown（释放 render context、销毁 EGL、
+    //    terminate_destroy、join 事件线程）。最多等 3 秒，绝不无限等。
+    try {
+      await MpvDesktopBackend.shutdownEngine()
+          .timeout(const Duration(seconds: 3));
+      debugPrint('HainTvApp mpv 已关闭');
+    } catch (e) {
+      debugPrint('HainTvApp 关闭 mpv 异常/超时（忽略，继续退出）：$e');
+    }
+    // ② 刷日志（带超时）
+    try {
+      await AppLogger.flush().timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint('HainTvApp 刷日志异常/超时（忽略）：$e');
+    }
+    // ③ 销毁窗口
+    try {
+      await windowManager.destroy().timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint('HainTvApp 销毁窗口异常/超时（忽略）：$e');
+    }
+    // ④ 无条件退出，保证进程不残留。
+    exit(0);
   }
 
   void _onThemeChanged() {

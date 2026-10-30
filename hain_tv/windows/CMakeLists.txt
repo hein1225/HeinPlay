@@ -53,6 +53,11 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
+# 🔴 桌面 mpv 壳：官方 libmpv 内核 + 自写 C++ 壳（src/mpv_desktop/）。
+#   产物 heinplay_mpv_desktop.dll 由下方安装规则放到可执行文件同级，
+#   runner 的 main.cpp 再 GetProcAddress 调它的注册函数。
+include(${CMAKE_CURRENT_SOURCE_DIR}/../src/mpv_desktop/CMakeLists.txt)
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 

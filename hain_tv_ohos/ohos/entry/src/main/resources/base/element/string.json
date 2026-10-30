@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "海因影视主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "海因影视"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "海因影视"
+    },
+    {
+      "name": "reason_keep_background",
+      "value": "播放视频时保持屏幕常亮与后台运行"
+    }
+  ]
+}

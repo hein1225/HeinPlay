@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'log_redactor.dart';
+
 import '../services/portable_storage_windows.dart';
 import '../services/user_data_service.dart';
 
@@ -23,6 +25,9 @@ class AppLogger {
   static String? _logDir;
   static final List<String> _pendingLines = [];
   static bool _flushing = false;
+
+  /// 写盘失败后的连续重试轮数上限（防止 finally 里递归重试变成写盘风暴）。
+  static int _flushRounds = 0;
   static DebugPrintCallback? _originalDebugPrint;
 
   /// 「获取日志」开关的变更监听器。
@@ -105,9 +110,12 @@ class AppLogger {
     if (_originalDebugPrint != null) return;
     _originalDebugPrint = debugPrint;
     debugPrint = (String? message, {int? wrapWidth}) {
-      _originalDebugPrint?.call(message, wrapWidth: wrapWidth);
-      if (message != null && _enabled) {
-        _write(message);
+      // 🔒 隐私：控制台与文件统一脱敏（服务器地址 / 用户名 / 密码），
+      //    保证「获取日志」导出的内容里不含任何可定位到用户的信息。
+      final safe = message == null ? message : LogRedactor.redact(message);
+      _originalDebugPrint?.call(safe, wrapWidth: wrapWidth);
+      if (safe != null && _enabled) {
+        _write(safe);
       }
     };
   }
@@ -231,7 +239,7 @@ class AppLogger {
   /// 仅当钩子尚未安装时（文件日志已开启但日志目录尚不可用的短暂窗口）才由此处
   /// 兜底写入。
   static void log(String tag, String message) {
-    final line = '[${_now()}] [$tag] $message';
+    final line = LogRedactor.redact('[${_now()}] [$tag] $message');
     debugPrint(line);
     if (_enabled && _originalDebugPrint == null) {
       _write(line);
@@ -256,7 +264,7 @@ class AppLogger {
   /// [debugPrint]，不会触发 [_hookDebugPrint] 安装的钩子，所以只要开启就必须
   /// 自己写，否则文件里会缺这部分日志。
   static void logDirect(String tag, String message) {
-    final line = '[${_now()}] [$tag] $message';
+    final line = LogRedactor.redact('[${_now()}] [$tag] $message');
     // ignore: avoid_print
     print(line);
     if (_enabled) {
@@ -269,14 +277,45 @@ class AppLogger {
     await _flushPending();
   }
 
+  /// **同步**写入一行日志（不排队、不限速）。
+  ///
+  /// 用途：诊断「应用卡死」。普通日志走 [debugPrint] 的节流队列 + 异步落盘，
+  /// 一旦 Dart isolate 卡死（同步阻塞或事件循环停摆），队列里剩下的日志**永远
+  /// 写不出去**——表现为「日志在卡死时刻戛然而止」，无法区分是 isolate 被阻塞
+  /// 还是别的什么。
+  ///
+  /// 本方法用 [File.writeAsStringSync] 直接落盘，因此：
+  /// - isolate 被同步阻塞时，最后一行心跳仍能落盘 → 可据此判断卡死点；
+  /// - isolate 整体停摆（VM 级）时不会落盘 → 同样是一种判据。
+  ///
+  /// 注意：同步写盘本身会占用主线程，因此只应由**低频心跳**（10 秒级）使用，
+  /// 不可用于高频日志。
+  static void logSync(String tag, String message) {
+    final line = LogRedactor.redact('[${_now()}] [$tag] $message');
+    // ignore: avoid_print
+    print(line);
+    if (!_enabled) return;
+    final dir = _logDir;
+    if (dir == null) return;
+    try {
+      File(_logFilePath()).writeAsStringSync(
+        '$line\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {
+      // 心跳写盘失败不影响主流程。
+    }
+  }
+
   static void _write(String line) {
     if (!_enabled) return;
-    _pendingLines.add(line);
+    _pendingLines.add(LogRedactor.redact(line));
     scheduleMicrotask(_flushPending);
   }
 
   static void _writeToFile(String line) {
-    _pendingLines.add(line);
+    _pendingLines.add(LogRedactor.redact(line));
     _flushPending();
   }
 
@@ -288,7 +327,19 @@ class AppLogger {
       return;
     }
     _flushing = true;
-    await _ensureInitialized();
+    // 🔴 2026-10-23：_ensureInitialized 也要带超时。
+    //   它内部会做目录探测/文件创建，一旦挂起，`_flushing` 就永远保持 true，
+    //   之后所有日志被 `if (_flushing) return` 直接丢弃 —— 现象是
+    //   「日志写到某处就再也不动了」，下一次复现将完全拿不到证据。
+    try {
+      await _ensureInitialized().timeout(const Duration(seconds: 3));
+    } catch (e) {
+      // ignore: avoid_print
+      print('AppLogger 初始化超时: $e');
+      _pendingLines.clear();
+      _flushing = false;
+      return;
+    }
     if (_logDir == null) {
       _pendingLines.clear();
       _flushing = false;
@@ -301,18 +352,37 @@ class AppLogger {
         buffer.writeln(line);
       }
       _pendingLines.clear();
-      await file.writeAsString(
-        buffer.toString(),
-        mode: FileMode.append,
-        flush: true,
-      );
+      // 🔴 2026-10-20：加超时保护。
+      //    原实现若 writeAsString 挂起（磁盘慢/文件被占用/权限问题），
+      //    `_flushing` 会永远保持 true，后续所有日志被 `if (_flushing) return`
+      //    直接丢弃 —— 现象就是「日志文件只有初始化那几行」。
+      //    真机实测（192.168.8.78）日志只有 84 字节即此因。
+      await file
+          .writeAsString(
+            buffer.toString(),
+            mode: FileMode.append,
+            flush: true,
+          )
+          .timeout(const Duration(seconds: 3));
+      _flushRounds = 0;
     } catch (e) {
       // ignore: avoid_print
       print('AppLogger 写入失败: $e');
     } finally {
       _flushing = false;
-      if (_pendingLines.isNotEmpty) {
+      // 🔴 2026-10-23：限制重试轮数，避免写盘持续失败时无限递归重试
+      //   （finally 里递归调用自身，pendingLines 非空就再来一轮）。
+      //   写盘失败通常是磁盘/占用问题，无限重试只会变成写盘风暴拖慢整机。
+      if (_pendingLines.isNotEmpty && _flushRounds < 5) {
+        _flushRounds++;
         _flushPending();
+      } else {
+        if (_pendingLines.isNotEmpty) {
+          // ignore: avoid_print
+          print('AppLogger 连续写入失败，丢弃 ${_pendingLines.length} 行待写日志');
+          _pendingLines.clear();
+        }
+        _flushRounds = 0;
       }
     }
   }

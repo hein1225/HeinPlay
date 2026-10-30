@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:fvp/fvp.dart';
 import '../services/ad_filter_service.dart';
 import '../services/user_data_service.dart';
 import '../utils/windows_logger.dart';
@@ -14,11 +13,10 @@ const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
-/// 缓冲窗口的适用判据（详见 open() 中 setBufferRange 处的注释）：
-/// 不能按操作系统判断 —— Android 上用户可在「ExoPlayer」与「fvp」两个后端之间切换
-/// （见 player_backend_factory.dart 的 `availableBackends`），只有选中 fvp 时缓冲窗口
-/// 才该由 setBufferRange 控制，选中 ExoPlayer 时由 ExoPlayerBufferConfig 经
-/// MethodChannel 下发。本文件因此以「谁传了 bufferConfig」为判据。
+/// 缓冲窗口的适用判据：本文件服务的后端是 ExoPlayer（Android）。
+/// 🔴 2026-10-16：fvp 已全平台摘除，原先「fvp 走 setBufferRange、ExoPlayer 走
+/// ExoPlayerBufferConfig」的双路径判据随之失效，现仅由 ExoPlayerBufferConfig
+/// 经 MethodChannel 下发。mpv 后端的缓冲档位由 MpvBackend 换算成 cacheSecs 下发。
 
 Map<String, String> _refererFor(String url) {
   try {
@@ -80,30 +78,66 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
   DateTime _lastStallCheck = DateTime.now();
   DateTime _lastProgressLog = DateTime.now();
 
-  // —— 续播 seek 自愈（仅 fvp 需要；ExoPlayer seek 可靠，不走此路径）——
-  // _fvpMode：后端是否为 fvp（由调用方显式传入 isFvpBackend 决定）。
-  // 不再用「fvpVideoDecoders 是否为 null」判定 —— 真机默认硬解时 FvpBackend 传
-  // fvpVideoDecoders=null（解码交 fvp 内置），但后端仍是 fvp；旧判定会把真机 fvp
-  // 误算成 _fvpMode=false，导致续播重试/stall 自愈整段失效（2026-09-24 证伪）。
-  //   故可用它可靠区分后端，避免给 ExoPlayer 加无谓的延迟重试。
-  // _resumeTarget：本次 open 的续播目标位置。fvp 在部分源上 seekTo 仅设置时钟、
+  // —— 续播 seek 自愈 ——
+  //
+  // 🔴 2026-10-16：fvp 摘除后本文件只服务 ExoPlayer。
+  //   原 `_fvpMode` 标志（由调用方传 isFvpBackend 决定）已删除 —— 它存在的前提是
+  //   「同一控制器要区分 fvp / ExoPlayer 两种后端」，而现在不存在 fvp 后端了。
+  //   原先「仅 fvp 走自愈、ExoPlayer seek 可靠不走」的分流，随之简化为：
+  //   自愈逻辑保留（它对任何后端的「时钟在跑但读取线程冻结」都是有效的兜底），
+  //   但不再需要后端判据 —— 由 _resumeTarget 是否存在自然门控。
+  //
+  // _resumeTarget：本次 open 的续播目标位置。部分后端在特定源上 seekTo 仅设置时钟、
   //   读取线程未跳到目标段，且 value.position/value.buffered 会谎报为时钟值，导致
   //   「基于 bufferedEnd 的判定」失效 → 永久冻结（时钟在续播点、读取停在分段 0）。
   //   故在播放中检测到「playing 但 position 持续不推进且非网络缓冲等待」时，主动
   //   重试 seek；重试耗尽则回退从片头播放（远比永久冻结可接受）。
   // _stallRecoveries / _lastStallRecoverAt：限制自愈重试频率，避免正常网络缓冲抖动误触发。
-  bool _fvpMode = false;
   Duration? _resumeTarget;
+
+  // _resumeSeekDeadline：「续播定位自愈」的**有效期截止时间**。
+  //
+  // 🔴 2026-09-28 修复「fvp 偶发播放记录定位失败」（鸿蒙版实证，本工程同源缺陷）。
+  //
+  // 原实现里 _resumeTarget 只在 open() 赋值、仅在「回退片头」时清空，
+  // 于是整个播放期间它都非 null，stall 自愈判定会一直拿着**起播点**做校验。
+  // 用户一旦手动 seek 到别处，自愈就可能把正常播放误判成「续播定位失败」，
+  // 然后 seek 回起播点 —— 观感即「画面突然跳回很久以前的位置」，
+  // 用户报告为「播放记录定位失败」。
+  // 实测日志（设备 9CN0223912004329，鸿蒙版）：
+  //     12:18:31 seek target=695859ms          （用户快退）
+  //     12:18:34 seek target=649320ms          （用户再快退）
+  //              进度 position=649320ms buffered=651199ms   ← 正常播放中
+  //     ⚠️ FVP_DECODE_STALL: position 卡在 649320ms 已≥2s 无推进
+  //     [STALL-RECOVER] 续播定位疑似失败，重试 seek(743000ms) 第 1/3 次
+  //                                    ↑ 跳回起播点 743s
+  //     随后第 2/3、3/3 次，重试耗尽后上抛 onUnrecoverableStall → 重建播放器。
+  //
+  // 该缺陷与平台无关，只取决于「是否用 fvp 后端 + 缓冲预读是否偏弱」：
+  // ExoPlayer 预读充足、buffered 长期领先 position，故安卓默认后端很少触发；
+  // 一旦用户切到 fvp 后端，本工程同样会中招。故与鸿蒙版同步修复。
+  //
+  // 处置：给自愈加明确有效期。真需要自愈的场景是「起播定位后读取线程没跳段」，
+  // 必然在起播后很短时间内暴露；窗口内仍救不回来就说明不是该机制能处理的问题，
+  // 应放手让播放继续，而不是无限期拿旧目标反复 seek。
+  DateTime? _resumeSeekDeadline;
+  static const Duration _resumeSeekWindow = Duration(seconds: 20);
+
   int _stallRecoveries = 0;
   DateTime? _lastStallRecoverAt;
   static const int _maxStallRecoveries = 3;
-  // onUnrecoverableStall：fvp 续播卡死且 App 层 seek 重试/回退片头均 no-op
-  // （reader 真死）时上抛，由播放页重建为 ExoPlayer（保留续播点）。
-  // 仅 _fvpMode=true 且回调已注册时触发。
+  // onUnrecoverableStall：续播定位卡死且 App 层 seek 重试/回退片头均 no-op
+  // （读取线程真死）时上抛，由播放页重建播放器（保留续播点）。
+  // 仅回调已注册时触发。
   VoidCallback? onUnrecoverableStall;
   bool _unrecoverableSignaled = false;
 
   VideoPlayerController? get controller => _controller;
+
+  /// video_player 走 Flutter 纹理，view 由插件内部管理，
+  /// 不依赖播放页先 build 视频层，故无需提前挂载。
+  @override
+  bool get requiresEagerMount => false;
 
   @override
   BoxFit get fit => _fit;
@@ -175,8 +209,6 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     bool isLive = false,
     VideoFormat? formatHint,
     bool preferTextureView = false,
-    bool isFvpBackend = false,
-    List<String>? fvpVideoDecoders,
   }) async {
     await dispose();
     _completedReported = false;
@@ -185,10 +217,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     _lastStallPosition = Duration.zero;
     _lastStallCheck = DateTime.now();
     _lastProgressLog = DateTime.now();
-    // 续播 seek 自愈状态重置（仅 fvp 后端启用；_fvpMode 由调用方显式传入的
-    // isFvpBackend 决定，与解码器配置无关，确保真机硬解 fvp 也能触发续播自愈）
-    _fvpMode = isFvpBackend;
+    // 续播 seek 自愈状态重置（_resumeTarget 在下方按续播点赋值，非空即启用自愈）
     _resumeTarget = null;
+    _resumeSeekDeadline = null;
     _stallRecoveries = 0;
     _lastStallRecoverAt = null;
     _unrecoverableSignaled = false;
@@ -332,26 +363,8 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
 
       _controller!.addListener(_onControllerValueChanged);
 
-      // fvp 解码器设置（仅 fvp 后端透传 fvpVideoDecoders，ExoPlayer 不传此参数
-      // → 走原生默认，不受影响）：
-      // - 硬解设置=开（默认）→ FvpBackend 传 null，不在此强制，交由 fvp 自身
-      //   registerWith 的模拟器感知逻辑决定（真机偏好 MediaCodec 硬解、x86_64 模拟器
-      //   跳过硬解改用 FFmpeg 软解，这正是 1.3.5 能正常播放的原因）。
-      // - 硬解设置=关 → FvpBackend 传 ['FFmpeg']，按用户意图强制软解。
-      // 注意：之前曾在此强制 ['AMediaCodec','FFmpeg']，等于在模拟器上指定了不存在的
-      // AMediaCodec → 解码停滞卡死；现已改回「开硬解不强制」，由 fvp 内置逻辑接管。
-      // 必须在 initialize() 之前设置，且经 fvp 的 FVPControllerExtensions 调用，
-      // ExoPlayer 控制器无此扩展（fvpVideoDecoders 为 null 时不进入本分支）。
-      if (fvpVideoDecoders != null) {
-        try {
-          _controller!.setVideoDecoders(fvpVideoDecoders);
-          debugPrint(
-            'VideoPlayerBackendImpl fvp 视频解码器已强制: ${fvpVideoDecoders.join(',')}',
-          );
-        } catch (e) {
-          debugPrint('VideoPlayerBackendImpl 设置 fvp 视频解码器失败(可忽略): $e');
-        }
-      }
+      // 🔴 2026-10-16：原「fvp 解码器强制」块已删除（fvpVideoDecoders 参数随之移除）。
+      //   ExoPlayer 的解码器选择由原生侧按用户「硬件解码」开关决定，不在此干预。
 
       // 分段耗时日志：直播首次进入偶发长时间无画面，需要区分卡在「创建 controller」
       // 「initialize（原生 prepare / DNS / TLS 握手）」还是后续步骤。仅 debugPrint
@@ -389,100 +402,34 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
             '，首帧就绪 size=${_controller!.value.size}',
       );
 
-      // ── 缓冲窗口下发（fvp 专有扩展 setBufferRange）★ 必须在 initialize() 之后 ──
-      //
-      // 🔴 2026-09-22 定稿根因：此前本段写在 initialize() **之前**，等于从未生效。
-      // fvp 的 FVPControllerExtensions 开头就写明（controller.dart:29）：
-      //   "All methods in this extension must be called after initialized,
-      //    otherwise no effect."
-      // 其 platform 层实现是 null-aware 调用（video_player_mdk.dart:486）：
-      //   `_players[playerId]?.setBufferRange(min: min, max: max, drop: drop);`
-      // initialize() 之前 player 尚未创建、playerId 无效 → `_players[playerId]` 为
-      // null → **整句静默无操作，连异常都不抛**，故外层 try/catch 也拦不到、日志无痕。
-      //
-      // 后果（根因①，2026-09-22 上午修复）：libmdk 一直沿用创建时默认的
-      // `setBufferRange(min: 0)`（max 保持 libmdk 默认，约 4 秒）——
-      //   · 缓冲条永远只有一点点（实测 `value.buffered.last.end` 恒等于 position）；
-      //   · 点播 2 秒/片且含大量 #EXT-X-DISCONTINUITY 的源网络稍慢即断流卡死；
-      //   · 而 ExoPlayer 走 ExoPlayerBufferConfig（MethodChannel，无此时序问题），
-      //     缓冲条一上来就明显 → "同一源 exo 快、fvp 慢"。
-      // 候选原因②（2026-09-22 晚，**未证实**）：注册级 lowLatency=1 在 player 创建
-      // 时写入 `avformat.fflags=+nobuffer`（首包关键帧被丢弃、reader 不预取）且 open
-      // 后无法覆盖。已把 lowLatency 置 0，但 22:21 日志实测症状完全不变 —— 说明
-      // nobuffer 不是充分原因，真正的「position 在 seek 目标附近冻结、buffered 恒等于
-      // position」另有其因（见 seek/进度行里的 [FVP-DIAG] 埋点：bufN 可区分「fvp 从未
-      // 上报缓冲事件」与「上报了但队列为 0」）。
-      //
-      // setBufferRange 是 libmdk 的**运行时**API（可在 prepare 后动态调整预读窗口），
-      // 参考 fvp 自身用法（video_player_mdk.dart:320/322 在 player 级调用）。
-      // 注意其语义：min=起播/重缓冲阈值，max=预读窗口上限。
-      //
-      // setBufferRange 仅 fvp 控制器有此扩展；VLC（Windows 特有）控制器无此扩展，
-      // 调用被 try/catch 静默忽略；ExoPlayer（MethodChannel）不接收该调用。
-      // 「缓冲模式」对 ExoPlayer / VLC 的放大仍各自生效。
-      if (bufferConfig != null) {
-        try {
-          _controller!.setBufferRange(
-            min: bufferConfig.fvpMinMs,
-            max: bufferConfig.fvpMaxMs,
-            drop: bufferConfig.fvpDrop,
-          );
-          WindowsLogger.log(
-            'VideoPlayerBackendImpl',
-            '缓冲窗口已下发（initialize 后）: '
-                'min=${bufferConfig.fvpMinMs}ms max=${bufferConfig.fvpMaxMs}ms '
-                'drop=${bufferConfig.fvpDrop}',
-          );
-        } catch (e) {
-          debugPrint('VideoPlayerBackendImpl setBufferRange 失败(可忽略): $e');
-        }
-      }
+      // 🔴 2026-10-16：原「fvp 缓冲窗口下发（setBufferRange）」整段已删除。
+      //   该扩展仅 fvp/libmdk 控制器提供，fvp 摘除后不再有调用对象。
+      //   「缓冲模式」档位现由各后端各自的通道承担：
+      //     · ExoPlayer → ExoPlayerBufferConfig 经 MethodChannel 下发给原生
+      //     · mpv       → MpvBackend 换算成 cacheSecs 经 open 下发
+      //     · VLC       → vlcCachingMs
 
-      // Windows fvp 直连根因修复双保险：main_windows 已设 demuxer.io=0 让 FFmpeg avio
-      // 继承 player 级 avio.headers 到 HLS 子请求；此处再补设 MDK 的 http-header 属性，
-      // 覆盖 mdkio 旧路径可能残留的 header 不继承问题，确保视频分片请求携带 UA/Referer。
-      if (Platform.isWindows && !needsProxy && isNetwork) {
-        try {
-          final sb = StringBuffer();
-          effectiveHeaders.forEach((k, v) => sb.writeln('$k: $v'));
-          _controller!.setProperty('http-header', sb.toString());
-          debugPrint('VideoPlayerBackendImpl 已补设 Windows 直连 http-header');
-        } catch (e) {
-          debugPrint('VideoPlayerBackendImpl 补设 http-header 失败(可忽略): $e');
-        }
-      }
+      // 🔴 2026-10-16：原「Windows fvp 补设 MDK http-header 属性」块已删除。
+      //   `setProperty` 是 fvp 的 FVPControllerExtensions 扩展方法，不属于
+      //   VideoPlayerController 原生 API —— fvp 摘除后该方法不存在（编译期报错）。
+      //   它原本是为绕过 mdkio 不继承子请求 header 的缺陷而设的双保险；
+      //   mpv 后端不存在该缺陷（原生按 http-header-fields 处理子请求），
+      //   ExoPlayer 则由 ExoPlayerBackend 在原生侧统一设 header。
 
       // 若指定了起始位置（播放记录续播 / 拖进度条），在 initialize() 完成后**立即**
       // seek，再开始播放 —— 即「播放记录第一时间读取」。
       //
-      // 🔴 2026-09-22 修正：fvp 后端此前传 deferStartSeek: true，把定位推迟到
-      // 「起播稳定后再 seek」，用户会先看到片头几十秒才跳走，观感上就是
-      // 「fvp 定位不到播放记录、一播放直接播片头」。
-      //
-      // 当初认定「fvp 在 play() 之前 seek 会卡死」是**误判**：真因是 setBufferRange
-      // 被写在 initialize() 之前而静默失效（见上方缓冲窗口处注释），seek 后需要重新
-      // 缓冲却只有约 4 秒的预读窗口，于是表现为 position 冻结在 seek 目标、
-      // `FVP_DECODE_STALL` 刷屏。缓冲窗口修好后，initialize() 之后直接 seek 安全，
-      // 无需任何延迟。
+      // 🔴 2026-10-16：原 fvp 分支（3 次带抖动延迟重试 + 依赖运行期 stall 自愈兜底）
+      //   已随 fvp 摘除删除。本文件现只服务 ExoPlayer，其 seek 行为可靠，
+      //   沿用「基于实际缓冲位置」的判定 + 失败回退 0 即可。
       //
       // 此处之所以在 play() 之前 seek：让首帧就从目标位置产出，避免从 0 起播后
-      // 再跳一下（ExoPlayer 同理）。
+      // 再跳一下（mpv 同理）。
       if (startAt != null && startAt > Duration.zero) {
         _resumeTarget = startAt;
-        if (isFvpBackend) {
-          // fvp：initialize 之后立即定位到续播点。libmdk 在部分源上会「只设时钟、读取
-          // 线程未跳段」，故做 3 次带抖动的延迟重试（抖动目标绕过 libmdk「已在目标位置」
-          // 的 seek no-op，强制读取线程重跳）。仍失败则由运行时 stall 自愈 / 上抛重建兜底。
-          // ⚠️ 不要改用 prepare(position:)：libmdk 会从第 0 片顺序下载到续播点，init 拖到
-          // 16-32s 并超过 openTimeout（2026-09-24 已撞坑，见上方 initialize 前的回退注释）。
-          for (var attempt = 0; attempt < 3; attempt++) {
-            await Future.delayed(const Duration(milliseconds: 250));
-            final target = attempt == 0
-                ? startAt
-                : startAt + Duration(milliseconds: 500 * attempt);
-            await seek(target);
-          }
-        } else {
+        // 「续播定位自愈」的有效期只到起始定位结束为止，详见 _resumeSeekDeadline 注释。
+        _resumeSeekDeadline = DateTime.now().add(_resumeSeekWindow);
+        {
           await seek(startAt);
           // ExoPlayer：seek 可靠，沿用「基于实际缓冲位置」的判定 + 失败回退 0。
           // 成功定位后 buffered 会预读到目标点，失败则仅覆盖开头几秒。
@@ -510,6 +457,11 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
             );
             await seek(Duration.zero);
           }
+          // ExoPlayer 的定位已在上面同步确认完毕（判据成立即 break），无需运行期再自愈，
+          // 故立即关闭「续播自愈」作用域，避免它在此后整个播放期持续拿起播点做 stall
+          // 校验、把用户的手动 seek 误判为「定位失败」而拉回。
+          _resumeTarget = null;
+          _resumeSeekDeadline = null;
         }
       }
 
@@ -642,8 +594,30 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
               : Duration.zero;
           final _noForwardBuffer =
               _bufferedEnd <= value.position + const Duration(milliseconds: 1000);
+
+          // 🔴 2026-09-28 修复「fvp 偶发播放记录定位失败」（详见 _resumeSeekDeadline 注释）：
+          // 原判据会让自愈在整个播放期持续生效 —— 用户手动 seek 到别处后，
+          // 只要 position 有 2 秒没推进，就会被判成「续播定位失败」并 seek 回起播点。
+          // 这里补两道闸：
+          //  1) 有效期：自愈只服务于「起播定位」这一小段时间（_resumeSeekWindow），
+          //     窗口外一律不再干预，避免拿着旧目标把用户拉回很久以前的位置；
+          //  2) 位置闸：只有当前播放位置仍**停留在续播点附近**时才可能是「定位后没跳段」。
+          //     若用户已经 seek 走了（position 明显偏离 _resumeTarget），那属于用户
+          //     主动操作引发的正常缓冲，绝不该回退到起播点。
+          final _resumeDeadline = _resumeSeekDeadline;
+          final _withinResumeWindow =
+              _resumeDeadline != null && now.isBefore(_resumeDeadline);
+          final _stillNearResumePoint = _resumeTarget != null &&
+              (value.position - _resumeTarget!).abs() <=
+                  const Duration(seconds: 10);
+          if (!_withinResumeWindow && _resumeTarget != null) {
+            // 窗口已过：关闭自愈作用域，之后不再参与判定。
+            _resumeTarget = null;
+            _resumeSeekDeadline = null;
+          }
           if (_resumeTarget != null &&
-              _fvpMode &&
+              _withinResumeWindow &&
+              _stillNearResumePoint &&
               _noForwardBuffer &&
               now
                       .difference(_lastStallRecoverAt ??

@@ -1,8 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
-        <!-- 普通 TV 版面向较新设备，使用 Flutter 默认渲染后端（Impeller + Vulkan），
-             以获得更好的新设备性能和渲染一致性。不覆盖 EnableImpeller，继承主清单默认值。 -->
+        <!-- 不再单独覆盖 EnableImpeller：主清单已全局关闭 Impeller（回退 Skia + GLES）。
+             此处的决策见 android/app/src/main/AndroidManifest.xml 的注释，
+             2026-10-13 由雷电模拟器卡死实测定位（模拟器伪装机型绕过引擎的
+             IsDeviceEmulator() 检测 → 走 Impeller Vulkan → goldfish 驱动不全 → UI 卡死）。
+
+             补充说明：关闭 Impeller 只影响 App 自己的 UI 界面，
+             mpv 播放器内部的 Vulkan（libplacebo + gpu-api=vulkan）不受影响，
+             TV 版的 Vulkan 硬解照常生效。 -->
     </application>
 
 </manifest>

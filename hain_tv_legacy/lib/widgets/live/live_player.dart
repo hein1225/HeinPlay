@@ -5,6 +5,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../player/player_backend_factory.dart';
 import '../../player/video_player_backend.dart';
+import '../../services/playback_activity.dart';
 import '../../theme.dart';
 import '../../utils/windows_logger.dart';
 import '../common/tech_loading_indicator.dart';
@@ -22,7 +23,8 @@ class LivePlayerController {
   bool get isAttached => _state != null;
 
   /// 定位到指定位置（相对当前打开的流起点）。
-  Future<void> seek(Duration position) => _state?._seek(position) ?? Future.value();
+  Future<void> seek(Duration position) =>
+      _state?._seek(position) ?? Future.value();
 
   /// 暂停播放（停止渲染），供退出播放前停止直播流推帧使用。
   Future<void> pause() => _state?._pause() ?? Future.value();
@@ -84,6 +86,9 @@ class _LivePlayerState extends State<LivePlayer> {
   String? _error;
   final List<StreamSubscription> _subscriptions = [];
 
+  /// 全局播放活动会话 id（直播同样占用带宽），dispose 时释放。
+  int? _playbackSessionId;
+
   /// 是否因进入后台（最小化/待机）而关闭了播放。直播流无法暂停，后台时直接
   /// 释放播放器与视频纹理；回到前台后停留在“已停止”态，由用户手动继续播放，
   /// 避免自动重载在部分设备出现黑屏有声音的僵尸播放器。
@@ -92,10 +97,30 @@ class _LivePlayerState extends State<LivePlayer> {
   /// 当前 URL 的就绪回调是否已触发，避免 playing/duration 流重复回调。
   bool _readyNotified = false;
 
+  /// 🔴 2026-10-07：requiresEagerMount 后端（mpv）的常驻视频层实例。
+  ///
+  /// 与点播页 player_screen 同一套「纹理出画路线 B」：PlatformView 一旦被重建，
+  /// 原生侧会销毁旧 Player（连同 viewId）并新建一个，导致播放中断、Dart 侧持有
+  /// 的 _viewId 失效。故缓存后不再重建，仅切换显隐。
+  ///
+  /// 【为什么直播必须走这条路】mpv 的 buildVideoWidget() 在纹理模式下只返回一个
+  /// 透明零尺寸锚点（仅用于触发原生 create → registerTexture 拿 textureId），
+  /// 真实画面必须由播放页用 Texture(textureId) 叠加显示。此前直播页直接
+  /// `_backend!.buildVideoWidget()` 单层出画，结果就是**有声音无画面**。
+  Widget? _eagerVideoLayer;
+
+  /// ⚠️ 2026-10-12 直播绿屏诊断：上一次打印的显示状态指纹（值变化才打印）。
+  ///   上一轮埋点误加在点播页 player_screen.dart，直播侧一条都没有，
+  ///   导致 RTSP 绿屏复现时拿不到任何 Dart 侧状态，此处补齐。
+  String? _liveGreenDiagKey;
+
   @override
   void initState() {
     super.initState();
     widget.controller?._attach(this);
+    // 直播流持续拉流，同样要占带宽：申请播放会话让后台测速让路。
+    _playbackSessionId = PlaybackActivity.instance.openSession();
+    PlaybackActivity.instance.reportPlaying(_playbackSessionId ?? -1, true);
     _initBackend();
   }
 
@@ -171,7 +196,15 @@ class _LivePlayerState extends State<LivePlayer> {
   Future<void> _initBackend() async {
     final backend = await PlayerBackendFactory.createForLive();
     _backend = backend;
+    // 后端已更换：丢弃旧的常驻视频层，否则会复用上一个后端的 PlatformView。
+    _eagerVideoLayer = null;
     backend.fit = BoxFit.contain;
+    // 纹理就绪后重建，让 Texture(textureId) 出画。
+    _subscriptions.add(
+      backend.textureReadyStream.listen((_) {
+        if (mounted) setState(() {});
+      }),
+    );
     _subscriptions
       ..add(
         backend.playingStream.listen((_) {
@@ -254,6 +287,12 @@ class _LivePlayerState extends State<LivePlayer> {
     for (final sub in _subscriptions) {
       sub.cancel();
     }
+    // 释放播放会话：后台测速恢复全速
+    final sessionId = _playbackSessionId;
+    if (sessionId != null) {
+      PlaybackActivity.instance.closeSession(sessionId);
+      _playbackSessionId = null;
+    }
     // 销毁播放器后端。
     //
     // 立即销毁时 VideoPlayer 纹理仍挂载于正在卸载的子树，Windows FVP 释放
@@ -262,14 +301,25 @@ class _LivePlayerState extends State<LivePlayer> {
     final backend = _backend;
     _backend = null;
     if (backend != null) {
+      // 🔴 2026-10-24：把 `catchError().then()` 改成 `then().catchError()`。
+      //
+      //   原写法的问题：catchError 的回调返回后 Future 仍以**成功**完成，
+      //   于是后面的 then 照样执行 —— 暂停失败时日志会先打失败再打「pause
+      //   完成」，自相矛盾，误导排障。
+      //
+      //   ⚠️ 只调整日志分支，**不改动调用顺序与任何时序参数**（pause 仍
+      //      先于下方 500ms 延迟销毁），故桌面端行为完全不变。
       unawaited(
-        backend.pause().catchError((Object e) {
-          // 快速换台时老 backend 的原生 player 可能已部分释放，pause 抛 NPE 是良性竞态，
-          // 仅 debugPrint（release 不输出），不刷日志文件，避免误导为崩溃。
-          debugPrint('LivePlayer 退出暂停播放器（良性竞态）: $e');
-        }).then((_) {
-          WindowsLogger.log('LivePlayer', 'pause 完成');
-        }),
+        backend
+            .pause()
+            .then((_) {
+              WindowsLogger.log('LivePlayer', 'pause 完成');
+            })
+            .catchError((Object e) {
+              // 快速换台时老 backend 的原生 player 可能已部分释放，pause 抛 NPE 是良性竞态，
+              // 仅 debugPrint（release 不输出），不刷日志文件，避免误导为崩溃。
+              debugPrint('LivePlayer 退出暂停播放器（良性竞态）: $e');
+            }),
       );
       unawaited(
         Future<void>.delayed(Duration(milliseconds: 500), () async {
@@ -289,6 +339,66 @@ class _LivePlayerState extends State<LivePlayer> {
     WindowsLogger.log('LivePlayer', 'dispose 结束');
   }
 
+  /// 构建视频层（纹理出画路线 B，与点播页 player_screen 一致）。
+  ///
+  /// 【为什么需要】mpv 的纹理模式下 `buildVideoWidget()` 返回的 PlatformView
+  /// 只是「挂载锚点」——它进入渲染树会触发原生 create → registerTexture 拿到
+  /// textureId，本体透明不出画；真实画面由 `Texture(textureId)` 叠加显示。
+  /// 二者必须叠加共存（锚点必常驻，否则 create 不触发）。
+  ///
+  /// 表面路线（SurfaceView）或非纹理后端：`buildVideoWidget()` 返回的就是
+  /// 真实画面载体，直接单层渲染，**不能**再套 Opacity(0) 当锚点用。
+  Widget _buildVideoLayer() {
+    final backend = _backend!;
+    final textureId = backend.textureId;
+    final textureReady = textureId != null && textureId >= 0;
+    // 常驻锚点：整个播放期复用同一实例，重建会导致原生 Player 被销毁重建。
+    final anchor = _eagerVideoLayer ??= backend.buildVideoWidget();
+
+    // ⚠️ 2026-10-12 直播绿屏诊断（只打印，不改行为）。
+    //   上一轮的 4 处绿屏埋点全部加在了点播页 player_screen.dart，
+    //   而**直播走的是本文件**，导致 RTSP 会话期间一条诊断都没有，
+    //   白白浪费了一轮真机复现。此处补齐直播侧的同款指纹。
+    //
+    //   与点播页的关键差异（可能就是绿屏成因）：
+    //     点播 player_screen.dart：showVideo = _initialized && _locateGateOpen
+    //                               && textureReady，并用 ColoredBox 黑遮罩
+    //                               兜住「未就绪」的中间态；
+    //     直播本文件：只要 textureId != null 就**裸显示 Texture**，
+    //                 既不看 _initialized，也没有黑遮罩。
+    //   若 mpv 尚未出画，纹理缓冲区的原始内容（YUV 全零 ≈ 深绿）会被直接合成上屏。
+    final diagKey = '$textureId|$textureReady|$_initializing|$_error|${backend.runtimeType}';
+    if (_liveGreenDiagKey != diagKey) {
+      _liveGreenDiagKey = diagKey;
+      debugPrint(
+        '[直播绿屏诊断] textureId=$textureId textureReady=$textureReady '
+        'initializing=$_initializing error=$_error '
+        'backend=${backend.runtimeType}',
+      );
+    }
+
+    return SizedBox.expand(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 挂载锚点（AndroidView，透明），常驻以触发原生 create/registerTexture。
+          Opacity(opacity: 0.0, child: anchor),
+          // 真实画面：纹理就绪后叠加 Texture 显示。
+          //
+          // ⚠️ 2026-10-12：曾在此加过 `if (!_initializing) ColoredBox(黑遮罩)`
+          //   试图用黑底盖住「未出画」的中间态来消除绿屏。**真机实测已推翻该假设**：
+          //   关闭硬件解码后同一 RTSP 源（192.168.8.2）完全正常，
+          //   而软解与硬解走的是**同一个 Texture 显示路径**。
+          //   ⇒ 绿屏与显示层/时序无关，纯属硬解路径的色彩转换错误。
+          //   若保留黑遮罩，只会在每个频道起播时多盖一层黑（1.9 秒），
+          //   既治不好绿屏，又伤了原本正常的源，故已回退，仅保留本诊断打印。
+          if (textureReady)
+            Texture(textureId: textureId),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -296,13 +406,11 @@ class _LivePlayerState extends State<LivePlayer> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (_backend != null) _backend!.buildVideoWidget(),
+          if (_backend != null) _buildVideoLayer(),
           if (_initializing && widget.showOverlay)
             Container(
               color: Colors.black54,
-              child: Center(
-                child: TechLoadingIndicator(),
-              ),
+              child: Center(child: TechLoadingIndicator()),
             ),
           if (_error != null && widget.showOverlay)
             Container(

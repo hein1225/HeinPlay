@@ -15,6 +15,10 @@ import 'video_player_backend_impl.dart';
 class ExoPlayerBackend implements VideoPlayerBackend {
   final VideoPlayerBackendImpl _impl = VideoPlayerBackendImpl();
 
+  /// ExoPlayer 走 Flutter 纹理，不依赖 PlatformView 创建时序，无需提前挂载。
+  @override
+  bool get requiresEagerMount => false;
+
   @override
   BoxFit get fit => _impl.fit;
   @override

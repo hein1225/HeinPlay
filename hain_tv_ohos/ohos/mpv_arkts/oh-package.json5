@@ -1,0 +1,22 @@
+{
+  "name": "@mpv-ohos/mpv-arkts",
+  "version": "1.0.0",
+  "description": "A mpv player for HarmonyOS, based on ArkTS",
+  "main": "Index.ets",
+  "author": {
+    "name": "ErBW_s",
+    "email": "erbws@qq.com"
+  },
+  "license": "MIT",
+  "compatibleSdkType": "HarmonyOS",
+  "compatibleSdkVersion": "20",
+  "dependencies": {
+    "@ohos/flutter_ohos": "file:../har/flutter.har"
+  },
+  "homepage": "https://github.com/mpv-ohos/mpv-arkts",
+  "repository": "https://github.com/mpv-ohos/mpv-arkts",
+  "keywords": [
+    "mpv",
+    "player"
+  ]
+}

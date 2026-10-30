@@ -65,7 +65,10 @@ class RemoteInputService {
 
   void _setCorsHeaders(HttpResponse response) {
     response.headers.add('Access-Control-Allow-Origin', '*');
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    response.headers.add(
+      'Access-Control-Allow-Methods',
+      'GET, POST, DELETE, OPTIONS',
+    );
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
   }
 
@@ -75,8 +78,9 @@ class RemoteInputService {
   /// 手机端「扫码登录」结果处理器：由 TV 登录页注册。服务端 /login 接口
   /// await 其返回值，把 TV 端真实登录结果（含错误信息）回传给手机登录页。
   Future<Map<String, dynamic>> Function(Map<String, dynamic>)? _loginHandler;
-  void setLoginHandler(Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h) =>
-      _loginHandler = h;
+  void setLoginHandler(
+    Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h,
+  ) => _loginHandler = h;
 
   final _serverConfigController =
       StreamController<Map<String, String>>.broadcast();
@@ -85,10 +89,11 @@ class RemoteInputService {
 
   /// 手机端子账号保存/切换结果处理器：由 TvShell 注册。服务端 /sub_account
   /// 接口 await 其返回值，把真实结果（含错误）回传给手机页。
-  Future<Map<String, dynamic>> Function(Map<String, dynamic>)? _subAccountHandler;
+  Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+  _subAccountHandler;
   void setSubAccountHandler(
-          Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h) =>
-      _subAccountHandler = h;
+    Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h,
+  ) => _subAccountHandler = h;
 
   final _liveSourcesChangedController = StreamController<void>.broadcast();
   Stream<void> get onLiveSourcesChanged => _liveSourcesChangedController.stream;
@@ -99,10 +104,11 @@ class RemoteInputService {
 
   /// 手机账号管理命令结果处理器：由 TvShell 注册。服务端 /api/command/account
   /// await 其返回值，把切换/删除/退出等真实结果（含错误）回传给手机页。
-  Future<Map<String, dynamic>> Function(Map<String, dynamic>)? _accountActionHandler;
+  Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+  _accountActionHandler;
   void setAccountActionHandler(
-          Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h) =>
-      _accountActionHandler = h;
+    Future<Map<String, dynamic>> Function(Map<String, dynamic>)? h,
+  ) => _accountActionHandler = h;
 
   /// 账号数据（子账号/激活态）变化后广播，供账号管理页刷新 UI。
   /// 手机端输入子账号或执行切换/删除/退出等动作后，由 tv_shell 统一处理后触发，
@@ -784,14 +790,16 @@ class RemoteInputService {
     List<PlayerBackendType> backends,
     PlayerBackendType platformDefault,
   ) {
+    // 🔴 2026-10-16：fvp 条目保留仅为兼容「历史存储值仍可能为 fvp」的情形
+    //   （真实列表来自 availableBackends，其中已无 fvp，故实际不会展示）。
     const titles = {
       PlayerBackendType.exo: 'ExoPlayer',
-      PlayerBackendType.fvp: 'FVP',
+      PlayerBackendType.fvp: 'FVP（已移除）',
       PlayerBackendType.vlc: 'VLC',
     };
     const subtitles = {
       PlayerBackendType.exo: 'Android 原生播放器，硬解能力强',
-      PlayerBackendType.fvp: '基于 libmdk，兼容性较好',
+      PlayerBackendType.fvp: '基于 libmdk，已于 1.4.0 起停用',
       PlayerBackendType.vlc: '基于 libvlc，格式兼容性最强',
     };
     return backends.map((t) {
@@ -821,7 +829,7 @@ class RemoteInputService {
       );
     } catch (e) {
       vodBackends = const [
-        <String, String>{'value': 'fvp', 'title': 'FVP（默认）'}
+        <String, String>{'value': 'fvp', 'title': 'FVP（默认）'},
       ];
       liveBackends = vodBackends;
     }
@@ -829,18 +837,42 @@ class RemoteInputService {
 
     final DOUBAN_OPTIONS = const <Map<String, String>>[
       const {'value': 'direct', 'title': '直连（默认）', 'subtitle': '直接访问豆瓣官方接口'},
-      const {'value': 'cdnTencent', 'title': '腾讯云 CDN', 'subtitle': '通过腾讯云 CDN 加速访问'},
-      const {'value': 'cdnAliyun', 'title': '阿里云 CDN', 'subtitle': '通过阿里云 CDN 加速访问'},
-      const {'value': 'corsProxy', 'title': 'CORS 代理', 'subtitle': '通过 CORS 代理服务器访问'},
+      const {
+        'value': 'cdnTencent',
+        'title': '腾讯云 CDN',
+        'subtitle': '通过腾讯云 CDN 加速访问',
+      },
+      const {
+        'value': 'cdnAliyun',
+        'title': '阿里云 CDN',
+        'subtitle': '通过阿里云 CDN 加速访问',
+      },
+      const {
+        'value': 'corsProxy',
+        'title': 'CORS 代理',
+        'subtitle': '通过 CORS 代理服务器访问',
+      },
     ];
     final BANGUMI_API_OPTIONS = const <Map<String, String>>[
       const {'value': 'direct', 'title': '直连（直接访问 api.bgm.tv）', 'subtitle': ''},
-      const {'value': 'cmliussss', 'title': 'Bangumi 反代 By CMLiussss（解决服务器被墙）', 'subtitle': ''},
+      const {
+        'value': 'cmliussss',
+        'title': 'Bangumi 反代 By CMLiussss（解决服务器被墙）',
+        'subtitle': '',
+      },
       const {'value': 'custom', 'title': '自定义反代地址', 'subtitle': ''},
     ];
     final BANGUMI_IMG_OPTIONS = const <Map<String, String>>[
-      const {'value': 'direct', 'title': '直连（直接请求 lain.bgm.tv）', 'subtitle': ''},
-      const {'value': 'cmliussss', 'title': 'Bangumi 图片 CDN By CMLiussss', 'subtitle': ''},
+      const {
+        'value': 'direct',
+        'title': '直连（直接请求 lain.bgm.tv）',
+        'subtitle': '',
+      },
+      const {
+        'value': 'cmliussss',
+        'title': 'Bangumi 图片 CDN By CMLiussss',
+        'subtitle': '',
+      },
       const {'value': 'custom', 'title': '自定义代理', 'subtitle': ''},
     ];
     final CACHE_OPTIONS = const <Map<String, String>>[
@@ -853,7 +885,11 @@ class RemoteInputService {
       const {'value': 'standard', 'title': '标准', 'subtitle': '常规缓冲策略，兼顾流畅与延迟'},
       const {'value': 'enhanced', 'title': '增强', 'subtitle': '更大缓冲，弱网环境更稳'},
       const {'value': 'power', 'title': '强力', 'subtitle': '最大缓冲，优先保证不卡顿'},
-      const {'value': 'lowLatency', 'title': '低延迟', 'subtitle': '最小缓冲，直播/实时更跟手'},
+      const {
+        'value': 'lowLatency',
+        'title': '低延迟',
+        'subtitle': '最小缓冲，直播/实时更跟手',
+      },
     ];
     final AUTO_SWITCH_TIMEOUT_OPTIONS = const <Map<String, String>>[
       const {'value': '10', 'title': '10 秒', 'subtitle': '默认较短等待时间'},
@@ -874,15 +910,23 @@ class RemoteInputService {
     String _h2(String t) => "<h2>${esc(t)}</h2>";
     String sw(String g, String k, String t, String h, bool v) =>
         "<div class='row'><div class='row-label'><div class='label'>${esc(t)}</div>${h.isNotEmpty ? "<div class='hint'>${esc(h)}</div>" : ""}</div><label class='switch'><input type='checkbox' ${v ? 'checked' : ''} onchange=\"applySetting('$g','$k',this.checked)\"><span class='slider'></span></label></div>";
-    String radio(String g, String k, String t, List<Map<String, String>> opts, String v) {
+    String radio(
+      String g,
+      String k,
+      String t,
+      List<Map<String, String>> opts,
+      String v,
+    ) {
       var h = "<div class='card'><div class='card-title'>${esc(t)}</div>";
       for (final o in opts) {
         final sel = (o['value'] ?? '') == v;
         final sub = o['subtitle'] ?? '';
-        h += "<div class='opt ${sel ? 'sel' : ''}' onclick=\"applySetting('$g','$k','${esc(o['value'])}', this)\"><div><div class='opt-label'>${esc(o['title'])}</div>${sub.isNotEmpty ? "<div class='hint'>${esc(sub)}</div>" : ''}</div><span class='check'>${sel ? '✓' : ''}</span></div>";
+        h +=
+            "<div class='opt ${sel ? 'sel' : ''}' onclick=\"applySetting('$g','$k','${esc(o['value'])}', this)\"><div><div class='opt-label'>${esc(o['title'])}</div>${sub.isNotEmpty ? "<div class='hint'>${esc(sub)}</div>" : ''}</div><span class='check'>${sel ? '✓' : ''}</span></div>";
       }
       return h + "</div>";
     }
+
     String txt(String g, String k, String t, String h, String v, String ph) =>
         "<div class='field'><label>${esc(t)}</label>${h.isNotEmpty ? "<div class='hint' style='margin-bottom:6px;'>${esc(h)}</div>" : ''}<input id='txt_${esc(k)}' value='${esc(v)}' placeholder='${esc(ph)}'><button class='primary' onclick=\"applySetting('$g','$k',document.getElementById('txt_${esc(k)}').value)\">保存</button></div>";
     String action(String id, String t, String h) =>
@@ -899,9 +943,12 @@ class RemoteInputService {
     final account = (snapshot['account'] as Map?) ?? <String, dynamic>{};
 
     String catHome() {
-      final intro = "海因影视是一款基于 Flutter 开发的跨平台影视应用，TV 版支持多源播放、豆瓣数据展示等功能。手机版与 Windows 版本可前往下方开源仓库下载。";
-      var h = "<div class='card'><div class='label'>软件介绍</div><div class='hint' style='line-height:1.6;'>${esc(intro)}</div></div>";
-      h += "<div class='card'><div class='label'>下载与开源</div><div class='hint'>手机版 / Windows 版下载与源码：</div><a class='link' href='https://gitcode.com/gcw_QbmhmbO8/HeinPlay' target='_blank'>国内仓库（GitCode）</a><a class='link' href='https://github.com/hein1225/HeinPlay' target='_blank'>GitHub 仓库</a></div>";
+      final intro =
+          "海因影视是一款基于 Flutter 开发的跨平台影视应用，TV 版支持多源播放、豆瓣数据展示等功能。手机版与 Windows 版本可前往下方开源仓库下载。";
+      var h =
+          "<div class='card'><div class='label'>软件介绍</div><div class='hint' style='line-height:1.6;'>${esc(intro)}</div></div>";
+      h +=
+          "<div class='card'><div class='label'>下载与开源</div><div class='hint'>手机版 / Windows 版下载与源码：</div><a class='link' href='https://gitcode.com/gcw_QbmhmbO8/HeinPlay' target='_blank'>国内仓库（GitCode）</a><a class='link' href='https://github.com/hein1225/HeinPlay' target='_blank'>GitHub 仓库</a></div>";
       return h;
     }
 
@@ -922,92 +969,288 @@ class RemoteInputService {
       if (subConfigured) {
         h += "<div class='card'><div class='label'>账号切换</div>";
         if (!active) {
-          h += actionAcc("switch_sub", "切换为子账号",
-              "切换到已保存的子账号，电视实时响应");
+          h += actionAcc("switch_sub", "切换为子账号", "切换到已保存的子账号，电视实时响应");
         } else {
-          h += actionAcc("switch_main", "切换为主账号",
-              "切回主账号，电视实时响应");
+          h += actionAcc("switch_main", "切换为主账号", "切回主账号，电视实时响应");
         }
-        h += actionAcc("delete_sub", "删除子账号",
-            "删除本地保存的子账号信息（若正在使用则回退主账号）");
+        h += actionAcc("delete_sub", "删除子账号", "删除本地保存的子账号信息（若正在使用则回退主账号）");
         h += "</div>";
-        h += "<div class='card'><div class='label'>修改子账号</div><div class='hint'>点下方按钮可修改已保存的子账号</div><button class='primary' onclick='toggleSubEdit()'>修改子账号</button><div id='subEdit' style='display:none;margin-top:10px;'><div class='field'><input id='su' placeholder='用户名' value='${esc(su)}'></div><div class='field'><input id='sp' type='password' placeholder='密码'></div><button class='primary' onclick='sendSub()'>保存并切换</button></div></div>";
+        h +=
+            "<div class='card'><div class='label'>修改子账号</div><div class='hint'>点下方按钮可修改已保存的子账号</div><button class='primary' onclick='toggleSubEdit()'>修改子账号</button><div id='subEdit' style='display:none;margin-top:10px;'><div class='field'><input id='su' placeholder='用户名' value='${esc(su)}'></div><div class='field'><input id='sp' type='password' placeholder='密码'></div><button class='primary' onclick='sendSub()'>保存并切换</button></div></div>";
       } else {
-        h += "<div class='card'><div class='label'>配置子账号</div><div class='hint'>填写用户名和密码后保存，电视将切换为该子账号</div><div class='field'><input id='su' placeholder='用户名' value='${esc(su)}'></div><div class='field'><input id='sp' type='password' placeholder='密码'></div><button class='primary' onclick='sendSub()'>保存并切换</button></div>";
+        h +=
+            "<div class='card'><div class='label'>配置子账号</div><div class='hint'>填写用户名和密码后保存，电视将切换为该子账号</div><div class='field'><input id='su' placeholder='用户名' value='${esc(su)}'></div><div class='field'><input id='sp' type='password' placeholder='密码'></div><button class='primary' onclick='sendSub()'>保存并切换</button></div>";
       }
       h += actionAcc("logout", "退出登录", "清除本地登录信息并返回登录页");
       return h;
     }
+
     String catServer() =>
         section("服务器地址") +
-        txt("server", "internetUrl", "互联网服务器地址", "", (server['serverUrl']?.toString() ?? ""), "") +
-        txt("server", "backupUrl", "局域网/备用服务器地址（选填）", "", (server['backupServerUrl']?.toString() ?? ""), "") +
+        txt(
+          "server",
+          "internetUrl",
+          "互联网服务器地址",
+          "",
+          (server['serverUrl']?.toString() ?? ""),
+          "",
+        ) +
+        txt(
+          "server",
+          "backupUrl",
+          "局域网/备用服务器地址（选填）",
+          "",
+          (server['backupServerUrl']?.toString() ?? ""),
+          "",
+        ) +
         section("连接策略") +
-        sw("server", "autoSelectLowLatency", "自动选择低延迟服务器", "优先连接延迟更低的服务器节点", server['autoSelectLowLatency'] == true) +
-        sw("server", "preferIpv6", "优先使用 IPv6", "在支持时优先通过 IPv6 连接", server['preferIpv6'] == true) +
+        sw(
+          "server",
+          "autoSelectLowLatency",
+          "自动选择低延迟服务器",
+          "优先连接延迟更低的服务器节点",
+          server['autoSelectLowLatency'] == true,
+        ) +
+        sw(
+          "server",
+          "preferIpv6",
+          "优先使用 IPv6",
+          "在支持时优先通过 IPv6 连接",
+          server['preferIpv6'] == true,
+        ) +
         section("维护") +
         action("server_speedtest", "立即测试并切换", "手动测试服务器延迟并切换到最优地址，电视实时响应");
     String catVod() =>
         section("点播设置") +
-        radio("vod", "playerBackend", "点播源默认播放器", vodBackends, (vod['playerBackend']?.toString() ?? "")) +
-        sw("vod", "autoSkip", "自动跳过片头片尾", "到达片头/片尾区域时自动跳转", vod['autoSkip'] == true) +
-        sw("vod", "autoPlayNext", "自动播放下一集", "片尾结束后自动播放下一集", vod['autoPlayNext'] == true) +
-        sw("vod", "autoSpeedTest", "进入详情页自动测速", "多源时自动测试各源速度并排序，关闭后仍支持手动测速", vod['autoSpeedTest'] == true) +
-        sw("vod", "autoSwitchSource", "播放失败自动切换播放源", "当前源无法播放时按测速顺序自动尝试其他源", vod['autoSwitchSource'] == true) +
-        radio("vod", "autoSwitchSourceTimeout", "自动换源超时时间", AUTO_SWITCH_TIMEOUT_OPTIONS, (vod['autoSwitchSourceTimeout']?.toString() ?? "15")) +
-        txt("vod", "m3u8ProxyUrl", "M3U8 代理地址", "配置后 M3U8/HLS 播放地址将通过代理请求，用于解决跨域或 Referer 限制", (vod['m3u8ProxyUrl']?.toString() ?? ""), "例如 http://127.0.0.1:8080/proxy?url=") +
-        sw("vod", "adFilter", "M3U8 去广告（本地过滤）", "播放 M3U8 时使用本地规则过滤片头贴片广告", vod['adFilter'] == true) +
-        sw("vod", "hardwareDecoding", "硬件解码", "关闭后可能解决部分花屏问题", vod['hardwareDecoding'] == true) +
-        radio("vod", "bufferProfile", "缓冲模式", BUFFER_PROFILE_OPTIONS, (vod['bufferProfile']?.toString() ?? "standard"));
+        radio(
+          "vod",
+          "playerBackend",
+          "点播源默认播放器",
+          vodBackends,
+          (vod['playerBackend']?.toString() ?? ""),
+        ) +
+        sw(
+          "vod",
+          "autoSkip",
+          "自动跳过片头片尾",
+          "到达片头/片尾区域时自动跳转",
+          vod['autoSkip'] == true,
+        ) +
+        sw(
+          "vod",
+          "autoPlayNext",
+          "自动播放下一集",
+          "片尾结束后自动播放下一集",
+          vod['autoPlayNext'] == true,
+        ) +
+        sw(
+          "vod",
+          "autoSpeedTest",
+          "进入详情页自动测速",
+          "多源时自动测试各源速度并排序，关闭后仍支持手动测速",
+          vod['autoSpeedTest'] == true,
+        ) +
+        sw(
+          "vod",
+          "autoSwitchSource",
+          "播放失败自动切换播放源",
+          "当前源无法播放时按测速顺序自动尝试其他源",
+          vod['autoSwitchSource'] == true,
+        ) +
+        radio(
+          "vod",
+          "autoSwitchSourceTimeout",
+          "自动换源超时时间",
+          AUTO_SWITCH_TIMEOUT_OPTIONS,
+          (vod['autoSwitchSourceTimeout']?.toString() ?? "15"),
+        ) +
+        txt(
+          "vod",
+          "m3u8ProxyUrl",
+          "M3U8 代理地址",
+          "配置后 M3U8/HLS 播放地址将通过代理请求，用于解决跨域或 Referer 限制",
+          (vod['m3u8ProxyUrl']?.toString() ?? ""),
+          "例如 http://127.0.0.1:8080/proxy?url=",
+        ) +
+        sw(
+          "vod",
+          "adFilter",
+          "M3U8 去广告（本地过滤）",
+          "播放 M3U8 时使用本地规则过滤片头贴片广告",
+          vod['adFilter'] == true,
+        ) +
+        sw(
+          "vod",
+          "hlsPrefetch",
+          "HLS 并发分片预取",
+          "开启后并发预取后续分片，弱网/换段缓冲更快；会额外消耗带宽（建议 Wi-Fi 下开启）",
+          vod['hlsPrefetch'] == true,
+        ) +
+        sw(
+          "vod",
+          "hardwareDecoding",
+          "硬件解码",
+          "仅对 MPV 播放器有效；关闭后强制软解，可能解决部分花屏问题",
+          vod['hardwareDecoding'] == true,
+        ) +
+        radio(
+          "vod",
+          "bufferProfile",
+          "缓冲模式",
+          BUFFER_PROFILE_OPTIONS,
+          (vod['bufferProfile']?.toString() ?? "standard"),
+        );
     String catLive() {
-      var h = section("换台优化") +
-          sw("live", "seamlessSwitch", "无缝换台", "开启后换台时当前画面继续播放，目标频道在后台预载，就绪后再切换", live['seamlessSwitch'] == true) +
-          sw("live", "fcc", "FCC 快速换台", "开启后优先使用直播源提供的 FCC 地址拉流，缩短换台等待", live['fcc'] == true);
-      h += section("直播设置") +
-          sw("live", "localProxy", "本地 M3U8 代理", "开启后直播 M3U8 经本地代理转发，用于排查/兼容个别直播源", live['localProxy'] == true) +
-          radio("live", "livePlayerBackend", "直播默认播放器", liveBackends, (live['livePlayerBackend']?.toString() ?? "")) +
-          sw("live", "lunaTvEnabled", "启用 LunaTV 服务器直播源", "关闭后将不再获取 LunaTV 服务端提供的直播频道", live['lunaTvEnabled'] == true) +
-          sw("live", "epgEnabled", "加载 EPG 节目单", "关闭后不拉取节目单与时移信息，直播连接更快", live['epgEnabled'] == true);
-      h += section("直播源缓存") +
-          radio("live", "cacheHours", "直播源缓存时间", CACHE_OPTIONS, (live['cacheHours']?.toString() ?? "24"));
+      var h =
+          section("换台优化") +
+          sw(
+            "live",
+            "seamlessSwitch",
+            "无缝换台",
+            "开启后换台时当前画面继续播放，目标频道在后台预载，就绪后再切换",
+            live['seamlessSwitch'] == true,
+          ) +
+          sw(
+            "live",
+            "fcc",
+            "FCC 快速换台",
+            "开启后优先使用直播源提供的 FCC 地址拉流，缩短换台等待",
+            live['fcc'] == true,
+          );
+      h +=
+          section("直播设置") +
+          sw(
+            "live",
+            "localProxy",
+            "本地 M3U8 代理",
+            "开启后直播 M3U8 经本地代理转发，用于排查/兼容个别直播源",
+            live['localProxy'] == true,
+          ) +
+          radio(
+            "live",
+            "livePlayerBackend",
+            "直播默认播放器",
+            liveBackends,
+            (live['livePlayerBackend']?.toString() ?? ""),
+          ) +
+          sw(
+            "live",
+            "lunaTvEnabled",
+            "启用 LunaTV 服务器直播源",
+            "关闭后将不再获取 LunaTV 服务端提供的直播频道",
+            live['lunaTvEnabled'] == true,
+          ) +
+          sw(
+            "live",
+            "epgEnabled",
+            "加载 EPG 节目单",
+            "关闭后不拉取节目单与时移信息，直播连接更快",
+            live['epgEnabled'] == true,
+          );
+      h +=
+          section("直播源缓存") +
+          radio(
+            "live",
+            "cacheHours",
+            "直播源缓存时间",
+            CACHE_OPTIONS,
+            (live['cacheHours']?.toString() ?? "24"),
+          );
       return h;
     }
+
     String catData() {
       final bangumiApi = data['bangumiProxyType']?.toString() ?? '';
       final bangumiImg = data['bangumiImageProxyType']?.toString() ?? '';
-      var h = section("豆瓣数据源") +
-          radio("data", "doubanSource", "豆瓣访问方式", DOUBAN_OPTIONS, (data['doubanSource']?.toString() ?? "")) +
+      var h =
+          section("豆瓣数据源") +
+          radio(
+            "data",
+            "doubanSource",
+            "豆瓣访问方式",
+            DOUBAN_OPTIONS,
+            (data['doubanSource']?.toString() ?? ""),
+          ) +
           section("Bangumi 接口") +
-          radio("data", "bangumiProxyType", "Bangumi API 反代", BANGUMI_API_OPTIONS, bangumiApi);
+          radio(
+            "data",
+            "bangumiProxyType",
+            "Bangumi API 反代",
+            BANGUMI_API_OPTIONS,
+            bangumiApi,
+          );
       if (bangumiApi == 'custom') {
-        h += txt("data", "bangumiProxyUrl", "自定义 Bangumi 反代地址", "", (data['bangumiProxyUrl']?.toString() ?? ""), "");
+        h += txt(
+          "data",
+          "bangumiProxyUrl",
+          "自定义 Bangumi 反代地址",
+          "",
+          (data['bangumiProxyUrl']?.toString() ?? ""),
+          "",
+        );
       }
-      h += section("Bangumi 图片") +
-          radio("data", "bangumiImageProxyType", "Bangumi 图片代理", BANGUMI_IMG_OPTIONS, bangumiImg);
+      h +=
+          section("Bangumi 图片") +
+          radio(
+            "data",
+            "bangumiImageProxyType",
+            "Bangumi 图片代理",
+            BANGUMI_IMG_OPTIONS,
+            bangumiImg,
+          );
       if (bangumiImg == 'custom') {
-        h += txt("data", "bangumiImageProxyUrl", "自定义图片代理地址", "", (data['bangumiImageProxyUrl']?.toString() ?? ""), "");
+        h += txt(
+          "data",
+          "bangumiImageProxyUrl",
+          "自定义图片代理地址",
+          "",
+          (data['bangumiImageProxyUrl']?.toString() ?? ""),
+          "",
+        );
       }
       return h;
     }
+
     String catTheme() =>
         section("软件主题") +
         radio("theme", "mode", "主题模式", const <Map<String, String>>[
           const {'value': 'system', 'title': '跟随系统', 'subtitle': '随系统明暗自动切换'},
           const {'value': 'light', 'title': '明亮主题', 'subtitle': '背景为白色，文字为黑色'},
-          const {'value': 'dark', 'title': '黑暗主题（默认）', 'subtitle': '背景为深色，适合暗光环境'},
+          const {
+            'value': 'dark',
+            'title': '黑暗主题（默认）',
+            'subtitle': '背景为深色，适合暗光环境',
+          },
         ], (theme['mode']?.toString() ?? ""));
     String catOther() {
       final logOn = other['logEnabled'] == true;
-      var h = section("日志与调试") +
+      var h =
+          section("日志与调试") +
           sw("other", "logEnabled", "获取日志", "作为调试核查问题使用，正常情况请关闭以避免影响性能", logOn);
       if (logOn) {
         final logUrl = '$serverUrl/api/logs';
-        h += "<div class='card'><div class='label'>下载日志</div><div class='hint'>开启后日志写入设备文件，点下方按钮可在手机下载</div><button class='primary' onclick=\"location.href='${esc(logUrl)}'\">下载日志文件</button></div>";
+        h +=
+            "<div class='card'><div class='label'>下载日志</div><div class='hint'>开启后日志写入设备文件，点下方按钮可在手机下载</div><button class='primary' onclick=\"location.href='${esc(logUrl)}'\">下载日志文件</button></div>";
       }
-      h += section("其他") +
-          action("clear_cache", "清除缓存源", "清除海报、图片与豆瓣数据缓存，保留播放记录等数据");
+      h +=
+          section("其他") +
+          action("clear_cache", "清除缓存源", "清除海报、图片与豆瓣数据缓存，保留播放记录等数据") +
+          sw(
+            "other",
+            "forceOpenGl",
+            "强制 OpenGL ES 渲染",
+            "仅对 MPV 播放器有效，直播与点播同时生效；默认关闭即 Vulkan 优先（设备支持时），"
+                "播放闪退或画面异常时可开启改走 OpenGL ES",
+            other['forceOpenGl'] == true,
+          );
       if (isWindows) {
-        h += sw("other", "windowsFullscreenAlwaysOnTop", "全屏时窗口置顶", "全屏播放时窗口始终置顶", other['windowsFullscreenAlwaysOnTop'] == true);
+        h += sw(
+          "other",
+          "windowsFullscreenAlwaysOnTop",
+          "全屏时窗口置顶",
+          "全屏播放时窗口始终置顶",
+          other['windowsFullscreenAlwaysOnTop'] == true,
+        );
       }
       return h;
     }
@@ -1026,10 +1269,12 @@ class RemoteInputService {
     ];
     var navHtml = '';
     for (final c in cats) {
-      navHtml += "<button class='nav' data-cat='${c[0]}' onclick=\"selectCat('${c[0]}')\">${c[1]}</button>";
+      navHtml +=
+          "<button class='nav' data-cat='${c[0]}' onclick=\"selectCat('${c[0]}')\">${c[1]}</button>";
     }
 
-    final css = r'''* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    final css =
+        r'''* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; background-color: #121212; color: white; min-height: 100vh; }
     #app { position: relative; min-height: 100vh; }
     #sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: 160px; background-color: #1a1a1a; padding: 10px 6px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; z-index: 20; box-shadow: 2px 0 12px rgba(0,0,0,0.5); transform: translateX(0); transition: transform .2s ease; }
@@ -1170,7 +1415,8 @@ class RemoteInputService {
       if (p) { p.textContent = '页面脚本错误: ' + msg + ' @行' + line; p.style.color = '#FF6B6B'; }
     };''';
 
-    final html = '<!DOCTYPE html><html><head><title>海因影视 - 手机设置</title>'
+    final html =
+        '<!DOCTYPE html><html><head><title>海因影视 - 手机设置</title>'
         '<meta charset="UTF-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">'
         '<style>${css}</style></head><body>'
@@ -1217,10 +1463,12 @@ class RemoteInputService {
       'autoPlayNext': await UserDataService.getAutoPlayNextEpisode(),
       'autoSkip': await UserDataService.getAutoSkipOpeningEnding(),
       'autoSwitchSource': await UserDataService.getAutoSwitchSource(),
-      'autoSwitchSourceTimeout': await UserDataService.getAutoSwitchSourceTimeout(),
+      'autoSwitchSourceTimeout':
+          await UserDataService.getAutoSwitchSourceTimeout(),
       'autoSpeedTest': await UserDataService.getAutoSpeedTest(),
       'm3u8ProxyUrl': await UserDataService.getM3u8ProxyUrl(),
       'adFilter': await AdFilterService.isEnabled(),
+      'hlsPrefetch': await UserDataService.getHlsPrefetchEnabled(),
       'hardwareDecoding': await UserDataService.getHardwareDecoding(),
       'playerBackend': (await UserDataService.getPlayerBackend()).name,
       'doubanSource': (await UserDataService.getDoubanDataSource()).name,
@@ -1250,13 +1498,16 @@ class RemoteInputService {
     final other = <String, dynamic>{
       'logEnabled': await UserDataService.getLogEnabled(),
       'autoSpeedTest': await UserDataService.getAutoSpeedTest(),
+      'forceOpenGl': await UserDataService.getForceOpenGl(),
     };
     final server = <String, dynamic>{
       'serverUrl': await UserDataService.getServerUrl(),
       'backupServerUrl': await UserDataService.getBackupServerUrl(),
-      'autoSelectLowLatency': await UserDataService.getAutoSelectLowLatencyServer(),
+      'autoSelectLowLatency':
+          await UserDataService.getAutoSelectLowLatencyServer(),
       'preferIpv6':
-          (await UserDataService.getInternetServerDnsPreference()) == InternetServerDnsPreference.ipv6,
+          (await UserDataService.getInternetServerDnsPreference()) ==
+          InternetServerDnsPreference.ipv6,
     };
     final account = <String, dynamic>{
       'mainUsername': (await UserDataService.getMainAccount())?.username ?? '',
@@ -1294,6 +1545,8 @@ class RemoteInputService {
               await UserDataService.saveAutoSwitchSource(_asBool(value));
             case 'hardwareDecoding':
               await UserDataService.saveHardwareDecoding(_asBool(value));
+            case 'forceOpenGl':
+              await UserDataService.saveForceOpenGl(_asBool(value));
             case 'playerBackend':
               await UserDataService.savePlayerBackend(
                 PlayerBackendType.values.byName(_asString(value)),
@@ -1308,6 +1561,8 @@ class RemoteInputService {
               await UserDataService.saveAutoSpeedTest(_asBool(value));
             case 'adFilter':
               await AdFilterService.setEnabled(_asBool(value));
+            case 'hlsPrefetch':
+              await UserDataService.saveHlsPrefetchEnabled(_asBool(value));
             case 'bufferProfile':
               await UserDataService.saveBufferProfile(
                 BufferProfile.values.byName(_asString(value)),
@@ -1359,8 +1614,9 @@ class RemoteInputService {
           }
         case 'theme':
           if (key == 'mode') {
-            await ThemeModeService.instance
-                .setPref(ThemeModePref.values.byName(_asString(value)));
+            await ThemeModeService.instance.setPref(
+              ThemeModePref.values.byName(_asString(value)),
+            );
           } else if (key == 'followSystem') {
             await ThemeModeService.instance.setPref(
               _asBool(value) ? ThemeModePref.system : ThemeModePref.dark,
@@ -1496,8 +1752,9 @@ class RemoteInputService {
             final loginMode = mode == 'login';
             final serverConfigMode = mode == 'server_config';
             final subAccountMode = mode == 'sub_account';
-            final alreadyLoggedIn =
-                loginMode ? await UserDataService.isLoggedIn() : false;
+            final alreadyLoggedIn = loginMode
+                ? await UserDataService.isLoggedIn()
+                : false;
             final html = _getRemotePageHTML(
               _serverUrl!,
               loginMode: loginMode,
@@ -1619,12 +1876,14 @@ class RemoteInputService {
             request.response
               ..statusCode = 200
               ..headers.contentType = ContentType.json
-              ..write(jsonEncode({
-                'status': 'ok',
-                'deviceName': _deviceName,
-                'port': controlPort,
-                'playback': playback,
-              }))
+              ..write(
+                jsonEncode({
+                  'status': 'ok',
+                  'deviceName': _deviceName,
+                  'port': controlPort,
+                  'playback': playback,
+                }),
+              )
               ..close();
           } else if (request.method == 'GET' &&
               request.uri.path == '/api/playback_status') {
@@ -1701,8 +1960,9 @@ class RemoteInputService {
                 action == 'switch_main' ||
                 action == 'delete_sub' ||
                 action == 'logout') {
-              final result = await _awaitHandlerResult(
-                  _accountActionHandler, {'action': action});
+              final result = await _awaitHandlerResult(_accountActionHandler, {
+                'action': action,
+              });
               _setCorsHeaders(request.response);
               request.response
                 ..statusCode = result['status'] == 'ok' ? 200 : 400
@@ -1714,7 +1974,9 @@ class RemoteInputService {
               request.response
                 ..statusCode = 400
                 ..headers.contentType = ContentType.json
-                ..write(jsonEncode({'status': 'error', 'error': '未知的账号操作: $action'}))
+                ..write(
+                  jsonEncode({'status': 'error', 'error': '未知的账号操作: $action'}),
+                )
                 ..close();
             }
           } else if (request.method == 'POST' &&
@@ -1725,7 +1987,10 @@ class RemoteInputService {
             if (action == 'speedtest') {
               final primary = await UserDataService.getServerUrl();
               final backup = await UserDataService.getBackupServerUrl();
-              await ServerLatencyService.selectBestServer(primary ?? '', backup);
+              await ServerLatencyService.selectBestServer(
+                primary ?? '',
+                backup,
+              );
               _serverActionController.add(const {'action': 'speedtest'});
               _setCorsHeaders(request.response);
               request.response
@@ -1738,7 +2003,9 @@ class RemoteInputService {
               request.response
                 ..statusCode = 400
                 ..headers.contentType = ContentType.json
-                ..write(jsonEncode({'status': 'error', 'error': '未知的服务器操作: $action'}))
+                ..write(
+                  jsonEncode({'status': 'error', 'error': '未知的服务器操作: $action'}),
+                )
                 ..close();
             }
           } else if (request.method == 'GET' &&
@@ -1804,10 +2071,7 @@ class RemoteInputService {
       request.response
         ..statusCode = 200
         ..headers.contentType = ContentType('text', 'plain', charset: 'utf-8')
-        ..headers.add(
-          'Content-Disposition',
-          'attachment; filename="$fileName"',
-        )
+        ..headers.add('Content-Disposition', 'attachment; filename="$fileName"')
         ..add(bytes)
         ..close();
     } catch (e) {
@@ -1821,17 +2085,18 @@ class RemoteInputService {
 
   Future<void> _handleLiveSourcesRequest(HttpRequest request) async {
     try {
-      if (request.method == 'GET' &&
-          request.uri.path == '/api/live_sources') {
+      if (request.method == 'GET' && request.uri.path == '/api/live_sources') {
         final sources = await LiveService.getAllSources();
         _setCorsHeaders(request.response);
         request.response
           ..statusCode = 200
           ..headers.contentType = ContentType.json
-          ..write(jsonEncode({
-            'status': 'ok',
-            'sources': sources.map((e) => e.toJson()).toList(),
-          }))
+          ..write(
+            jsonEncode({
+              'status': 'ok',
+              'sources': sources.map((e) => e.toJson()).toList(),
+            }),
+          )
           ..close();
         return;
       }
@@ -1864,7 +2129,10 @@ class RemoteInputService {
           return;
         }
         await LiveSourceStorage.moveCombined(
-            combined, index, direction == 'up' ? -1 : 1);
+          combined,
+          index,
+          direction == 'up' ? -1 : 1,
+        );
         LiveSourceRefreshNotifier.instance.notify();
         _liveSourcesChangedController.add(null);
         _setCorsHeaders(request.response);
@@ -1897,8 +2165,9 @@ class RemoteInputService {
         if (config.isBuiltin) {
           await LiveService.clearLunaTvCache(key: config.sourceKey);
         } else {
-          final cacheKey = CacheService()
-              .generateLiveChannelsCacheKey(sourceKey: config.id);
+          final cacheKey = CacheService().generateLiveChannelsCacheKey(
+            sourceKey: config.id,
+          );
           await CacheService().delete(cacheKey);
         }
         LiveSourceRefreshNotifier.instance.notify();
@@ -1941,9 +2210,9 @@ class RemoteInputService {
 
         final existing = await LiveSourceStorage.getConfigs();
         final oldConfig = existing.cast<LiveSourceConfig?>().firstWhere(
-              (c) => c!.id == id,
-              orElse: () => null,
-            );
+          (c) => c!.id == id,
+          orElse: () => null,
+        );
         final config = oldConfig != null
             ? oldConfig.copyWith(name: name, url: url, enabled: enabled)
             : LiveSourceConfig(

@@ -26,6 +26,7 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
   bool _autoSpeedTest = true;
   String _m3u8ProxyUrl = '';
   bool _adFilterEnabled = false;
+  bool _hlsPrefetchEnabled = false;
   bool _hardwareDecoding = true;
   BufferProfile _bufferProfile = BufferProfile.standard;
 
@@ -45,6 +46,7 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
     final autoSpeedTest = await UserDataService.getAutoSpeedTest();
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final adFilterEnabled = await AdFilterService.isEnabled();
+    final hlsPrefetchEnabled = await UserDataService.getHlsPrefetchEnabled();
     final hardwareDecoding = await UserDataService.getHardwareDecoding();
     final bufferProfile = await UserDataService.getBufferProfile();
     if (!mounted) return;
@@ -57,6 +59,7 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
       _autoSpeedTest = autoSpeedTest;
       _m3u8ProxyUrl = m3u8ProxyUrl;
       _adFilterEnabled = adFilterEnabled;
+      _hlsPrefetchEnabled = hlsPrefetchEnabled;
       _hardwareDecoding = hardwareDecoding;
       _bufferProfile = bufferProfile;
     });
@@ -97,6 +100,14 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
     setState(() => _adFilterEnabled = value);
   }
 
+  Future<void> _setHlsPrefetchEnabled(bool value) async {
+    await UserDataService.saveHlsPrefetchEnabled(value);
+    setState(() => _hlsPrefetchEnabled = value);
+    // 提示下次播放生效：预取开关在 AdFilterEngine 建代理时读取一次，
+    // 已建好的代理不会中途改变行为（换源/换集时才会重建）。
+    showSettingsSnackBar(context, value ? '已开启（下次播放生效）' : '已关闭（下次播放生效）');
+  }
+
   Future<void> _setHardwareDecoding(bool value) async {
     await UserDataService.saveHardwareDecoding(value);
     setState(() => _hardwareDecoding = value);
@@ -119,10 +130,13 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
     switch (type) {
       case PlayerBackendType.exo:
         return isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
+      // fvp 已摘除，保留分支仅为穷尽 switch（历史存储值由迁移兜底）
       case PlayerBackendType.fvp:
-        return isDefault ? 'FVP（默认）' : 'FVP';
+        return 'FVP（已移除）';
       case PlayerBackendType.vlc:
         return isDefault ? 'VLC（默认）' : 'VLC';
+      case PlayerBackendType.mpv:
+        return isDefault ? 'MPV（默认）' : 'MPV';
     }
   }
 
@@ -132,6 +146,8 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
         return 'Android 原生播放器，硬解能力强';
       case PlayerBackendType.fvp:
         return '基于 libmdk，兼容性较好';
+      case PlayerBackendType.mpv:
+        return '官方 mpv 内核 + 自写绑定，硬解/兼容兼顾';
       case PlayerBackendType.vlc:
         return '基于 libvlc，格式兼容性最强';
     }
@@ -182,8 +198,17 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
           ),
           buildSwitchTile(
             context: context,
+            title: 'HLS 并发分片预取',
+            subtitle: '开启后并发预取后续分片，弱网/换段缓冲更快；会额外消耗带宽（建议 Wi-Fi 下开启）',
+            value: _hlsPrefetchEnabled,
+            onChanged: _setHlsPrefetchEnabled,
+          ),
+          buildSwitchTile(
+            context: context,
             title: '硬件解码',
-            subtitle: '关闭后可能解决部分花屏问题',
+            // 仅 mpv 后端消费该设置（exo / vlc / avplayer 不读取）：
+            // 关闭 = 强制软解；开启 = 要求真硬解，硬解失败不再静默回落软解。
+            subtitle: '仅对 MPV 播放器有效；关闭后强制软解，可能解决部分花屏问题',
             value: _hardwareDecoding,
             onChanged: _setHardwareDecoding,
           ),
@@ -447,10 +472,7 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
                 const SizedBox(height: AppSpacing.xs),
                 Text(
                   _m3u8ProxyUrl.isEmpty ? '未配置' : _m3u8ProxyUrl,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -489,7 +511,8 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
           fieldNode.requestFocus();
           return KeyEventResult.handled;
         }
-        if (key == LogicalKeyboardKey.goBack || key == LogicalKeyboardKey.escape) {
+        if (key == LogicalKeyboardKey.goBack ||
+            key == LogicalKeyboardKey.escape) {
           onClose();
           return KeyEventResult.handled;
         }

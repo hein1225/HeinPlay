@@ -1,0 +1,61 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "./signature/release/heinplay-release.cer",
+          "keyAlias": "heinplay release",
+          "keyPassword": "000000169a9882d4db48f01c41e814d29aee372f8489ef66051a1637ab47d0955e2fb4b58454",
+          "profile": "./signature/release/heinplay-release.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "./signature/release/heinplay-release.p12",
+          "storePassword": "000000162da2373c17eef0709375b68148f37f6c2c0abc214d346dae457b9f4af9883b0293dc"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          },
+          "nativeCompiler": "BiSheng"
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "mpv",
+      "srcPath": "./mpv_arkts"
+    }
+  ]
+}

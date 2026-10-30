@@ -12,18 +12,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val keystorePropertiesFile = rootProject.file("key.properties")
-val keystoreProperties = Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-}
-
-val mobileKeystorePropertiesFile = rootProject.file("key-mobile.properties")
-val mobileKeystoreProperties = Properties()
-if (mobileKeystorePropertiesFile.exists()) {
-    mobileKeystoreProperties.load(FileInputStream(mobileKeystorePropertiesFile))
-}
-
+// 【tvLegacy 独立工程】只保留 tvlegacy 一个 flavor。
+// tv / mobile 的签名材料与 flavor 定义已于 2026-09-27 随「非本工程目标」清理移除
+// （它们由主工程 hain_tv/ 构建）。
 val tvlegacyKeystorePropertiesFile = rootProject.file("key-tvlegacy.properties")
 val tvlegacyKeystoreProperties = Properties()
 if (tvlegacyKeystorePropertiesFile.exists()) {
@@ -45,54 +36,56 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.heinplay.hain_tv"
-        // tvlegacy 需要支持到 Android 5.0（API 21），默认值设 21；
-        // tv/mobile flavor 再各自覆盖为 24。
+        applicationId = "com.heinplay.hain_tv_legacy"
+        // 本工程只构建 tvlegacy：支持到 Android 5.0（API 21）。
         // 必须写死数字，避免 Flutter 插件把 flutter.minSdkVersion 解析为 24 或 current。
         minSdk = 21
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
-            // tvlegacy 支持低版本真机及常见模拟器；Flutter 3.44.8 release 未提供 x86 engine，
-            // 因此不包含 x86，避免在 x86 设备上触发 libflutter.so 缺失闪退。
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+            // tvlegacy 支持低版本真机及常见模拟器。
+            // 🔴 HeinPlay mpv：播放内核换成本工程自编译的 libmpv.so（API 21，OpenGL
+            // 路线），只编了 armeabi-v7a / arm64-v8a 两个 ABI，故此处必须同步收窄 ——
+            // 若保留 x86_64，该 ABI 会缺 libmpv.so 而拿不到 mpv 后端。
+            // Flutter 3.44.8 release 未提供 x86 engine，本来也不含 x86。
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
+
+        // 🔴 HeinPlay mpv：用 NDK 编译自写 JNI 壳（libheinplay_mpv_jni.so），
+        // 它直接调 jniLibs 内的 libmpv.so / libavcodec.so（av_jni_set_java_vm）。
+        externalNativeBuild {
+            cmake {
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+                arguments += listOf("-DANDROID_STL=c++_shared")
+                // mpv 头文件来自本工程的 mpv 源码树。
+                val mpvInclude = rootProject.file("../../.mpv-android/src/mpv").absolutePath
+                arguments += listOf("-DMPV_INCLUDE_DIR=$mpvInclude")
+                cppFlags += listOf("-std=c++17")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
     flavorDimensions += "platform"
 
     productFlavors {
-        create("tv") {
-            applicationId = "com.heinplay.hain_tv"
-            versionNameSuffix = "-tv"
-            minSdk = 24
-        }
+        // 仅保留 tvlegacy —— 本独立工程的唯一构建目标。
+        // tv / mobile flavor 已移除（由主工程 hain_tv/ 构建）。
         create("tvlegacy") {
             applicationId = "com.heinplay.hain_tv_legacy"
             versionNameSuffix = "-tvlegacy"
             minSdk = 21
         }
-        create("mobile") {
-            applicationId = "com.heinplay.mobile"
-            versionNameSuffix = "-mobile"
-            minSdk = 24
-        }
     }
 
     signingConfigs {
-        create("tv") {
-            keyAlias = keystoreProperties["keyAlias"] as String?
-            keyPassword = keystoreProperties["keyPassword"] as String?
-            storeFile = keystoreProperties["storeFile"]?.let { file(it as String) }
-            storePassword = keystoreProperties["storePassword"] as String?
-        }
-        create("mobile") {
-            keyAlias = mobileKeystoreProperties["keyAlias"] as String?
-            keyPassword = mobileKeystoreProperties["keyPassword"] as String?
-            storeFile = mobileKeystoreProperties["storeFile"]?.let { file(it as String) }
-            storePassword = mobileKeystoreProperties["storePassword"] as String?
-        }
         create("tvlegacy") {
             keyAlias = tvlegacyKeystoreProperties["keyAlias"] as String?
             keyPassword = tvlegacyKeystoreProperties["keyPassword"] as String?
@@ -112,24 +105,19 @@ android {
         }
     }
 
-    // 为各 flavor 单独指定签名配置
+    // 签名配置：本工程只有 tvlegacy 一个 flavor。
     productFlavors.all {
-        signingConfig = when (name) {
-            "tv" -> signingConfigs.getByName("tv")
-            "mobile" -> signingConfigs.getByName("mobile")
-            "tvlegacy" -> signingConfigs.getByName("tvlegacy")
-            else -> signingConfigs.getByName("tv")
-        }
+        signingConfig = signingConfigs.getByName("tvlegacy")
     }
 
     // 多个依赖可能同时携带 libc++_shared.so，打包时只保留一份避免冲突。
+    // 🔴 HeinPlay mpv：libmpv.so 依赖 libc++_shared.so（C++ 运行时），而本工程
+    // 已不再编 x86/x86_64，故 pickFirsts 也相应收窄到两个 ARM ABI。
     packaging {
         jniLibs {
             pickFirsts += listOf(
                 "lib/armeabi-v7a/libc++_shared.so",
                 "lib/arm64-v8a/libc++_shared.so",
-                "lib/x86/libc++_shared.so",
-                "lib/x86_64/libc++_shared.so",
             )
         }
     }

@@ -85,9 +85,15 @@ if (Test-Path $localProps) {
     }
 }
 
-# ------------------------------------------------------- 依赖缓存（工程内） ---
-# 与主工程一致：PUB_CACHE 固定在工程目录内，避免回退 C 盘默认缓存。
-$env:PUB_CACHE = (Join-Path $projectDir '.pub-cache')
+# --------------------------------------------------- 依赖缓存（团队统一目录） ---
+# 🔴 2026-10-22：统一到团队工具目录，工程内不再保留缓存副本（此前每个工程
+#   各有一份约 2.1GB 的 .pub-cache，内容与 team 目录那份完全重复）。
+$teamPubCache = "/opt/team/tool-deps/cache/pub-cache"
+if (Test-Path $teamPubCache) {
+    $env:PUB_CACHE = $teamPubCache
+} else {
+    Write-Warning "未找到统一 pub 缓存 $teamPubCache，将使用 Flutter 默认位置"
+}
 
 # ------------------------------------------------------------ 版本号 / 构建 ---
 $pubspecPath = Join-Path $projectDir "pubspec.yaml"

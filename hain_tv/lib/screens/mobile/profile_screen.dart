@@ -12,6 +12,7 @@ import 'package:hain_tv/screens/tv/account_management_screen.dart';
 import 'package:hain_tv/screens/tv/server_management_screen.dart';
 import 'package:hain_tv/screens/tv/update_screen.dart';
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
+import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
@@ -374,7 +375,14 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
         backgroundColor: AppColors.bgApp,
         body: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            // 底部留出浮动磨砂导航栏总高，避免最后一项被导航栏永久遮挡。
+            padding: EdgeInsets.only(
+              top: AppSpacing.md,
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              bottom:
+                  AppSpacing.md + GlassStyleService.navBarTotalHeight(context),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [

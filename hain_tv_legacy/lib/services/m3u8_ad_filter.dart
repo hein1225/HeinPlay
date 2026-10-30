@@ -6,6 +6,46 @@ import 'package:flutter/material.dart';
 ///
 /// 纯客户端本地过滤，不依赖服务器下发规则。
 class M3u8AdFilter {
+  /// 🔴🔴 2026-10-12：**去广告名义轴元数据**（供 PTS 归一化使用）。
+  ///
+  /// 【为什么需要】
+  ///   去广告只删播放列表里的**行**，从不改写分片**字节**。于是同一条内容
+  ///   存在两条「秒数」轴：
+  ///     · 真实 PTS 轴  : 分片文件里编码的 PTS（**含广告**的原始时间线）
+  ///     · 去广告名义轴 : 去广告后 EXTINF 累加（mpv 据此算出 duration）
+  ///   mpv 的 `time-pos` 走真实 PTS 轴，`duration` 走名义轴 ⇒ 进度条分子分母
+  ///   不同轴 ⇒ **越播越偏**。
+  ///
+  /// 【怎么修】
+  ///   在本地代理侧把每个分片字节里的 PTS/DTS/PCR 平移一个逐段 delta，
+  ///   使真实轴对齐到名义轴。delta 的依据就是本表：
+  ///     `filteredMs[分片URL] = 该分片在**去广告后**列表里的前缀时长`
+  ///   代理据此算 `delta = (基准PTS + filteredMs) − 该分片首PTS`。
+  ///
+  /// 【为什么是 URL→前缀ms 的映射】
+  ///   legacy 的段长并非恒定 2 秒（鸿蒙那份源恰好是 2000ms，故可用
+  ///   `index × 2000` 硬编码）。legacy 必须用**真实 EXTINF 累加**，
+  ///   否则会引入新的系统性误差。
+  ///
+  /// 【为什么是 static 槽而非改签名】
+  ///   [_normalizeMediaPlaylist] 是本类 6 条处理路径的**唯一出口**，且其输出
+  ///   即最终播放列表。在出口统一重建，天然覆盖所有路径，无需逐路改签名。
+  ///   调用方在每次过滤前应 [clearSegMeta]，过滤后读 [takeSegMeta]。
+  static final Map<String, int> _segMeta = <String, int>{};
+
+  /// 清空元数据（每次过滤前调用，避免跨次污染）。
+  static void clearSegMeta() => _segMeta.clear();
+
+  /// 取出并清空元数据（过滤后调用）。
+  static Map<String, int> takeSegMeta() {
+    final copy = Map<String, int>.from(_segMeta);
+    _segMeta.clear();
+    return copy;
+  }
+
+  /// 只读快照（调试用）。
+  static Map<String, int> get segMetaSnapshot => Map<String, int>.from(_segMeta);
+
   static const String _tagDiscontinuity = '#EXT-X-DISCONTINUITY';
   static const String _tagMediaDuration = '#EXTINF';
   static const String _tagEndList = '#EXT-X-ENDLIST';
@@ -184,6 +224,12 @@ class M3u8AdFilter {
 
     final lineSplit = content.contains('\r\n') ? '\r\n' : '\n';
     final lines = content.split(lineSplit);
+
+    // 🔴🔴 2026-10-12：记录本次过滤的 base URI。
+    //   [_normalizeMediaPlaylist] 出口重建段元数据时用它把相对分片路径绝对化，
+    //   以便与代理 `?url=` 参数的形态一致（否则查表全 miss）。
+    _metaBaseUrl = baseUrl;
+
     var totalSegments = 0;
     for (final line in lines) {
       final trimmed = line.trim();
@@ -265,9 +311,16 @@ class M3u8AdFilter {
       final trimmed = line.trim();
       if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
       final absoluteUrl = _toAbsoluteUrl(tsUrlPre, line);
-      final ilast = absoluteUrl.lastIndexOf('.');
-      if (ilast <= 4) continue;
-      final preUrl = absoluteUrl.substring(0, ilast - 4);
+      // 🔴🔴 2026-10-23 修正：原实现用 `substring(0, ilast - 4)` 截掉
+      // 「扩展名 + 固定 4 个字符」，结果同一目录下**数字位数不同**的分片
+      // 会被切成不同前缀：
+      //   plist0.ts   → .../pl
+      //   plist10.ts  → .../pli
+      //   plist100.ts → .../plis
+      // 正常正片被切成 465/90/10 三组，少数派被当成广告删 → 时间轴断裂
+      // → 播放卡死。改为按**归一化路径前缀**分组（文件名数字→#）。
+      final preUrl = _normalizedPathPrefixOf(absoluteUrl);
+      if (preUrl.isEmpty) continue;
       preUrlMap[preUrl] = (preUrlMap[preUrl] ?? 0) + 1;
     }
 
@@ -564,7 +617,9 @@ class M3u8AdFilter {
 
     // 主域名/路径，用于判断广告簇是否与正片不同。
     final mainHost = _hostOf(longSegments.last.url);
-    final mainPath = _pathPrefixOf(longSegments.last.url);
+    // 🔴🔴 2026-10-23：用**归一化**路径前缀（文件名数字→#）比较，
+    // 否则同一路正片仅因分片名数字位数不同就会被判成「不同流」。
+    final mainPath = _normalizedPathPrefixOf(longSegments.last.url);
 
     final keepIndices = <int>{};
     for (var i = 0; i < lines.length; i++) {
@@ -608,16 +663,27 @@ class M3u8AdFilter {
           final hostChanged = mainHost.isNotEmpty &&
               (_hostOf(first.url) != mainHost || _hostOf(last.url) != mainHost);
           final pathChanged = mainPath.isNotEmpty &&
-              (_pathPrefixOf(first.url) != mainPath ||
-                  _pathPrefixOf(last.url) != mainPath);
+              (_normalizedPathPrefixOf(first.url) != mainPath ||
+                  _normalizedPathPrefixOf(last.url) != mainPath);
 
-          final surrounded = clusterStart > 0 && clusterEnd < segments.length - 1;
-          final durationSpike = clusterTotal > 0 && clusterTotal < mainDuration * 0.6;
-          final adLike = hasAdFeature ||
-              hostChanged ||
-              (clusterLength <= 3 && pathChanged) ||
-              (clusterLength <= 2 && surrounded) ||
-              (clusterLength <= 3 && surrounded && durationSpike);
+          // 🔴🔴 2026-10-23 修正：判定「内嵌广告」**必须有来源差异证据**。
+          //
+          // 【实测】jinyingzy.com → hd.kuktxu.com，565 段正片：
+          //   该源用 1~10 秒**不等长切片**，208/565 段 < 3s；
+          //   mainDuration=6.55s → shortThreshold=2.95s；
+          //   于是大量**正常正片切片**落进短簇，再被下面这条
+          //     `(clusterLength <= 2 && surrounded)`
+          //   **纯时长规则**判成「内嵌广告」→ 删掉 86 段正片（167.9 秒）
+          //   → 播放列表时间轴断裂 → mpv 画面卡死
+          //   （时长仍能从 EXTINF 累加读出，所以「有时长但画面不动」）。
+          //
+          // 【修正后】只有具备下列之一才判广告：
+          //   · URL 含广告特征（hasAdFeature）
+          //   · host 变化
+          //   · 归一化路径前缀变化（同一路正片的不同数字位数不再误判）
+          // 纯时长推断（短 + 被正片夹住 + 时长尖峰）**不再单独成立** ——
+          // 删正片的代价（播放直接卡死）远大于漏删几秒广告。
+          final adLike = hasAdFeature || hostChanged || pathChanged;
 
           if (clusterLength <= 8 &&
               clusterTotal < mainDuration * 2.2 &&
@@ -639,14 +705,12 @@ class M3u8AdFilter {
       final first = segments[clusterStart];
       final hasAdFeature = _hasAdFeature(first.url);
       final hostChanged = mainHost.isNotEmpty && _hostOf(first.url) != mainHost;
-      final pathChanged = mainPath.isNotEmpty && _pathPrefixOf(first.url) != mainPath;
-      final durationSpike = clusterTotal > 0 && clusterTotal < mainDuration * 0.6;
+      final pathChanged =
+          mainPath.isNotEmpty && _normalizedPathPrefixOf(first.url) != mainPath;
+      // 🔴 2026-10-23：同中段簇，广告判据必须要求来源差异证据。
       if (clusterLength <= 8 &&
           clusterTotal < mainDuration * 2.2 &&
-          (hasAdFeature ||
-              hostChanged ||
-              (clusterLength <= 4 && pathChanged) ||
-              (clusterLength <= 4 && durationSpike))) {
+          (hasAdFeature || hostChanged || pathChanged)) {
         removeCluster(clusterStart, clusterEnd);
       }
     }
@@ -1219,6 +1283,31 @@ class M3u8AdFilter {
     return slash > 0 ? clean.substring(0, slash + 1) : '';
   }
 
+  /// 归一化路径前缀：**目录 + 文件名**（文件名里的数字统一替换成 `#`）。
+  ///
+  /// 用途：判断两段分片是否来自**不同的资源流**。
+  ///
+  /// 只取目录（[_pathPrefixOf]）有两个问题：
+  ///   ① 同一路正片的分片名数字位数一变（`plist0.ts` → `plist10.ts` →
+  ///      `plist100.ts`），按目录分组虽然不分家，但按「固定截断」分组会分家；
+  ///   ② 同目录下的真广告（`ad12.ts`）与正片（`plistN.ts`）又分不开。
+  ///
+  /// 归一化后得到 `.../plist` 与 `.../ad` —— 既能区分广告流，
+  /// 又不会因**数字位数变化**把同一路正片切成多组。
+  static String _normalizedPathPrefixOf(String url) {
+    var clean = url;
+    final query = clean.indexOf('?');
+    if (query >= 0) clean = clean.substring(0, query);
+    final slash = clean.lastIndexOf('/');
+    if (slash <= 0) return '';
+    final dot = clean.lastIndexOf('.');
+    final name = dot > slash
+        ? clean.substring(slash + 1, dot)
+        : clean.substring(slash + 1);
+    final normalized = name.replaceAll(RegExp(r'\d+'), '#');
+    return '${clean.substring(0, slash + 1)}$normalized';
+  }
+
   /// 在删除片段后的边界插入 `#EXT-X-DISCONTINUITY`。
   ///
   /// 过滤逻辑会移除广告片段，但直接删掉会导致被删片段前后的时间戳不连续，
@@ -1394,7 +1483,12 @@ class M3u8AdFilter {
     // 明确广告特征的 URL 直接丢弃
     if (_hasAdFeature(absoluteUrl)) return false;
 
-    if (!domainFiltering) return absoluteUrl.startsWith(maxTimesPreUrl);
+    // 🔴 2026-10-23：与 [_removeMinorityUrl] 的分组口径保持一致
+    // （归一化前缀**相等**，不能再用 startsWith —— 归一化前缀里的 `#`
+    // 不在真实 URL 中，startsWith 会把全部片段判成不匹配）。
+    if (!domainFiltering) {
+      return _normalizedPathPrefixOf(absoluteUrl) == maxTimesPreUrl;
+    }
     final ifirst = absoluteUrl.indexOf('/', 9);
     final domain = (ifirst > 0)
         ? absoluteUrl.substring(0, ifirst)
@@ -1426,7 +1520,6 @@ class M3u8AdFilter {
     var seenMedia = false;
     var hasPendingDiscontinuity = false;
     var pendingDiscontinuity = '';
-
     for (final raw in content.replaceAll('\r\n', '\n').split('\n')) {
       final item = raw.trim();
       if (_isDiscontinuityTag(item)) {
@@ -1447,8 +1540,110 @@ class M3u8AdFilter {
       sb.writeln(raw);
       if (_isMediaUriLine(item)) seenMedia = true;
     }
+
+    // 🔴🔴 2026-10-12：在唯一出口重建「去广告名义轴」元数据。
+    //
+    // 此处 sb 即**最终**播放列表，故在它上面按媒体行顺序累加 EXTINF，
+    // 得到的 filteredMs 与 mpv 眼中的 duration 轴**必然一致**
+    //（mpv 的 duration 就是这份列表 EXTINF 的累加），无需依赖上游走了
+    // 哪条删段路径。
+    //
+    // 规则：遇到 #EXTINF 记录时长；遇到媒体行则把「累加至今的时长」
+    // 登记为该分片 URL 的名义轴起点，然后累加该段时长。
+    // 非媒体行（#EXT-X-* 标签、空行）不贡献时长。
+    _rebuildSegMeta(sb.toString());
     return sb.toString();
   }
+
+  /// 按最终播放列表重建 [ _segMeta ]：媒体行 URL → 该段在去广告轴上的**起点 ms**。
+  ///
+  /// 传入的 [content] 必须是 `_normalizeMediaPlaylist` 的输出（或与之等价的
+  /// 最终文本），否则算出的轴与 mpv 的 duration 可能不一致。
+  static void _rebuildSegMeta(String content) {
+    _segMeta.clear();
+    _aesKeyUri = null; // 每次重建都重置，避免沿用上一条播放列表的密钥
+    var accMs = 0; // 已累计时长（去广告轴）
+    var pendingMs = 0; // 当前 #EXTINF 声明的时长（未消费）
+    var hasPending = false;
+
+    for (final raw in content.replaceAll('\r\n', '\n').split('\n')) {
+      final item = raw.trim();
+      if (item.isEmpty) continue;
+
+      // 🔴🔴 2026-10-12：记录 AES-128 密钥 URI。
+      //
+      // 【为什么必须做】加密源的分片是**密文**，而密文里没有 0x47 sync byte
+      //   （实测 188 栅格命中率仅 0.8%，随机噪声水平），`firstPesPtsMs()`
+      //   恒定返回 null ⇒ delta 恒为 0 ⇒ PTS 归一化**静默失效**。
+      //   真机日志表现为 123 次 `PTS skip: no-pts`、0 次成功。
+      //
+      //   代理不解密播放（仍把密文交给 mpv，由 mpv 自行解密），
+      //   但**必须**解出一份明文才能读到 PTS。
+      if (item.startsWith(_tagKey)) {
+        final m = _regexMethod.firstMatch(item);
+        final method = m?.group(1)?.toUpperCase();
+        final uri = _regexUri.firstMatch(item)?.group(1);
+        if (method == 'AES-128' && uri != null && uri.isNotEmpty) {
+          _aesKeyUri = _toAbsoluteUrl(_metaBaseUrl, uri);
+        }
+        continue; // KEY 行不贡献时长
+      }
+
+      if (item.startsWith(_tagMediaDuration)) {
+        final match = _regexMediaDuration.firstMatch(item);
+        final sec = double.tryParse(match?.group(1) ?? '') ?? 0;
+        pendingMs = (sec * 1000).round();
+        hasPending = true;
+        continue;
+      }
+
+      if (item.startsWith('#')) continue; // 其余标签不贡献时长
+
+      if (_isMediaUriLine(item)) {
+        // 媒体行：登记该段起点，然后累加本段时长。
+        // 🔴 键必须**绝对化**：本函数的输入是过滤器内部的相对形态
+        //   （`ad_filter_engine` 在 `purify` 之后才调 `resolveRelativeUrls`），
+        //   而代理侧的 `?url=` 参数恒为绝对地址。两侧规则不统一会导致
+        //   查表全 miss、平移静默失效（鸿蒙日志「坑 2：静默失效」同类）。
+        _segMeta[absoluteKey(item)] = accMs;
+        accMs += hasPending ? pendingMs : 0;
+        hasPending = false;
+        pendingMs = 0;
+      }
+    }
+  }
+
+  /// 该分片在**去广告名义轴**上的起点（ms）。未登记返回 null。
+  ///
+  /// 供代理计算 PTS 平移量：`delta = (基准PTS + filtered) − 该分片首PTS`。
+  static int? filteredMsFor(String url) => _segMeta[url];
+
+  /// 本条播放列表的 AES-128 密钥 URI（绝对地址）；非加密源为 null。
+  ///
+  /// 由 [_rebuildSegMeta] 在过滤出口解析 `#EXT-X-KEY:METHOD=AES-128,URI=...`
+  /// 得到，供代理**只读解密**分片以解析 PTS（不解密播放路径）。
+  static String? _aesKeyUri;
+
+  /// 读取并清空 AES 密钥 URI（与 [takeSegMeta] 同生命周期）。
+  static String? takeAesKeyUri() {
+    final v = _aesKeyUri;
+    _aesKeyUri = null;
+    return v;
+  }
+
+  /// 只读快照（调试用）。
+  static String? get aesKeyUriSnapshot => _aesKeyUri;
+
+  /// 匹配 `METHOD=xxx`。
+  static final RegExp _regexMethod = RegExp(r'METHOD=([A-Za-z0-9\-]+)');
+
+  /// 本次过滤所使用的 base URI（用于把相对分片路径绝对化，与代理收到的
+  /// `?url=` 参数对齐）。由 [purify] 在入口设置。
+  static String _metaBaseUrl = '';
+
+  /// 按 base 绝对化；已是绝对地址则原样返回。与 [_toAbsoluteUrl] 同义，
+  /// 单独抽出来是为了让键的生成规则**与代理侧的 URL 完全一致**。
+  static String absoluteKey(String url) => _toAbsoluteUrl(_metaBaseUrl, url);
 
   static bool _isPlayableMediaPlaylist(String? content) {
     if (content == null || !content.startsWith('#EXTM3U')) return false;

@@ -1,6 +1,6 @@
 # 海因影视
 
-基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT 版本正在开发中**。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT（鸿蒙）版本已发布，现阶段以侧载方式提供安装包**（应用商店上架正在审批中）。
 
 | TV / Windows 版界面预览                                          | 手机版界面预览                                     |
 |:----------------------------------------------------------- |:------------------------------------------- |
@@ -30,11 +30,13 @@
 
 ### 多播放器后端
 
-- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**（起播与换台更快），适配 HLS、DASH、普通 MP4 等主流网络格式；若个别源播放异常，可在设置中切换为 **fvp**。
-- **tvLegacy**：仅使用 **fvp**（libmdk + ffmpeg）—— 低版本安卓上 ExoPlayer 依赖的 media3 要求 API 23+，而 fvp 可一直支持到 Android 5.0（API 21）。
-- **Windows**：抛弃长期未更新的 `flutter_mpv`，默认使用 **fvp**，并保留 **vlc_player** 作为备用后端，可在设置中手动切换。
-- **Linux / HarmonyOS NEXT**：使用 **fvp** 播放后端，与 Windows 电脑版共用同一套播放逻辑与设置项。
-- **fvp 的源兼容性**：走 **ffmpeg 网络栈**，能播放部分 ExoPlayer 无法连通的 IPTV / 点播源；并针对音频流参数探测、远距离拖动定位（快速 seek）与低延迟直播缓冲做了专门调优。
+- **Android TV / Android 手机 / 平板**：默认使用 **ExoPlayer**（起播与换台更快），适配 HLS、DASH、普通 MP4 等主流网络格式；若个别源播放异常，可在设置中切换为 **mpv**。
+- **tvLegacy**：仅使用 **mpv**（官方 libmpv 内核 + 自编译壳）—— 低版本安卓上 ExoPlayer 依赖的 media3 要求 API 23+，而 mpv 可一直支持到 Android 5.0（API 21）。
+- **Windows**：默认使用 **mpv**（官方 libmpv 内核 + 自编译壳，D3D11 零拷贝渲染），并保留 **VLC** 作为备用后端，可在设置中手动切换。
+- **Linux**：使用 **mpv**，与 Windows 电脑版共用同一套播放逻辑与设置项。
+- **HarmonyOS NEXT**：默认 **AVPlayer**（鸿蒙系统原生播放器，起播快、兼容性最稳），保留 **mpv**（libmpv 硬解）作为备选，可在设置中切换。
+- **mpv 的源兼容性**：走 **ffmpeg 网络栈**，能播放部分 ExoPlayer 无法连通的 IPTV / 点播源；并针对音频流参数探测、远距离拖动定位（快速 seek）与低延迟直播缓冲做了专门调优。
+- **fvp 已全面退役**：2026-10 起各平台陆续由 **fvp（libmdk）** 迁移到 **mpv**，fvp 依赖、原生库与后端实现均已从工程移除（枚举值仅为兼容历史设置而保留，选中即回落 mpv）。
 - 优化视频缓冲配置与测速优选逻辑，详情页自动对所有播放源测速并按响应速度排序，无播放记录时完成测速后再允许播放。
 
 ### 电视直播与节目回放
@@ -87,7 +89,7 @@
 - **账号管理**：主/子双账号槽位，一键快速切换，TV 端支持扫码配置子账号。
 - **服务器连接状态**：顶部状态栏实时显示 LunaTV 服务器连接状态：互联网已连接（蓝色）、局域网已连接（绿色）、未连接（红色）。
 - **扫码登录**：支持扫码同步账号数据。
-- **软件设置**：播放器后端、硬件解码、数据源、M3U8 代理、M3U8 本地去广告、缓冲模式、缓存管理。
+- **软件设置**：播放器后端、硬件解码、HLS 并发分片预取、强制 OpenGL ES 渲染（mpv 渲染兜底）、数据源、M3U8 代理、M3U8 本地去广告、缓冲模式、软件主题（磨砂玻璃透明度四档）、缓存管理。
 - **检查更新**：默认国内渠道，可选 GitHub 渠道，带下载进度与自动安装。
 
 ### 应用内更新
@@ -122,6 +124,8 @@
 
 - **M3U8 代理设置**：支持配置代理地址，改善部分网络环境播放体验。
 - **M3U8 本地去广告**：参考 TVBox 思路在客户端本地过滤 M3U8 广告，默认关闭，可在播放器设置中开启。
+- **HLS 并发分片预取**：开启后经本地代理并发预取后续分片，起播与拖动后的等待明显缩短，弱网下换段缓冲更快；默认关闭，建议 Wi-Fi 下开启（Android 手机 / TV / 鸿蒙）。
+- **磨砂玻璃主题**：鸿蒙版与安卓手机版底部导航栏可切换为浮动磨砂玻璃层 + 沉浸光感，主题设置中可切换强 / 中 / 弱 / 关四档透明度（默认关闭）。
 - **数据缓存**：海报、影视数据本地缓存，离线也能浏览已加载内容。
 - **Leanback 适配**：AndroidManifest 配置 LEANBACK_LAUNCHER、banner、TV 特性声明。
 - **Release 签名**：使用专用密钥库签名，支持应用内增量更新。
@@ -130,14 +134,20 @@
 
 | 平台               | 状态     | 系统要求                    | 说明                                                                       |
 | ---------------- | ------ | ----------------------- | ------------------------------------------------------------------------ |
-| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；推荐使用 **Vulkan（Impeller）** 渲染。               |
-| Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；使用 **OpenGL ES** 渲染与 **fvp** 播放后端，适配旧设备/旧安卓版本。      |
+| Android TV       | 主要目标平台 | Android 7.0+（API 24+）   | 支持 LEANBACK_LAUNCHER、遥控器焦点导航；mpv 视频渲染 **Vulkan 优先**，主要用于支持 Vulkan 的设备。 |
+| Android tvLegacy | 已发布    | Android 5.0+（API 21+）   | 低版本 Android TV 兼容版本，功能与 TV 版一致；mpv 渲染**固定 OpenGL ES**（为兼容 Android 5.0 老设备而刻意为之），播放后端为 **mpv**。      |
 | Android          | 已发布    | Android 7.0+（API 24+）   | 手机 / 平板竖屏触屏版本，可在 GitCode / GitHub Release 下载                             |
 | Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                                        |
-| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `fvp`，备用 `vlc_player`；与 Linux 共用同一套「电脑版」功能与交互                |
-| Linux            | 已发布    | 桌面 Linux（x86_64）        | 单文件 AppImage，**重点服务 Steam Deck 等掌机 / 手持设备**；功能与 Windows 一致，使用 `fvp` 播放后端 |
-| HarmonyOS NEXT   | 测试期    | HarmonyOS NEXT（手机 / 平板） | 鸿蒙版开发中，仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链。               |
+| Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `mpv`（D3D11 零拷贝），备用 `VLC`；与 Linux 共用同一套「电脑版」功能与交互                |
+| Linux            | 已发布    | 桌面 Linux（x86_64）        | 单文件 AppImage，**重点服务 Steam Deck 等掌机 / 手持设备**；功能与 Windows 一致，使用 `mpv` 播放后端 |
+| HarmonyOS NEXT   | 侧载测试中 | HarmonyOS NEXT（手机 / 平板） | 独立工程，默认 **AVPlayer**（系统原生，起播快、兼容性最稳）+ **mpv** 备选，基于 flutter_flutter 3.41.10-ohos 工具链构建。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架正在审批中，不一定能通过。** |
 | iOS              | 计划中    | —                       | 移动端版本后续支持                                                                |
+
+### 渲染后端说明（Android TV / 手机 / 平板）
+
+- **主工程（手机 / TV / 平板）**：mpv 视频渲染 **Vulkan 优先**，主要用于支持 Vulkan 的设备。
+- **tvLegacy**：为兼容 Android 5.0+（API 21）老设备，mpv 渲染**固定 OpenGL ES**（产品定位上的刻意选择，不是回退）。
+- 设置里的「强制 OpenGL ES 渲染」开关只作用于 mpv 视频渲染（设备 Vulkan 异常时的人工兜底），默认关闭。
 
 ### Linux 版说明（面向掌机）
 
@@ -145,30 +155,60 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 
 - **目标设备**：**重点服务 Steam Deck 等掌机 / 手持设备**（SteamOS、Bazzite 等），也适用于普通桌面 Linux（x86_64）。已在 ONEXPLAYER（Bazzite）掌机上完成实机验证。
 - **掌机适配**：SteamOS 游戏模式（gamescope）下自动全屏铺满，播放页返回键可正常退出；应用文件名、安装路径与元数据全部使用英文，避免在用户目录生成中文路径，并会自动清理旧版本遗留的中文名启动器。
-- **与 Windows 完全一致**：Windows 与 Linux 统一为「电脑版」，功能相同 —— 同一套键鼠焦点交互、同一套游戏手柄映射、同一套设置项，播放后端同为 `fvp`。仅在平台特有细节上各自实现（如 Windows 的窗口小窗 / 置顶）。
+- **与 Windows 完全一致**：Windows 与 Linux 统一为「电脑版」，功能相同 —— 同一套键鼠焦点交互、同一套游戏手柄映射、同一套设置项，播放后端同为 `mpv`。仅在平台特有细节上各自实现（如 Windows 的窗口小窗 / 置顶）。
 - **推荐安装方式**：运行仓库内的一键安装脚本 `hain_tv/scripts/install_heinplay_linux.sh`，会安装到 `~/Applications/heinplay.appimage` 并写入图标与桌面条目；重复执行即为升级（原子替换，不影响正在运行的实例）。卸载执行 `install_heinplay_linux.sh --uninstall`。
 - **运行依赖**：AppImage 由 Flutter 应用与系统库共同构成，未内置 glibc 等基础运行时，依赖发行版自身提供较新的 GTK3 / ALSA 等系统库（SteamOS、Bazzite、新版 Ubuntu / Fedora 等可直接运行）。
 - **Steam 库封面素材**：[`steamos-covers/`](steamos-covers) 目录提供已裁切好的标准规格封面图 —— `library_600x900.png`（竖版封面 600×900）、`library_hero.png`（库背景横幅 1920×620）、`icon.png`（图标 512×512），发布时也会一并附在 Release 里。在 Steam 中把 HeinPlay 以「非 Steam 游戏」添加后，右键该条目 → **管理 → 设置自定义艺术作品**，即可分别选用上述图片，让掌机库界面与桌面图标保持统一外观。
 
-### HarmonyOS NEXT 版开发进展
+### HarmonyOS NEXT 版
 
-面向 HarmonyOS NEXT（手机 / 平板），仅使用 `fvp` 播放后端，基于 flutter_flutter 3.41.10-ohos 工具链构建；主流程已打通，仍在持续完善中。目前可在本地手动构建，尚未提供 Release 安装包，正式发布后会补充到上方「Release 文件说明」。
+面向 HarmonyOS NEXT（手机 / 平板）的独立工程，基于 flutter_flutter 3.41.10-ohos 工具链构建。
+
+- **默认播放器为系统原生 AVPlayer**：起播快、硬解省电、兼容性最稳；另提供 **mpv** 作为可选后端，可在「点播设置 / 直播设置」中随时切换。
+- **渲染方式可切换**：点播与直播新增「渲染方式」单选，默认 TextureView（纹理），在部分设备上更稳定；SurfaceView 档当前为预留。
+- **支持 HLS 并发分片预取**：开启后并发预取后续分片，弱网与换段时缓冲更快。
+- **磨砂玻璃导航栏**：底部导航栏可切换为浮动磨砂玻璃层 + 沉浸光感，透明度四档可调（默认关闭）。
+- **安装方式（重要）**：现阶段**仅提供未签名 HAP**（`heinplay-<版本>-ohos-unsigned.hap`），需使用 **hokit** 等侧载软件自行签名后安装到设备；**未签名包无法直接安装**，请按侧载工具的指引操作。
+- **应用商店上架正在审批中**：HarmonyOS 应用商店的提交审核已启动，但**不保证一定能通过**；在通过之前，鸿蒙版以侧载方式提供。
+- 1.4.1 起提供两种产物：**未签名 HAP**（侧载用，见上）与**发布版 APP 包**（`.app`，用于应用市场分发），见上方「Release 文件说明」。
 
 ### Release 文件说明
 
 | 文件名                                    | 适用设备              | 系统要求                  | 说明                                                             |
 | -------------------------------------- | ----------------- | --------------------- | -------------------------------------------------------------- |
-| `heinplay-1.4.0-tv.apk`                | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，Vulkan 渲染。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。          |
-| `heinplay-1.4.0-tvLegacy.apk`          | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。                  |
-| `heinplay-1.4.0-mobile.apk`            | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                                             |
-| `heinplay-1.4.0-windows-portable.zip`  | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                                     |
-| `heinplay-1.4.0-linux-x86_64.AppImage` | Linux 电脑 / 掌机     | 桌面 Linux（x86_64）      | 单文件免安装，双击即用，**面向 Steam Deck 等掌机优化**；建议用安装脚本部署（见上方「Linux 版说明」）。 |
+| `heinplay-1.4.1-tv.apk`                | Android TV / 电视盒子 | Android 7.0+（API 24+） | 横屏 Leanback 设计，默认 ExoPlayer 播放（可在设置中切换 mpv，渲染 Vulkan 优先）。如果你发现安装闪退，播放卡顿，请尝试 tvLegacy。          |
+| `heinplay-1.4.1-tvLegacy.apk`          | Android TV / 电视盒子 | Android 5.0+（API 21+） | 横屏 Leanback 设计，兼容低版本 Android 设备，OpenGL ES 渲染。                  |
+| `heinplay-1.4.1-mobile.apk`            | Android 手机 / 平板   | Android 7.0+（API 24+） | 竖屏触屏 UI，支持手势与屏幕旋转。                                             |
+| `heinplay-1.4.1-windows-portable.zip`  | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                                     |
+| `heinplay-1.4.1-linux-x86_64.AppImage` | Linux 电脑 / 掌机     | 桌面 Linux（x86_64）      | 单文件免安装，双击即用，**面向 Steam Deck 等掌机优化**；建议用安装脚本部署（见上方「Linux 版说明」）。 |
+| `heinplay-1.4.1-ohos-unsigned.hap`    | HarmonyOS NEXT 设备  | HarmonyOS NEXT         | 鸿蒙版**未签名**单应用安装包（HAP）。**现阶段仅提供此包**，需用 **hokit** 等侧载软件签名后安装，不能直接安装。 |
+| `heinplay-1.4.1-ohos-release.app`      | HarmonyOS NEXT 设备  | HarmonyOS NEXT         | 鸿蒙版**发布版应用包**（APP，已签名），用于应用市场分发；应用商店上架正在审批中，不一定能通过。 |
 
 **Steam 封面素材**：仓库 [`steamos-covers/`](steamos-covers) 目录另附一套符合 Steam 标准规格的封面图 —— `library_600x900.png`（竖版库封面）、`library_hero.png`（库背景横幅）、`icon.png`（应用图标），已按比例裁切、可直接使用，每次发布也会随本 Release 一并提供。把 HeinPlay 以「非 Steam 游戏」添加进 Steam 后，右键该条目 → **管理 → 设置自定义艺术作品** 即可套用，详见上方「Linux 版说明」。
 
 ## 更新日志
 
 <details open>
+
+<summary><strong>1.4.1</strong></summary>
+
+### 1.4.1
+
+- **新增鸿蒙（HarmonyOS NEXT）版**：独立工程，提供**未签名 HAP**（侧载用）与**发布版 APP 包**两种产物；默认使用系统原生 **AVPlayer**，并保留 **mpv** 作为可选后端。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架正在审批中，不一定能通过。**
+- **引入 mpv 播放内核，为后续功能扩展做准备**：Windows / Linux 默认后端改为 mpv（Windows 保留 VLC 备用）；Android 手机 / TV 新增 mpv 可选（默认仍为 ExoPlayer）；tvLegacy 内核由 fvp 换为 mpv（老用户后端设置自动切换并正常续播）；fvp（libmdk）依赖与后端实现已全面移除。
+- **mpv 渲染默认 Vulkan 优先**（Android 手机 / TV），并新增「强制 OpenGL ES 渲染」开关用于设备 Vulkan 异常时兜底。
+- **新增 HLS 并发分片预取开关**（Android 手机 / TV / 鸿蒙）：开启后并发预取后续分片，起播与拖动后的等待明显缩短。
+- **磨砂玻璃导航栏与沉浸光感**（鸿蒙 / Android 手机版）：底部导航栏可切换为浮动磨砂玻璃层，主题设置新增强 / 中 / 弱 / 关四档透明度（默认关闭）。
+- **鸿蒙渲染方式切换**（点播 / 直播）：新增「渲染方式」单选，默认 TextureView；SurfaceView 档为预留。
+- **tvLegacy 新增直播硬件解码开关**：个别直播源硬解异常时可关闭规避。
+- **鸿蒙滑动音量改为直接驱动播放器音量**：提示条与实际音量此前不一致，现直接调节播放器音量。
+- **测速提速与让路**：整体提速约 3~4 倍；播放中的后台测速自动降档、缓冲告急时暂停，不再抢占带宽。
+- **隐私保护：日志自动脱敏**：全平台日志中的 **LunaTV 服务器地址（互联网 / 局域网服务器，含端口）** 与 **账号密码类凭据** 统一替换为 `***`；媒体流地址、第三方接口地址等排障需要的信息一律保留，「获取日志」导出的文件可直接安全分享。
+- **版本号统一**：全项目更新至 `1.4.1`（build +25），Release 新增鸿蒙产物（`heinplay-1.4.1-ohos-unsigned.hap` 与 `heinplay-1.4.1-ohos-release.app`）。
+
+</details>
+
+<details>
 
 <summary><strong>1.4.0</strong></summary>
 
@@ -215,7 +255,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 - **修复首页「继续播放」与「我的」播放记录重复同步**：全平台两者现已共用同一份本地播放记录。
 - **直播回放拖动 / 长按快进快退优化**：定位节流，长时间按住不再卡死、定位更跟手。
 - **直播网络源加载失败自动重试**：进入频道初始化失败时自动重试最多 3 次（间隔约 400ms），缓解源站调度到异常节点导致的播放失败。
-- **直播默认播放器（Android 版）调整**：直播模式默认播放器由 fvp 改回 ExoPlayer，原因是 ExoPlayer 起播与换台速度更快（并非兼容性最佳）；若个别直播源仍存在播放问题，可在「直播设置 → 直播默认播放器」切回 fvp。其他版本仍使用 fvp。
+- **直播默认播放器（Android 版）调整**：直播模式默认播放器由 fvp 改回 ExoPlayer，原因是 ExoPlayer 起播与换台速度更快（并非兼容性最佳）；若个别直播源仍存在播放问题，可在「直播设置 → 直播默认播放器」切回 mpv。其他版本当时仍使用 fvp（后续已全部迁移到 mpv）。
 - **tvlegacy兼容问题**：优化tvlegacy对于低版本安卓兼容问题。
 - **版本号统一**：全项目更新至 1.3.4（build +22），Release 产物命名同步为 `heinplay-1.3.4-tv.apk`、`heinplay-1.3.4-tvLegacy.apk`、`heinplay-1.3.4-mobile.apk`、`heinplay-1.3.4-windows-portable.zip`。
 
@@ -296,6 +336,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 ### 1.2.4
 
 - **TV 渲染后端策略调整**：普通 TV 版默认使用 **Vulkan（Impeller）** 渲染后端，推荐新设备使用；tvLegacy 版维持 **OpenGL ES** 渲染，继续兼容 Android 5.0+ 旧设备与低版本电视盒子。
+  > ⚠️ 本条「TV 版默认使用 Vulkan（Impeller）」的表述**已被 2026-10-13 的改动推翻**，早期条目保留原貌以便对照版本演进。当前策略见上方「渲染后端说明」。
 - **新增获取日志功能**：全版本设置页新增「获取日志」开关；开启后 TV 版显示局域网日志下载二维码，手机版与 Windows 版显示日志保存路径，方便反馈问题时导出日志。
 - **README 增加反馈问题说明**：新增「获取日志与反馈问题」章节，说明如何开启日志、各平台取日志方式，以及反馈问题需要提供的设备型号、系统版本、应用版本、复现步骤、截图和日志等信息。
 - **TV 版界面显示优化**：优化设置页「获取日志」二维码、软件介绍仓库二维码与更新日志弹窗的布局与字号，避免低分辨率电视显示不全。
@@ -307,6 +348,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 - **手动测速后台继续**：关闭自动测速后，用户手动触发测速仍可进入播放，测速在后台继续完成排序，行为与有播放记录时一致。
 - **TV 服务器管理二维码优化**：「我的-服务器管理」二维码输入页面默认带入电视端已保存的互联网/局域网地址；手机提交时空字段不再覆盖电视端原有地址。
 - **TV 兼容性优化**：移除全局 Impeller 禁用，改为仅 TV/tvLegacy  flavor 禁用 Impeller，手机版继续保留 Vulkan，提升老机顶盒/低版本电视设备兼容性。
+  > ⚠️ 此策略后已被 2026-10-13 的改动推翻，当前策略见上方「渲染后端说明」。
 - **版本号统一**：全项目更新至 `1.2.3`（build `+15`），Release 产物命名同步为 `heinplay-1.2.3-tv.apk`、`heinplay-1.2.3-tvLegacy.apk`、`heinplay-1.2.3-mobile.apk`、`heinplay-1.2.3-windows-portable.zip`。
 
 ### 1.2.2
@@ -449,13 +491,14 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
    - **TV 版 / tvLegacy**：使用手机扫描页面上显示的二维码，下载日志文件后发送。
    - **手机版 / Windows 版 / Linux 版**：页面会显示日志保存路径，进入该路径下的 `app_logs/` 目录复制 `hain_tv_<年>-<月>-<日>.log` 文件。
 4. 反馈时请将日志文件作为附件上传；若文件较大，可压缩为 `.zip` 或 `.rar`。
-5. 播放类问题（尤其是 Windows / Linux / tvLegacy 的 fvp 相关）无需额外操作：日志中已包含底层播放器（libmdk / ffmpeg，tag `MDK` / `FVP`）的输出，可直接一并提供。
+5. 播放类问题（尤其是 Windows / Linux / tvLegacy 的 mpv 相关）无需额外操作：日志中已包含底层播放器（libmpv / ffmpeg，tag `MPV` / `FFMPEG`）的输出，可直接一并提供。
+6. **隐私保护**：1.4.1 起，日志中的 **LunaTV 服务器地址（含端口）与账号密码类凭据已自动脱敏**（统一替换为 `***`），日志文件可直接安全分享，无需手动删改；媒体流地址、第三方接口地址等排障信息保留原样。
 
 ### 反馈问题请提供的信息
 
 - **设备型号**：如 Xiaomi TV Box 4、海信 55E3F、Samsung SM-S9360 等。
 - **系统版本**：如 Android 14、Android 10、Android 5.1、Windows 11 等。
-- **应用版本**：如 `1.4.0-tv`、`1.4.0-tvLegacy`、`1.4.0-mobile`、`1.4.0-windows`、`1.4.0-linux`。
+- **应用版本**：如 `1.4.1-tv`、`1.4.1-tvLegacy`、`1.4.1-mobile`、`1.4.1-windows`、`1.4.1-linux`。
 - **问题描述**：具体现象是什么？能否稳定复现？
 - **复现步骤**：从哪个页面开始，点击了什么，出现了什么结果。
 - **相关截图 / 照片**：TV 版问题建议手机拍摄电视屏幕；界面显示类问题请附图。

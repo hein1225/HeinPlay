@@ -35,7 +35,7 @@ hain_tv/
 ```
 
 > **tvLegacy 已独立**：Android 5.0+（API 21+）版本不再是 `hain_tv` 的一个 flavor，
-> 而是仓库根的独立工程 `hain_tv_legacy/`（与 `hain_tv/` 平级；Flutter 3.32.8 / Dart 3.8.1，fvp-only）。
+> 而是仓库根的独立工程 `hain_tv_legacy/`（与 `hain_tv/` 平级；Flutter 3.32.8 / Dart 3.8.1，mpv-only）。
 > 它使用独立的 Flutter SDK 与依赖缓存，不参与主工程的构建流程。
 
 > **产物输出目录**：所有平台的最终产物（APK / 便携版 zip / AppImage / HAP）统一输出到
@@ -80,7 +80,18 @@ flutter run -d windows --target lib/main_windows.dart
 flutter config --enable-windows-desktop
 ```
 
-> 提示：若工程位于 `E:` 盘而默认 Pub Cache 在 `C:` 盘，首次构建可能因 Kotlin daemon 跨盘符缓存问题失败。可设置环境变量 `PUB_CACHE=E:\code\HeinPlay\hain_tv\.pub-cache` 后重新执行 `flutter pub get`。
+> **PUB_CACHE 已统一**（2026-10-22）：三工程共用**同一份** pub 缓存，位于
+> `/opt/team/tool-deps/cache/pub-cache`。**工程内不再保留 `.pub-cache` 副本**
+> （此前每个工程各下载一份，重复占用约 6GB）。
+> 构建脚本（`build_windows.ps1` / `build_linux_appimage.sh` / `build_tvlegacy.ps1` /
+> `env_ohos_linux.sh`）均已自动指向该目录，通常无需手动设置。
+>
+> 仅当在**未预置 team 目录的机器**上构建时，才需自行指定，例如：
+> ```powershell
+> $env:PUB_CACHE = "D:\team\cache\pub-cache"   # 换成你机器上的统一缓存路径
+> flutter pub get
+> ```
+> ⚠️ 不要再指向工程内的 `.pub-cache` —— 那会重新制造缓存副本。
 
 ## 3. 图标配置
 
@@ -195,7 +206,7 @@ keytool -genkey -v -keystore heinplay-mobile.jks -alias your_key_alias -keyalg R
 
 #### tvLegacy 版（Android 5.0+）
 
-tvLegacy 是**独立工程** `hain_tv_legacy\`（与 `hain_tv\` 平级；Flutter 3.32.8 / Dart 3.8.1，fvp-only），
+tvLegacy 是**独立工程** `hain_tv_legacy\`（与 `hain_tv\` 平级；Flutter 3.32.8 / Dart 3.8.1，mpv-only），
 需要旧版 Flutter SDK，主工程的 `scripts\` 不参与其构建。到该目录执行：
 
 ```powershell
@@ -223,12 +234,14 @@ cd hain_tv_legacy
 
 输出：`dist/heinplay-{version}-windows-portable.zip`，解压后运行 `hain_tv.exe`。
 
-例如当前 `pubspec.yaml` 版本为 `1.2.0+12`，各平台脚本会在仓库根 `dist/` 下输出：
+例如当前 `pubspec.yaml` 版本为 `1.4.1+25`，各平台脚本会在仓库根 `dist/` 下输出：
 
-- `dist/heinplay-1.2.0-tv.apk`
-- `dist/heinplay-1.2.0-tvLegacy.apk`（由 `hain_tv_legacy\` 独立工程产出）
-- `dist/heinplay-1.2.0-mobile.apk`
-- `dist/heinplay-1.2.0-windows-portable.zip`
+- `dist/heinplay-1.4.1-tv.apk`
+- `dist/heinplay-1.4.1-tvLegacy.apk`（由 `hain_tv_legacy\` 独立工程产出）
+- `dist/heinplay-1.4.1-mobile.apk`
+- `dist/heinplay-1.4.1-windows-portable.zip`
+- `dist/heinplay-1.4.1-linux-x86_64.AppImage`
+- `dist/heinplay-1.4.1-ohos-release.hap` / `dist/heinplay-1.4.1-ohos-release.app`（由 `hain_tv_ohos\` 独立工程产出）
 
 ### 4.3 手动打包
 
@@ -325,17 +338,27 @@ aapt dump badging build\app\outputs\flutter-apk\app-mobile-release.apk | findstr
 
 ### 4.5 常见问题
 
-**Q：Windows 构建提示 `Integrity check failed, please try to re-build project again`？**  
-A：这是 `media_kit` 下载 Windows 原生依赖（`mpv-dev-...7z`）时文件损坏或校验失败。解决方法：
+**Q：Windows 构建报 `Cannot find libmpv` / `fatal error LNK1107` / CMake 找不到 mpv 头文件？**
+A：桌面播放器的原生内核来自**仓库内的 `hain_tv/third_party/`**，不从网上下载。
+`src/mpv_desktop/CMakeLists.txt` 写死了 `HEIN_MPV_WIN_DIR = ../../third_party/mpv-windows`，
+该目录里应有官方预编译的 `libmpv-2.dll`、`include/mpv/client.h` 等。
+
+若该目录缺失（新克隆的仓库、CI 环境），需先准备它：
 
 ```powershell
-Remove-Item -Path "E:\code\HeinPlay\hain_tv\build\windows\x64\mpv-dev-x86_64-20230924-git-652a1dd.7z" -Force
-flutter clean
-flutter pub get
-.\scripts\build_windows.ps1
+# 从已构建好的机器/归档中复制整个 third_party/ 目录到 hain_tv/ 下，确认结构：
+#   hain_tv/third_party/mpv-windows/     （官方预编译 libmpv，约 119MB）
+#   hain_tv/third_party/mpv-linux/       （Linux 用 libmpv.so.2，约 6MB）
+#   hain_tv/third_party/ffmpeg-mini/     （自编译精简 ffmpeg，约 12MB）
 ```
 
-如果仍然失败，通常是网络问题导致下载不完整，可尝试开启代理或手动下载对应 7z 文件放到上述路径后重新构建。
+> ⚠️ **`third_party/` 未纳入 git**（体积大且含二进制），因此 GitHub Actions 的
+> Windows / Linux job 目前无法直接出包，需先补一步下载/还原。本地机器与专用构建机
+> （192.168.8.10）不受影响 —— 这两处已有该目录。
+>
+> 另：本项目已**不再使用 `media_kit` / `mpv-dev-*.7z`**。旧文档里
+> 「`media_kit` 下载 Windows 原生依赖失败」的说法已失效，遇到上述报错请按本条排查
+> `third_party/` 是否齐全。
 
 **Q：Release 构建提示 `Keystore file not found for signing config 'mobile'`？**  
 A：请检查 `android/key-mobile.properties` 中的 `storeFile` 路径是否正确，且 keystore 文件确实存在于 `android/` 目录下。
@@ -436,21 +459,21 @@ A：不会。Windows 版使用独立的入口 `lib/main_windows.dart`、独立�
 
 ## 9. 关于 .gitignore
 
-本项目仅在仓库根目录 `e:\code\HeinPlay\.gitignore` 保留一份 `.gitignore`，统一覆盖整个 `HeinPlay` 目录及其子目录。
+本仓库采用「**仓库根一份 + 各平台目录若干份**」的分散布局，两者互补、不冲突：
 
-主要忽略内容：
+- **仓库根 `.gitignore`**：集中管理**跨平台通用**规则 —— `plan/`（设计方案、参考项目、图标素材）、
+  全局 IDE 配置（`.idea/`、`.vscode/`、`*.iml`）、Flutter/Dart 构建产物
+  （`.dart_tool/`、`build/`、`.pub-cache/`、`.flutter-plugins*`）、根目录签名密钥
+  （`*.jks`、`key.properties`、`local.properties`）、OS 临时文件（`.DS_Store`、`Thumbs.db`）。
+- **各工程/平台目录的 `.gitignore`**：由 `flutter create` 生成的**平台专属**规则，例如
+  `hain_tv/android/.gitignore`、`hain_tv/linux/.gitignore`、`hain_tv/windows/.gitignore`、
+  `hain_tv_legacy/` 与 `hain_tv_ohos/` 下的同名文件，以及鸿蒙原生侧的
+  `hain_tv_ohos/ohos/.gitignore`、`ohos/entry/.gitignore` 等。
+  这些是 Flutter 工具链自动生成的，**删除会让 `flutter create` 的产物被误提交**。
 
-- `plan/` 目录：存放设计方案、参考项目、图标素材等，不需要纳入版本控制。
-- 全局 IDE 配置文件（`.idea/`、`.vscode/`、`*.iml`、`*.ipr`、`*.iws`）。
-- Flutter / Dart 构建产物：`.dart_tool/`、`build/`、`.pub-cache/`、`.flutter-plugins`、`.flutter-plugins-dependencies` 等。
-- `hain_tv` 项目特有的构建产物与敏感配置：
-  - `/hain_tv/android/app/debug/`、`/hain_tv/android/app/profile/`、`/hain_tv/android/app/release/`
-  - `/hain_tv/android/key.properties`、`/hain_tv/android/key-mobile.properties`
-  - `/hain_tv/android/*.keystore`、`/hain_tv/android/*.jks`
-- 根目录下的签名密钥与本地配置（`*.jks`、`key.properties`、`local.properties`）。
-- OS 临时文件（`.DS_Store`、`Thumbs.db`）。
-
-由于 `.gitignore` 规则会递归作用于所有子目录，因此无需在 `hain_tv/` 下再维护单独的 `.gitignore`。所有忽略规则集中在根目录管理，便于维护。
+> 新增工程级忽略规则时请判断归属：跨三工程通用的放仓库根，只影响单一平台/工程的放对应目录。
+> 2026-10-22 补充：`.pub-cache/` 已在仓库根忽略；工程内的缓存目录本身已随统一目录清理删除，
+> 不应再出现。
 
 ## 10. 必须单独保存的密钥文件清单
 

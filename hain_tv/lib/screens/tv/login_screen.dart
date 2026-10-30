@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -11,6 +10,7 @@ import 'package:hain_tv/services/remote_input_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+import 'package:hain_tv/widgets/common/hidden_scrollbar.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -307,7 +307,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             Center(
-              child: SingleChildScrollView(
+              child: HiddenScrollbar(
+                child: SingleChildScrollView(
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
@@ -346,6 +347,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                 ),
+                ),
               ),
             ),
           ],
@@ -381,7 +383,9 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: AppSpacing.xs),
         Text(
-          Platform.isWindows ? '电脑版' : 'TV 版',
+          // 🔴 2026-10-23：原写 `Platform.isWindows`，Linux 会被误标成「TV 版」。
+          //   电脑版判定用 isComputer（Windows + Linux 均为电脑版）。
+          DeviceUtils.isComputer ? '电脑版' : 'TV 版',
           style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
         ),
       ],

@@ -33,6 +33,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 供 RendererProbe 查询 PackageManager（Vulkan 特性探测）。
+        // 存的是 applicationContext，不泄漏 Activity。
+        AppContextHolder.init(this)
         attachSplashCover()
         // 兜底：最多 4 秒后强制移除，避免极端情况下封面一直停留。
         Handler(Looper.getMainLooper()).postDelayed({ detachSplashCover() }, 4000)
@@ -77,6 +80,9 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 🔴 HeinPlay mpv：注册自写原生播放插件（PlatformView + MethodChannel/EventChannel）。
+        flutterEngine.plugins.add(MpvPlugin())
     }
 
     /// 在 FlutterView 之上附加一个全屏 ImageView 显示启动封面。

@@ -25,6 +25,37 @@ class PlayRecordService {
       return;
     }
 
+    // 🔴🔴 2026-10-23 修复：playTime=0 的记录**不得**覆盖同一集的正常进度。
+    //   换源/换集后新后端起播慢（Windows VLC 实测 16 秒才出画面），这期间
+    //   `_position` 一直是 0；若此时落盘，合并规则（更新时间最晚者为准）会让这条
+    //   「0 进度」记录盖掉旧进度（本地 131s、远程 1298s 都被盖），
+    //   详情页「继续播放」于是每次都读到 0 → 表现为「播放记录读不到」。
+    //   判据：同一 source+id 且**同一集**，且已有进度 > 0 → 跳过本次写入。
+    //   （换集不受影响：新的一集 index 不同，属于合法的「从头播」。）
+    //
+    // 🔴🔴 2026-10-23 追加：这段本地读取**必须**带超时。
+    //   实测（Windows 12:55:13 换源到 iqiyizyapi.com）整个 UI 就卡在这里：
+    //   「切换操作开始」打印后再无任何日志，进程最终被强杀。本地读取一旦挂起
+    //   （存储层异常/插件回调不返回），保存流程不结束 → 切源流程整体挂死，
+    //   并进一步毒死 PlayerSwitchGate 的串行队列（后续切源/切集全部失效）。
+    //   读本地进度只是「保护性判断」，读不到就按「无已有进度」处理即可，
+    //   绝不能因此挡住播放记录的保存。
+    if (record.playTime <= 0) {
+      final existing = await _findLocalProgress(
+        source: record.source,
+        id: record.id,
+        index: record.index,
+      );
+      if (existing != null && existing > 0) {
+        debugPrint(
+          'PlayRecordService: 跳过 0 进度覆盖（保留已有进度 ${existing}s '
+          'source=${record.source} id=${record.id} index=${record.index}）',
+        );
+        return;
+      }
+    }
+
+    // 🔴 2026-10-23：写入也带超时 + 失败不阻断上层（换源/退出）。
     await local.LocalStorageService.savePlayRecord(
       local.PlayRecord(
         source: record.source,
@@ -39,13 +70,52 @@ class PlayRecordService {
         doubanId: record.doubanId,
         year: record.year.isNotEmpty ? record.year : null,
       ),
+    ).timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        debugPrint(
+          'PlayRecordService: 本地写入超时（已放弃，播放流程继续） '
+          'source=${record.source} id=${record.id} index=${record.index}',
+        );
+      },
     );
 
-    // 本地保存后立即通知各页面刷新，无需等待远程上传
-    PlayRecordRefreshNotifier.instance.notify();
+    // 本地保存后立即通知各页面刷新，无需等待远程上传。
+    // 🔴 2026-10-23：监听器抛错不得中断保存流程（否则切源流程挂死在此）。
+    try {
+      PlayRecordRefreshNotifier.instance.notify();
+    } catch (e) {
+      debugPrint('PlayRecordService: 刷新通知异常（已忽略）: $e');
+    }
 
     // 异步上传，不阻塞播放与退出
     unawaited(_uploadToLunaTV(record));
+  }
+
+  /// 查找本地同一「源 + ID + 集数」已保存的进度（秒）。
+  ///
+  /// 用于 [save] 的 0 进度保护：只有**同一集**的已有进度才会被 0 覆盖保护，
+  /// 换集（index 不同）属于合法的「从头播」，不受限制。
+  static Future<int?> _findLocalProgress({
+    required String source,
+    required String id,
+    required int index,
+  }) async {
+    try {
+      // 🔴 2026-10-23：5 秒超时。读本地进度只是保护性判断，
+      //   读不到就当「无已有进度」，绝不能挂住整个保存流程。
+      final records = await local.LocalStorageService.getPlayHistory().timeout(
+        const Duration(seconds: 5),
+      );
+      for (final r in records) {
+        if (r.source == source && r.id == id && r.episodeIndex == index) {
+          return r.position.inSeconds;
+        }
+      }
+    } catch (e) {
+      debugPrint('PlayRecordService: 读取本地进度失败: $e');
+    }
+    return null;
   }
 
   static Future<void> _uploadToLunaTV(models.PlayRecord record) async {
@@ -156,6 +226,13 @@ class PlayRecordService {
           final existing = merged[entry.key];
           // 同一影片以更新时间更晚的为准
           if (existing == null || entry.value.saveTime > existing.saveTime) {
+            // 🔴 2026-10-23：同一集时，远程这条若为 0 进度，不得盖掉本地已有的正常进度。
+            if (existing != null &&
+                entry.value.index == existing.index &&
+                entry.value.playTime == 0 &&
+                existing.playTime > 0) {
+              continue;
+            }
             merged[entry.key] = entry.value;
           }
         }
@@ -517,6 +594,30 @@ class _MergeGroup {
     models.PlayRecord newRep = record.saveTime > representative.saveTime
         ? record
         : representative;
+
+    // 🔴🔴 2026-10-23 修复：**同一集**的进度必须取较大值，不能只看 saveTime。
+    //   换源/换集后新后端起播慢（Windows VLC 实测 16 秒），期间 `_position` 仍为 0，
+    //   会落盘一条「0 进度」记录；它 saveTime 最新，于是把正常进度整体盖掉
+    //   （本地 131s、远程 1298s 都被盖）→ 详情页「继续播放」每次都读到 0。
+    //   规则：同集 → 进度取 max；不同集 → 仍以 saveTime 最新为准（换集要归零）。
+    //
+    //   注意不能只判 `representative.playTime > newRep.playTime`：当两条都是
+    //   「同集、一条 0 一条非 0」且 0 那条 saveTime 更晚时，比较基准已切换，
+    //   会漏判。正确做法是同集时对两条的进度直接取 max。
+    if (record.index == representative.index) {
+      final maxPlay = record.playTime > newRep.playTime
+          ? record.playTime
+          : newRep.playTime;
+      if (maxPlay != newRep.playTime) {
+        newRep = newRep.copyWith(playTime: maxPlay);
+      }
+      final maxTotal = record.totalTime > newRep.totalTime
+          ? record.totalTime
+          : newRep.totalTime;
+      if (maxTotal != newRep.totalTime) {
+        newRep = newRep.copyWith(totalTime: maxTotal);
+      }
+    }
 
     // 若新记录标题更短且与代表标题高度相似，采用更短的标题用于展示和搜索
     if (record.title.isNotEmpty &&

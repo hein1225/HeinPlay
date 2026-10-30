@@ -30,11 +30,14 @@ class SettingsSchema {
     final autoSkip = await UserDataService.getAutoSkipOpeningEnding();
     final autoNext = await UserDataService.getAutoPlayNextEpisode();
     final autoSwitchSource = await UserDataService.getAutoSwitchSource();
-    final autoSwitchTimeout = await UserDataService.getAutoSwitchSourceTimeout();
+    final autoSwitchTimeout =
+        await UserDataService.getAutoSwitchSourceTimeout();
     final autoSpeedTest = await UserDataService.getAutoSpeedTest();
     final m3u8Proxy = await UserDataService.getM3u8ProxyUrl();
     final adFilter = await AdFilterService.isEnabled();
+    final hlsPrefetch = await UserDataService.getHlsPrefetchEnabled();
     final hardware = await UserDataService.getHardwareDecoding();
+    final forceOpenGl = await UserDataService.getForceOpenGl();
     final bufferProfile = await UserDataService.getBufferProfile();
 
     // 直播
@@ -76,11 +79,7 @@ class SettingsSchema {
     final dnsPref = await UserDataService.getInternetServerDnsPreference();
 
     final categories = <Map<String, dynamic>>[
-      {
-        'id': 'search',
-        'title': '搜索',
-        'kind': 'command',
-      },
+      {'id': 'search', 'title': '搜索', 'kind': 'command'},
       {
         'id': 'account',
         'title': '账号管理',
@@ -127,11 +126,7 @@ class SettingsSchema {
             '优先解析 IPv6 地址（关闭则优先解析 IPv4）',
             dnsPref == InternetServerDnsPreference.ipv6,
           ),
-          _action(
-            'server_speedtest',
-            '立即测速并切换',
-            '手动触发一次服务器延迟测速并切换到最优地址',
-          ),
+          _action('server_speedtest', '立即测速并切换', '手动触发一次服务器延迟测速并切换到最优地址'),
         ],
       },
       {
@@ -140,17 +135,29 @@ class SettingsSchema {
         'kind': 'settings',
         'items': [
           _section('点播设置'),
-          _radio('vod', 'playerBackend', '点播源默认播放器', vodBackends,
-              vodBackend.name),
-          _switch('vod', 'autoSkip', '自动跳过片头片尾',
-              '到达片头/片尾区域时自动跳转', autoSkip),
-          _switch('vod', 'autoPlayNext', '自动播放下一集',
-              '片尾结束后自动播放下一集', autoNext),
-          _switch('vod', 'autoSpeedTest', '进入详情页自动测速',
-              '多源时自动测试各源速度并排序，关闭后仍支持手动测速',
-              autoSpeedTest),
-          _switch('vod', 'autoSwitchSource', '播放失败自动切换播放源',
-              '当前源无法播放时按测速顺序自动尝试其他源', autoSwitchSource),
+          _radio(
+            'vod',
+            'playerBackend',
+            '点播源默认播放器',
+            vodBackends,
+            vodBackend.name,
+          ),
+          _switch('vod', 'autoSkip', '自动跳过片头片尾', '到达片头/片尾区域时自动跳转', autoSkip),
+          _switch('vod', 'autoPlayNext', '自动播放下一集', '片尾结束后自动播放下一集', autoNext),
+          _switch(
+            'vod',
+            'autoSpeedTest',
+            '进入详情页自动测速',
+            '多源时自动测试各源速度并排序，关闭后仍支持手动测速',
+            autoSpeedTest,
+          ),
+          _switch(
+            'vod',
+            'autoSwitchSource',
+            '播放失败自动切换播放源',
+            '当前源无法播放时按测速顺序自动尝试其他源',
+            autoSwitchSource,
+          ),
           _radio(
             'vod',
             'autoSwitchSourceTimeout',
@@ -167,12 +174,34 @@ class SettingsSchema {
             m3u8Proxy,
             '例如 http://127.0.0.1:8080/proxy?url=',
           ),
-          _switch('vod', 'adFilter', 'M3U8 去广告（本地过滤）',
-              '播放 M3U8 时使用本地规则过滤片头贴片广告', adFilter),
-          _switch('vod', 'hardwareDecoding', '硬件解码',
-              '关闭后可能解决部分花屏问题', hardware),
-          _radio('vod', 'bufferProfile', '缓冲模式', _bufferOptions(),
-              bufferProfile.name),
+          _switch(
+            'vod',
+            'adFilter',
+            'M3U8 去广告（本地过滤）',
+            '播放 M3U8 时使用本地规则过滤片头贴片广告',
+            adFilter,
+          ),
+          _switch(
+            'vod',
+            'hlsPrefetch',
+            'HLS 并发分片预取',
+            '开启后并发预取后续分片，弱网/换段缓冲更快；会额外消耗带宽（建议 Wi-Fi 下开启）',
+            hlsPrefetch,
+          ),
+          _switch(
+            'vod',
+            'hardwareDecoding',
+            '硬件解码',
+            '仅对 MPV 播放器有效；关闭后强制软解，可能解决部分花屏问题',
+            hardware,
+          ),
+          _radio(
+            'vod',
+            'bufferProfile',
+            '缓冲模式',
+            _bufferOptions(),
+            bufferProfile.name,
+          ),
         ],
       },
       {
@@ -203,15 +232,34 @@ class SettingsSchema {
             '开启后直播 M3U8 经本地代理转发，用于排查/兼容个别直播源（如神盾TV）；关闭则直播直连原始地址。默认关闭',
             localProxy,
           ),
-          _radio('live', 'livePlayerBackend', '直播默认播放器', liveBackends,
-              liveBackend.name),
-          _switch('live', 'lunaTvEnabled', '启用 LunaTV 服务器直播源',
-              '关闭后将不再获取 LunaTV 服务端提供的直播频道', luna),
-          _switch('live', 'epgEnabled', '加载 EPG 节目单',
-              '关闭后不拉取节目单与时移信息，直播连接更快；开启时频道就绪后立即开播',
-              epg),
-          _radio('live', 'cacheHours', '直播源缓存时间', _cacheHoursOptions(),
-              cacheHours),
+          _radio(
+            'live',
+            'livePlayerBackend',
+            '直播默认播放器',
+            liveBackends,
+            liveBackend.name,
+          ),
+          _switch(
+            'live',
+            'lunaTvEnabled',
+            '启用 LunaTV 服务器直播源',
+            '关闭后将不再获取 LunaTV 服务端提供的直播频道',
+            luna,
+          ),
+          _switch(
+            'live',
+            'epgEnabled',
+            '加载 EPG 节目单',
+            '关闭后不拉取节目单与时移信息，直播连接更快；开启时频道就绪后立即开播',
+            epg,
+          ),
+          _radio(
+            'live',
+            'cacheHours',
+            '直播源缓存时间',
+            _cacheHoursOptions(),
+            cacheHours,
+          ),
         ],
       },
       {
@@ -220,11 +268,21 @@ class SettingsSchema {
         'kind': 'settings',
         'items': [
           _section('豆瓣数据源'),
-          _radio('data', 'doubanSource', '豆瓣数据源', _doubanOptions(),
-              douban.name),
+          _radio(
+            'data',
+            'doubanSource',
+            '豆瓣数据源',
+            _doubanOptions(),
+            douban.name,
+          ),
           _section('Bangumi 数据源'),
-          _radio('data', 'bangumiProxyType', 'Bangumi 数据代理',
-              _bangumiApiOptions(), bangumiApi.name),
+          _radio(
+            'data',
+            'bangumiProxyType',
+            'Bangumi 数据代理',
+            _bangumiApiOptions(),
+            bangumiApi.name,
+          ),
           _text(
             'data',
             'bangumiProxyUrl',
@@ -235,11 +293,16 @@ class SettingsSchema {
             showIf: {
               'group': 'data',
               'key': 'bangumiProxyType',
-              'value': 'custom'
+              'value': 'custom',
             },
           ),
-          _radio('data', 'bangumiImageProxyType', 'Bangumi 图片代理',
-              _bangumiImgOptions(), bangumiImg.name),
+          _radio(
+            'data',
+            'bangumiImageProxyType',
+            'Bangumi 图片代理',
+            _bangumiImgOptions(),
+            bangumiImg.name,
+          ),
           _text(
             'data',
             'bangumiImageProxyUrl',
@@ -250,7 +313,7 @@ class SettingsSchema {
             showIf: {
               'group': 'data',
               'key': 'bangumiImageProxyType',
-              'value': 'custom'
+              'value': 'custom',
             },
           ),
         ],
@@ -261,8 +324,13 @@ class SettingsSchema {
         'kind': 'settings',
         'items': [
           _section('软件主题'),
-          _switch('theme', 'followSystem', '跟随系统',
-              '开启后根据系统亮度自动在明亮/黑暗主题间切换', followSystem),
+          _switch(
+            'theme',
+            'followSystem',
+            '跟随系统',
+            '开启后根据系统亮度自动在明亮/黑暗主题间切换',
+            followSystem,
+          ),
           _radio(
             'theme',
             'mode',
@@ -279,16 +347,33 @@ class SettingsSchema {
         'kind': 'settings',
         'items': [
           _section('其他'),
-          _action('clear_cache', '清除缓存源',
-              '清除海报、图片与豆瓣数据缓存，保留播放记录、搜索记录、跳过设置等数据'),
+          _action('clear_cache', '清除缓存源', '清除海报、图片与豆瓣数据缓存，保留播放记录、搜索记录、跳过设置等数据'),
+          _switch(
+            'other',
+            'forceOpenGl',
+            '强制 OpenGL ES 渲染',
+            '仅对 MPV 播放器有效，且对直播与点播同时生效。'
+                '默认关闭即 Vulkan 优先（设备支持时）；若播放闪退或画面异常，'
+                '可开启此项改走 OpenGL ES',
+            forceOpenGl,
+          ),
           _section('日志与调试'),
-          _switch('other', 'logEnabled', '获取日志',
-              '作为调试核查问题使用，正常情况下请关闭选项，避免影响性能',
-              logEnabled),
+          _switch(
+            'other',
+            'logEnabled',
+            '获取日志',
+            '作为调试核查问题使用，正常情况下请关闭选项，避免影响性能',
+            logEnabled,
+          ),
           if (DeviceUtils.isComputer) ...[
             _section('电脑版'),
-            _switch('other', 'windowsFullscreenAlwaysOnTop', '全屏时窗口置顶',
-                '全屏播放时自动将窗口置顶', windowsFullscreenAlwaysOnTop),
+            _switch(
+              'other',
+              'windowsFullscreenAlwaysOnTop',
+              '全屏时窗口置顶',
+              '全屏播放时自动将窗口置顶',
+              windowsFullscreenAlwaysOnTop,
+            ),
           ],
           _section('关于'),
           _info('版本', version.isEmpty ? '-' : version),
@@ -312,12 +397,17 @@ class SettingsSchema {
         case PlayerBackendType.exo:
           title = isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
           subtitle = 'Android 原生播放器，硬解能力强';
+        // 🔴 2026-10-16：fvp 已摘除，且从不出现在 availableBackends 中，
+        //   此分支不可达；保留仅为穷尽 switch（Dart 要求枚举全覆盖）。
         case PlayerBackendType.fvp:
-          title = isDefault ? 'FVP（默认）' : 'FVP';
-          subtitle = '基于 libmdk，兼容性较好';
+          title = 'FVP（已移除）';
+          subtitle = '基于 libmdk，已于 1.4.0 起停用';
         case PlayerBackendType.vlc:
           title = isDefault ? 'VLC（默认）' : 'VLC';
           subtitle = '基于 libvlc，格式兼容性最强';
+        case PlayerBackendType.mpv:
+          title = isDefault ? 'MPV（默认）' : 'MPV';
+          subtitle = '官方 mpv 内核 + 自写绑定，硬解/兼容兼顾';
       }
       return {
         'value': t.name,
@@ -329,17 +419,17 @@ class SettingsSchema {
   }
 
   static List<Map<String, dynamic>> _timeoutOptions() => [
-        {'value': 10, 'title': '10 秒', 'subtitle': '默认较短等待时间'},
-        {'value': 15, 'title': '15 秒', 'subtitle': '适中等待时间'},
-        {'value': 30, 'title': '30 秒', 'subtitle': '较长等待时间，适合弱网'},
-      ];
+    {'value': 10, 'title': '10 秒', 'subtitle': '默认较短等待时间'},
+    {'value': 15, 'title': '15 秒', 'subtitle': '适中等待时间'},
+    {'value': 30, 'title': '30 秒', 'subtitle': '较长等待时间，适合弱网'},
+  ];
 
   static List<Map<String, dynamic>> _cacheHoursOptions() => [
-        {'value': 24, 'title': '1 天', 'subtitle': '默认缓存时间'},
-        {'value': 48, 'title': '2 天', 'subtitle': '48 小时缓存'},
-        {'value': 72, 'title': '3 天', 'subtitle': '72 小时缓存'},
-        {'value': 168, 'title': '7 天', 'subtitle': '最长缓存时间'},
-      ];
+    {'value': 24, 'title': '1 天', 'subtitle': '默认缓存时间'},
+    {'value': 48, 'title': '2 天', 'subtitle': '48 小时缓存'},
+    {'value': 72, 'title': '3 天', 'subtitle': '72 小时缓存'},
+    {'value': 168, 'title': '7 天', 'subtitle': '最长缓存时间'},
+  ];
 
   static List<Map<String, dynamic>> _bufferOptions() =>
       BufferProfile.values.map((p) {
@@ -351,33 +441,41 @@ class SettingsSchema {
       }).toList();
 
   static List<Map<String, dynamic>> _doubanOptions() => [
-        {'value': 'direct', 'title': '直连（默认）', 'subtitle': '直接访问豆瓣官方接口'},
-        {'value': 'cdnTencent', 'title': '腾讯云 CDN', 'subtitle': '通过腾讯云 CDN 加速访问'},
-        {'value': 'cdnAliyun', 'title': '阿里云 CDN', 'subtitle': '通过阿里云 CDN 加速访问'},
-        {'value': 'corsProxy', 'title': 'CORS 代理', 'subtitle': '通过 CORS 代理服务器访问'},
-      ];
+    {'value': 'direct', 'title': '直连（默认）', 'subtitle': '直接访问豆瓣官方接口'},
+    {'value': 'cdnTencent', 'title': '腾讯云 CDN', 'subtitle': '通过腾讯云 CDN 加速访问'},
+    {'value': 'cdnAliyun', 'title': '阿里云 CDN', 'subtitle': '通过阿里云 CDN 加速访问'},
+    {'value': 'corsProxy', 'title': 'CORS 代理', 'subtitle': '通过 CORS 代理服务器访问'},
+  ];
 
   static List<Map<String, dynamic>> _bangumiApiOptions() => [
-        {'value': 'direct', 'title': '直连（直接访问 api.bgm.tv）', 'subtitle': ''},
-        {'value': 'cmliussss', 'title': 'Bangumi 反代 By CMLiussss（解决服务器被墙）', 'subtitle': ''},
-        {'value': 'custom', 'title': '自定义反代地址', 'subtitle': ''},
-      ];
+    {'value': 'direct', 'title': '直连（直接访问 api.bgm.tv）', 'subtitle': ''},
+    {
+      'value': 'cmliussss',
+      'title': 'Bangumi 反代 By CMLiussss（解决服务器被墙）',
+      'subtitle': '',
+    },
+    {'value': 'custom', 'title': '自定义反代地址', 'subtitle': ''},
+  ];
 
   static List<Map<String, dynamic>> _bangumiImgOptions() => [
-        {'value': 'direct', 'title': '直连（直接请求 lain.bgm.tv）', 'subtitle': ''},
-        {'value': 'cmliussss', 'title': 'Bangumi 图片 CDN By CMLiussss', 'subtitle': ''},
-        {'value': 'custom', 'title': '自定义代理', 'subtitle': ''},
-      ];
+    {'value': 'direct', 'title': '直连（直接请求 lain.bgm.tv）', 'subtitle': ''},
+    {
+      'value': 'cmliussss',
+      'title': 'Bangumi 图片 CDN By CMLiussss',
+      'subtitle': '',
+    },
+    {'value': 'custom', 'title': '自定义代理', 'subtitle': ''},
+  ];
 
   static List<Map<String, dynamic>> _themeOptions() => [
-        {'value': 'light', 'title': '明亮主题', 'subtitle': '背景为白色，文字为黑色'},
-        {'value': 'dark', 'title': '黑暗主题（默认）', 'subtitle': '背景为深色，适合暗光环境'},
-      ];
+    {'value': 'light', 'title': '明亮主题', 'subtitle': '背景为白色，文字为黑色'},
+    {'value': 'dark', 'title': '黑暗主题（默认）', 'subtitle': '背景为深色，适合暗光环境'},
+  ];
 
   static Map<String, dynamic> _section(String title) => {
-        'type': 'section',
-        'title': title,
-      };
+    'type': 'section',
+    'title': title,
+  };
 
   static Map<String, dynamic> _switch(
     String group,
@@ -385,15 +483,14 @@ class SettingsSchema {
     String title,
     String subtitle,
     bool value,
-  ) =>
-      {
-        'type': 'switch',
-        'group': group,
-        'key': key,
-        'title': title,
-        'subtitle': subtitle,
-        'value': value,
-      };
+  ) => {
+    'type': 'switch',
+    'group': group,
+    'key': key,
+    'title': title,
+    'subtitle': subtitle,
+    'value': value,
+  };
 
   static Map<String, dynamic> _radio(
     String group,
@@ -402,16 +499,15 @@ class SettingsSchema {
     List<Map<String, dynamic>> options,
     dynamic value, {
     Map<String, dynamic>? showIf,
-  }) =>
-      {
-        'type': 'radio',
-        'group': group,
-        'key': key,
-        'title': title,
-        'options': options,
-        'value': value,
-        if (showIf != null) 'showIf': showIf,
-      };
+  }) => {
+    'type': 'radio',
+    'group': group,
+    'key': key,
+    'title': title,
+    'options': options,
+    'value': value,
+    if (showIf != null) 'showIf': showIf,
+  };
 
   static Map<String, dynamic> _text(
     String group,
@@ -421,28 +517,26 @@ class SettingsSchema {
     dynamic value,
     String ph, {
     Map<String, dynamic>? showIf,
-  }) =>
-      {
-        'type': 'text',
-        'group': group,
-        'key': key,
-        'title': title,
-        'subtitle': subtitle,
-        'value': value ?? '',
-        'ph': ph,
-        if (showIf != null) 'showIf': showIf,
-      };
+  }) => {
+    'type': 'text',
+    'group': group,
+    'key': key,
+    'title': title,
+    'subtitle': subtitle,
+    'value': value ?? '',
+    'ph': ph,
+    if (showIf != null) 'showIf': showIf,
+  };
 
   static Map<String, dynamic> _info(String title, String value) => {
-        'type': 'info',
-        'title': title,
-        'value': value,
-      };
+    'type': 'info',
+    'title': title,
+    'value': value,
+  };
 
-  static Map<String, dynamic> _action(String id, String title, String subtitle) => {
-        'type': 'action',
-        'id': id,
-        'title': title,
-        'subtitle': subtitle,
-      };
+  static Map<String, dynamic> _action(
+    String id,
+    String title,
+    String subtitle,
+  ) => {'type': 'action', 'id': id, 'title': title, 'subtitle': subtitle};
 }

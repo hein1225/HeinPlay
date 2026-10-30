@@ -165,3 +165,37 @@ proc_dump.txt
 tvlog*.txt
 *.logcat
 .flutter
+
+# --- 鸿蒙构建环境（AI 添加）---
+# 可写的工具链镜像（Flutter OHOS SDK / command-line-tools / ohos-sdk / pub-cache），
+# 约 13 GB，属本机构建环境，不入库。重建方式见 hain_tv_ohos/scripts/env_ohos_linux.sh 顶部注释。
+.deps-staging/
+
+# --- 鸿蒙签名材料（AI 添加）---
+# 含调试私钥与口令密文，不入库。
+# 重建方式：bash hain_tv_ohos/scripts/gen_ohos_signature.sh
+hain_tv_ohos/ohos/signature/
+# 早期 Windows 签名配置备份（含本机用户名路径），已废弃
+hain_tv_ohos/ohos/build-profile.json5.windows-backup
+
+# --- 本机专用交付脚本（AI 添加）---
+# 硬编码本机 NAS 交付路径（/opt/work/DSH团队建设/交付/最终成果），
+# 仅为该设备使用，不入库、不推送。
+tools/deliver_builds.sh
+
+# --- 本机构建环境与预编译二进制（不入库）---
+# 崩溃转储（598MB core dump）
+hain_tv/core
+core
+*.core
+# 预编译 mpv / ffmpeg 二进制（含 >100MB 文件，超 GitHub 单文件上限）
+hain_tv/third_party/
+hain_tv/android/app/src/main/jniLibs/
+hain_tv_legacy/android/app/src/main/jniLibs/
+# 本地 mpv 构建目录与运行日志
+.mpv-build/
+.mpv-android/
+.logs/
+.logwork/
+.dsh-kanban.json
+.dsh-kanban.json.bak-v3

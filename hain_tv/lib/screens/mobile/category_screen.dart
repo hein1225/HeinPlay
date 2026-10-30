@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:hain_tv/models/api_response.dart';
 import 'package:hain_tv/models/bangumi_calendar_item.dart';
@@ -6,6 +8,8 @@ import 'package:hain_tv/models/douban_recommends_params.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
+import 'package:hain_tv/services/glass_style_service.dart';
+import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/mobile_poster_grid.dart';
 import 'package:hain_tv/widgets/tv/tv_grid.dart';
@@ -91,6 +95,16 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   late String _selectedSecondary;
 
   final ScrollController _scrollController = ScrollController();
+
+  /// 顶栏实测高度用 GlobalKey 量取（不用写死）：顶栏行数随分类配置变化，
+  /// 「每日放送」会多一行 weekday row，写死会导致海报被遮挡或留白过多。
+  final GlobalKey _filterBarKey = GlobalKey();
+  double _filterBarHeight = 0;
+
+  /// 磨砂档位变化（设置页切换）时重建顶栏。
+  void _onGlassChanged() {
+    if (mounted) setState(() {});
+  }
 
   List<BangumiCalendarItem> _bangumiCalendarItems = [];
   late String _selectedWeekday;
@@ -428,6 +442,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
     _kindCaches[_currentKind] = _createCache(_currentKind);
     _applyCache(_currentKind);
     _scrollController.addListener(_onScroll);
+    GlassStyleService.instance.addListener(_onGlassChanged);
     _loadData(refresh: true);
   }
 
@@ -486,7 +501,22 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   @override
   void dispose() {
     _scrollController.dispose();
+    GlassStyleService.instance.removeListener(_onGlassChanged);
     super.dispose();
+  }
+
+  /// 顶栏行数随分类配置变化，故用 GlobalKey 实测而非写死。
+  void _measureFilterBar() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _filterBarKey.currentContext?.findRenderObject();
+      if (box is RenderBox && box.hasSize) {
+        final h = box.size.height;
+        if ((h - _filterBarHeight).abs() > 0.5) {
+          setState(() => _filterBarHeight = h);
+        }
+      }
+    });
   }
 
   void _onScroll() {
@@ -1095,14 +1125,33 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
     return const SizedBox.shrink();
   }
 
+  /// 顶部分类导航栏。
+  ///
+  /// 🔴 2026-10-23：改为「浮动磨砂玻璃层」（对齐鸿蒙版设计）。开启档位时用
+  /// `BackdropFilter` 实时模糊其背后已绘制的内容；关闭档位回退纯色实心栏。
+  ///
+  /// 【实现要点】
+  /// · 状态栏安全区放进磨砂层内部：让模糊与半透明色一直铺到屏幕最顶端，
+  ///   滚动内容穿过状态栏区域时同样被磨砂，不留「裸奔」的实底死区。
+  /// · 内容层必须铺满全屏、不在顶部收缩（见 build 的 Stack），否则顶栏的
+  ///   BackdropFilter 只会模糊到纯色 bgApp，档位看不出差别。顶部避让改由滚动
+  ///   内容自身的 padding 承担（见 _buildBody 的 MobilePosterGrid padding）。
   Widget _buildTopFilterBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+    final glass = GlassStyleService.instance;
+    // 顶栏与底部导航栏共用同一档位参数，透明度一致。
+    final isLight = ThemeModeService.instance.effectiveIsLight;
+    // 状态栏安全区放进磨砂层内部。
+    final topInset = MediaQuery.paddingOf(context).top;
+    final body = Container(
+      key: _filterBarKey,
+      padding: EdgeInsets.only(
+        left: AppSpacing.md,
+        right: AppSpacing.md,
+        top: topInset + AppSpacing.sm,
+        bottom: AppSpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: AppColors.bgSurface,
+        color: glass.enabled ? Colors.transparent : AppColors.bgSurface,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Column(
@@ -1114,6 +1163,25 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
           const SizedBox(height: AppSpacing.sm),
           _buildLabeledRow(label: _secondRowLabel, child: _buildSecondRow()),
         ],
+      ),
+    );
+
+    if (!glass.enabled) return body;
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(
+          sigmaX: glass.sigma,
+          sigmaY: glass.sigma,
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.bgSurface.withValues(
+              alpha: glass.alphaFor(isLight: isLight),
+            ),
+          ),
+          child: body,
+        ),
       ),
     );
   }
@@ -1197,6 +1265,17 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
             child: MobilePosterGrid(
               controller: _scrollController,
               items: items,
+              // 顶部留出浮动磨砂顶栏高度（实测值已含状态栏安全区），底部留出
+              // 浮动导航栏总高：保证首行海报不被顶栏遮挡、最后一行可滚到导航栏
+              // 之上；滚动过程中海报会从顶栏/导航栏下方穿过，形成真磨砂。
+              // 「关」档时顶栏为实色，padding 仍生效，内容照常不被遮挡。
+              padding: EdgeInsets.only(
+                left: MediaQuery.paddingOf(context).left + AppSpacing.md,
+                right: MediaQuery.paddingOf(context).right + AppSpacing.md,
+                top: _filterBarHeight + AppSpacing.md,
+                bottom:
+                    AppSpacing.md + GlassStyleService.navBarTotalHeight(context),
+              ),
             ),
           ),
         ),
@@ -1217,15 +1296,27 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 顶栏实测高度尚未就绪时用 0，首帧后立刻补齐，避免闪跳。
+    _measureFilterBar();
+
     return Scaffold(
       backgroundColor: AppColors.bgApp,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopFilterBar(),
-            Expanded(child: _buildBody(context)),
-          ],
-        ),
+      // 🔴 2026-10-23：顶部分类导航改为「浮动磨砂玻璃层」，与底部导航栏同档位。
+      // 【关键】内容层铺满全屏、**不在顶部收缩**：滚动时海报会从顶栏下方穿过，
+      // 顶栏的 BackdropFilter 才能模糊到真实内容形成真磨砂。顶部避让改由滚动
+      // 内容自身的 padding 承担（见 _buildBody 的 MobilePosterGrid padding）。
+      // 原来外层的 SafeArea 已移除 —— 状态栏安全区改由 _buildTopFilterBar
+      // 内部的 topInset 承担，内容层需要真正铺到状态栏之下才能被磨砂。
+      body: Stack(
+        children: [
+          Positioned.fill(child: _buildBody(context)),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildTopFilterBar(),
+          ),
+        ],
       ),
     );
   }

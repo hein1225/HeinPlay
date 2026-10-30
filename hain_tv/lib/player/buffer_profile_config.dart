@@ -8,9 +8,33 @@ class BufferProfileConfig {
   final int exoBufferForPlaybackAfterRebufferMs;
   final int exoBackBufferMs;
 
-  final int fvpMinMs;
-  final int fvpMaxMs;
-  final bool fvpDrop;
+  /// 鸿蒙 AVPlayer 缓冲区大小的**放大系数**（相对 exo 基准档位）。
+  ///
+  /// 🔴 2026-09-28：四个「缓冲模式」档次不应是固定值，每个后端都该由档位模型推导。
+  /// AVPlayer 的容量不单独存值，而由 exo 档位换算：
+  ///
+  ///     avpBufferMb = exoMaxBufferMs / 1000 × avpBufferScale
+  ///
+  /// 依据官方换算「preferredBufferDuration 单位为秒，缓冲区大小 = 该值 × 1MB」，
+  /// 即 1 秒缓冲 ≈ 1MB，故 exo 的秒数可直接当 MB，档位比例天然继承：
+  ///   标准 30、增强 60、强力 120、低延迟 5（恰为官方最小推荐值）。
+  ///
+  /// [avpBufferScale] 用于整体放大/缩小，默认 1.0 即与 exo 完全对齐；
+  /// 实测内存压力大可调小该系数全局收紧，无需逐档改数。
+  ///
+  /// ⚠️ 官方「5MB~20MB」是测试场景推荐区间而非 API 限制
+  /// （media.d.ts 中该字段无 @throws、无 value range），故不设 20MB 天花板。
+  final double avpBufferScale;
+
+  /// 鸿蒙 AVPlayer 的起播/重缓冲阈值（毫秒）。
+  ///
+  /// 对应 preferredBufferDurationForPlaying，官方语义为「起播或重启播放的缓冲阈值」，
+  /// 即缓冲低于该值才停下来等待，**不是**水位线。取值应克制（1~3 秒），
+  /// 过大会导致每次轻微波动都触发长时间重缓冲。
+  final int avpBufferForPlayingMs;
+
+  /// 鸿蒙 AVPlayer 的缓冲区大小（MB），由 exo 档位派生 —— 见 [avpBufferScale] 说明。
+  int get avpBufferMb => ((exoMaxBufferMs / 1000) * avpBufferScale).round();
 
   /// VLC（libvlc）的网络/文件缓存毫秒数，对应 `--network-caching` /
   /// `--file-caching`。与 exo、fvp 一样由用户的「缓冲模式」设置驱动。
@@ -22,9 +46,8 @@ class BufferProfileConfig {
     required this.exoBufferForPlaybackMs,
     required this.exoBufferForPlaybackAfterRebufferMs,
     required this.exoBackBufferMs,
-    required this.fvpMinMs,
-    required this.fvpMaxMs,
-    required this.fvpDrop,
+    required this.avpBufferScale,
+    required this.avpBufferForPlayingMs,
     required this.vlcCachingMs,
   });
 
@@ -34,14 +57,9 @@ class BufferProfileConfig {
     exoBufferForPlaybackMs: 1000,
     exoBufferForPlaybackAfterRebufferMs: 3000,
     exoBackBufferMs: 30000,
-    // fvp 的缓冲窗口（min=起播/重缓冲阈值，max=预读窗口）。
-    // 注意 libmdk 默认是 min 1000 / max 4000：只预读 4 秒，网络一抖就断流重缓冲。
-    // 这里把预读窗口放大到 12 秒，同时对起播阈值保持 libmdk 默认的 1 秒。
-    // ⚠️ 该配置必须由 initialize() 之后的 setBufferRange 应用才有效，
-    // 详见 video_player_backend_impl.dart 中 setBufferRange 调用点的说明。
-    fvpMinMs: 1000,
-    fvpMaxMs: 12000,
-    fvpDrop: false,
+    // 鸿蒙 AVPlayer：与 exo 基准 1:1 对齐（30 秒 → 30MB）。
+    avpBufferScale: 1.0,
+    avpBufferForPlayingMs: 1000,
     vlcCachingMs: 3000,
   );
 
@@ -51,9 +69,9 @@ class BufferProfileConfig {
     exoBufferForPlaybackMs: 1500,
     exoBufferForPlaybackAfterRebufferMs: 3000,
     exoBackBufferMs: 60000,
-    fvpMinMs: 1500,
-    fvpMaxMs: 20000,
-    fvpDrop: false,
+    // 增强档：exo 60 秒 → 60MB（同为 1:1）。
+    avpBufferScale: 1.0,
+    avpBufferForPlayingMs: 1500,
     vlcCachingMs: 8000,
   );
 
@@ -63,9 +81,9 @@ class BufferProfileConfig {
     exoBufferForPlaybackMs: 2000,
     exoBufferForPlaybackAfterRebufferMs: 5000,
     exoBackBufferMs: 120000,
-    fvpMinMs: 2000,
-    fvpMaxMs: 30000,
-    fvpDrop: false,
+    // 强力档：exo 120 秒 → 120MB（1:1）。该档定位即「牺牲内存换稳定」。
+    avpBufferScale: 1.0,
+    avpBufferForPlayingMs: 2000,
     vlcCachingMs: 15000,
   );
 
@@ -75,9 +93,9 @@ class BufferProfileConfig {
     exoBufferForPlaybackMs: 200,
     exoBufferForPlaybackAfterRebufferMs: 500,
     exoBackBufferMs: 0,
-    fvpMinMs: 0,
-    fvpMaxMs: 1000,
-    fvpDrop: true,
+    // 直播低延迟档：exo 5 秒 → 5MB，恰为官方最小推荐值。
+    avpBufferScale: 1.0,
+    avpBufferForPlayingMs: 0,
     vlcCachingMs: 1000,
   );
 

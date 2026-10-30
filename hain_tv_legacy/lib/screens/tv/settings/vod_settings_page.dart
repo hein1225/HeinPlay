@@ -18,7 +18,8 @@ class VodSettingsPage extends StatefulWidget {
 }
 
 class _VodSettingsPageState extends State<VodSettingsPage> {
-  PlayerBackendType _playerBackend = PlayerBackendType.exo;
+  // tvLegacy 唯一可用后端是 mpv；此处初值只是首帧占位，_load() 会立刻用设置值覆盖。
+  PlayerBackendType _playerBackend = PlayerBackendFactory.platformDefault;
   bool _autoSkipOpeningEnding = true;
   bool _autoPlayNextEpisode = true;
   bool _autoSwitchSource = true;
@@ -123,6 +124,9 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
         return isDefault ? 'FVP（默认）' : 'FVP';
       case PlayerBackendType.vlc:
         return isDefault ? 'VLC（默认）' : 'VLC';
+      case PlayerBackendType.mpv:
+        // tvLegacy 唯一可用后端（官方 mpv 内核 + 自写壳）。
+        return isDefault ? 'MPV（默认）' : 'MPV';
     }
   }
 
@@ -134,6 +138,8 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
         return '基于 libmdk，兼容性较好';
       case PlayerBackendType.vlc:
         return '基于 libvlc，格式兼容性最强';
+      case PlayerBackendType.mpv:
+        return '官方 mpv 内核，自编译适配 Android 5.0+，硬解与续播最稳';
     }
   }
 
@@ -183,7 +189,9 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
           buildSwitchTile(
             context: context,
             title: '硬件解码',
-            subtitle: '关闭后可能解决部分花屏问题',
+            // 本工程唯一后端是 mpv；关闭 = 强制软解，开启 = 要求真硬解
+            // （硬解失败不再静默回落软解，避免掩盖问题表现为卡顿）。
+            subtitle: '仅对 MPV 播放器有效；关闭后强制软解，可能解决部分花屏问题',
             value: _hardwareDecoding,
             onChanged: _setHardwareDecoding,
           ),
@@ -447,10 +455,7 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
                 const SizedBox(height: AppSpacing.xs),
                 Text(
                   _m3u8ProxyUrl.isEmpty ? '未配置' : _m3u8ProxyUrl,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -489,7 +494,8 @@ class _VodSettingsPageState extends State<VodSettingsPage> {
           fieldNode.requestFocus();
           return KeyEventResult.handled;
         }
-        if (key == LogicalKeyboardKey.goBack || key == LogicalKeyboardKey.escape) {
+        if (key == LogicalKeyboardKey.goBack ||
+            key == LogicalKeyboardKey.escape) {
           onClose();
           return KeyEventResult.handled;
         }

@@ -104,10 +104,13 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
     switch (type) {
       case PlayerBackendType.exo:
         return isDefault ? 'ExoPlayer（默认）' : 'ExoPlayer';
+      // fvp 已摘除，保留分支仅为穷尽 switch（历史存储值由迁移兜底）
       case PlayerBackendType.fvp:
-        return isDefault ? 'FVP（默认）' : 'FVP';
+        return 'FVP（已移除）';
       case PlayerBackendType.vlc:
         return isDefault ? 'VLC（默认）' : 'VLC';
+      case PlayerBackendType.mpv:
+        return isDefault ? 'MPV（默认）' : 'MPV';
     }
   }
 
@@ -117,6 +120,8 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
         return 'Android 原生播放器，硬解能力强';
       case PlayerBackendType.fvp:
         return '基于 libmdk，兼容性较好';
+      case PlayerBackendType.mpv:
+        return '官方 mpv 内核 + 自写绑定，硬解/兼容兼顾';
       case PlayerBackendType.vlc:
         return '基于 libvlc，格式兼容性最强';
     }

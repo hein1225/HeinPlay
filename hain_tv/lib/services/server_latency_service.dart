@@ -25,6 +25,23 @@ class ServerLatencyService {
       client.findProxy = (uri) => 'DIRECT';
     }
     client.idleTimeout = _testTimeout;
+    // 🔴🔴 2026-10-16 修复「模拟器/无内网环境启动卡死」：
+    //   `idleTimeout` 只管**已建立连接**的空闲回收，**不是 TCP 建连超时**。
+    //   缺少 `connectionTimeout` 时，若目标地址被网络隔离（模拟器 NAT 访问
+    //   不到局域网 NAS，或路由器把 SYN 静默丢弃），`client.getUrl(uri)`
+    //   会一直挂起 —— 既不返回也不抛错，直到系统级超时（可达数分钟）。
+    //
+    //   这正是「打不开软件」的根因链路：
+    //     splash 的 _initializeApp 串行 await →
+    //     ServerLatencyService.selectBestServer（主备地址不同才测速）→
+    //     _testOne → `await client.getUrl(uri)`（**此处原无超时**）→ 永久挂起。
+    //   `_testOne` 里给 `request.close()` 加的 `.timeout(_testTimeout)` 位置
+    //   偏后：TCP 连不上时根本走不到那一行，5 秒超时从未生效；外层
+    //   `try/catch` 也只捕获异常，挡不住「永不完成」。
+    //
+    //   设 `connectionTimeout` 后，建连阶段即被约束在 5 秒内失败并抛
+    //   SocketException，后续既有的超时/兜底逻辑才能正常接管。
+    client.connectionTimeout = _testTimeout;
     return client;
   }
 
@@ -36,7 +53,13 @@ class ServerLatencyService {
     final uri = Uri.parse('$base/api/playrecords?limit=1');
     final stopwatch = Stopwatch()..start();
     try {
-      final request = await client.getUrl(uri);
+      // 🔴🔴 2026-10-16：给 `getUrl` 补显式超时（第二层防护）。
+      //   `_createTestClient()` 已设 `connectionTimeout`，正常情况下建连
+      //   5 秒内必失败；这里再加一层，覆盖 `connectionTimeout` 也约束不到的
+      //   情形（如 DNS 解析阶段挂起、代理协商卡住、某些平台忽略该字段）。
+      //   超时后统一按「不可达」返回，交由 `selectBestServer` 回退 primary，
+      //   绝不让 splash 的串行 await 卡住。
+      final request = await client.getUrl(uri).timeout(_testTimeout);
       request.headers.set('User-Agent', AppInfoService.userAgent);
       request.headers.set('Host', uri.host);
       // 观察底层 future，避免 force-close 中止时产生未处理异常。

@@ -27,6 +27,25 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
+    <!-- 🔴 2026-10-24 显式声明图形能力基线：**OpenGL ES 2.0**。
+         （tvlegacy 定位 Android 5.0 老盒子 / 老 TV 盒子，图形栈必须落在 API 21 的原生能力内）
+
+         依据（全部实测，非推断）：
+         · mpv 侧：Kotlin 设 `vo=gpu` + `gpu-context=android` + `opengl-es=yes`
+           → 走 mpv 的 android gpu-context（EGL + GLES），**不走 Vulkan**。
+         · libmpv.so 的 NEEDED 只有 `libEGL.so`，**不链 libGLESv2/libGLESv3**
+           （GL 函数经 eglGetProcAddress 动态取）；且其 GLES3 相关符号数为 **0**
+           → 不硬依赖 GLES3。
+         · libflutter.so（Flutter 引擎）的 NEEDED 是 `libEGL.so` + `libGLESv2.so`，
+           **无 libGLESv3.so** → 引擎同样是 GLES2 路径。
+         · Android 5.0 (API 21) 的原生图形栈正是 EGL + OpenGL ES 2.0。
+
+         `required="true"` 是**诚实声明**：本应用的渲染链路（Flutter 引擎 + mpv
+         gpu-context）无法在缺 GLES2 的设备上工作，与其让用户装上后黑屏，
+         不如在安装前就由系统过滤掉。合规的 API 21 设备全部具备 GLES2。 -->
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="true" />
 
     <application
         android:label="海因影视"

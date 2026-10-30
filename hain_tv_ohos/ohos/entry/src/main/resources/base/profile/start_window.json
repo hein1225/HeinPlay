@@ -1,0 +1,5 @@
+{
+  "startWindowType": "REQUIRED_SHOW",
+  "startWindowColorModeType": "FOLLOW_APPLICATION",
+  "startWindowBackgroundColor": "$color:start_window_background"
+}

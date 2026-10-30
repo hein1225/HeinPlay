@@ -75,7 +75,7 @@ jobs:
 
   # 【独立工程】tvLegacy APK 由仓库根的 hain_tv_legacy/ 构建（与 hain_tv/ 平级）。
   # 它与主工程不共用工具链：Flutter 3.32.8 / Dart 3.8.1 + Gradle 8.12 + AGP 8.7.3 + JDK 21，
-  # 目标是 Android 5.0+（API 21）、fvp-only。故单独成一个 job，只共用仓库级签名 secrets。
+  # 目标是 Android 5.0+（API 21）、mpv-only。故单独成一个 job，只共用仓库级签名 secrets。
   build-tvlegacy:
     name: Build tvLegacy APK
     runs-on: ubuntu-latest
@@ -242,53 +242,15 @@ jobs:
       - name: Get Flutter dependencies
         run: git config --global core.longpaths true && flutter pub get
 
-      # mdk-sdk 的 GitHub latest 目录中已不存在 mdk-sdk-windows-x64.7z，
-      # 导致 FVP 在 CI 中下载失败。这里手动下载与 fvp 0.37.x 对应的
-      # v0.37.0 release 中的 x64 包并解压到插件目录，让 FVP 跳过下载。
-      - name: Restore mdk-sdk cache
-        id: cache-mdk
-        uses: actions/cache/restore@v4
-        with:
-          path: hain_tv/windows/flutter/ephemeral/.plugin_symlinks/fvp/windows/mdk-sdk
-          key: mdk-sdk-windows-${{ hashFiles('hain_tv/pubspec.lock') }}
-
-      - name: Download mdk-sdk for FVP
-        if: steps.cache-mdk.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $fvpWindows = "windows/flutter/ephemeral/.plugin_symlinks/fvp/windows"
-          $marker = "$fvpWindows/mdk-sdk/lib/cmake/FindMDK.cmake"
-          if (Test-Path $marker) {
-            Write-Output "mdk-sdk 已存在，跳过下载"
-            exit 0
-          }
-          $url = "https://github.com/wang-bin/mdk-sdk/releases/download/v0.37.0/mdk-sdk-windows-x64-vs2026.7z"
-          $tmp7z = "$env:TEMP/mdk-sdk-windows-x64-vs2026.7z"
-          Write-Output "Downloading mdk-sdk from $url"
-          curl.exe -L --retry 3 -o $tmp7z $url
-          $size = (Get-Item $tmp7z).Length
-          if ($size -lt 1MB) {
-            Write-Error "下载的 mdk-sdk 文件过小（$size 字节），可能失败"
-            exit 1
-          }
-          New-Item -ItemType Directory -Force -Path $fvpWindows | Out-Null
-          7z x $tmp7z "-o$fvpWindows" -y
-          if (-not (Test-Path $marker)) {
-            Write-Error "解压后未找到 FindMDK.cmake"
-            exit 1
-          }
-          Remove-Item $tmp7z -Force
-          Write-Output "mdk-sdk 准备完成"
-
+      # ⚠️ 2026-10-22 核实：桌面 mpv 壳的构建输入 `hain_tv/third_party/mpv-windows/`
+      #   （官方预编译 libmpv-2.dll + mpv.lib + include/mpv/*.h，约 119MB）
+      #   **未纳入 git**（体积原因），而 src/mpv_desktop/CMakeLists.txt 强依赖它。
+      #   因此本 job 目前**无法直接出包**，需补一步「下载并解压 mpv-dev 包到
+      #   hain_tv/third_party/mpv-windows/」后才能成功。下载源与校验方式见
+      #   hain_tv/third_party/mpv-windows/README.md（官方 mpv-player-windows 构建）。
+      #   本地与专用构建机（192.168.8.10）不受影响 —— 该目录已就位。
       - name: Build Windows release
         run: flutter build windows --target lib/main_windows.dart --release
-
-      - name: Save mdk-sdk cache
-        if: steps.cache-mdk.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: hain_tv/windows/flutter/ephemeral/.plugin_symlinks/fvp/windows/mdk-sdk
-          key: ${{ steps.cache-mdk.outputs.cache-primary-key }}
 
       - name: Rename artifact
         shell: pwsh
@@ -413,11 +375,82 @@ jobs:
           path: dist/heinplay-*-linux-x86_64.AppImage
           if-no-files-found: error
 
+  # 【独立工程】HarmonyOS NEXT HAP 由仓库根的 hain_tv_ohos/ 构建（与其它平台平级）。
+  #
+  # 与其它平台的三个关键差异：
+  #   1) 需要**专用 Flutter SDK**（OpenHarmony 移植版 flutter_flutter）与 DevEco
+  #      工具链（ohpm / hvigor / node），官方 Flutter 不含 ohos 平台支持；
+  #   2) HarmonyOS SDK（API 26）为华为**商业分发**，需登录下载，无法公开拉取 ——
+  #      故由仓库变量 `vars.OHOS_SDK_URL` 提供下载地址；未配置时本 job **自动跳过**，
+  #      不影响其它平台出包（`release` 的条件已相应放宽，见下）；
+  #   3) 线上**没有鸿蒙签名材料** —— 因此**只出 unsigned.hap**（侧载用，由用户自行
+  #      用 hokit 等工具签名后安装），**不构建 app**。
+  #      发布版 .app 由本地签名构建后单独交付。
+  build-ohos:
+    name: Build HarmonyOS unsigned HAP
+    runs-on: ubuntu-latest
+    if: ${{ vars.OHOS_SDK_URL != '' }}
+    defaults:
+      run:
+        working-directory: hain_tv_ohos
+    env:
+      FLUTTER_OHOS_TAG: '3.41.10-ohos-1.0.1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # OpenHarmony 移植版 Flutter（与本地构建使用同一版本，避免产物差异）。
+      - name: Setup Flutter (OpenHarmony)
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_OHOS_TAG" \
+            https://gitcode.com/CPF-Flutter/flutter_flutter.git "$RUNNER_TEMP/flutter_flutter"
+          echo "$RUNNER_TEMP/flutter_flutter/bin" >> "$GITHUB_PATH"
+          echo "FLUTTER_OHOS_HOME=$RUNNER_TEMP/flutter_flutter" >> "$GITHUB_ENV"
+
+      # HarmonyOS SDK（商业分发，地址由仓库变量提供）。
+      - name: Setup HarmonyOS SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/ohos-sdk"
+          curl -fL --retry 3 "${{ vars.OHOS_SDK_URL }}" -o "$RUNNER_TEMP/ohos-sdk.tar.gz"
+          tar -xzf "$RUNNER_TEMP/ohos-sdk.tar.gz" -C "$RUNNER_TEMP/ohos-sdk"
+          echo "DEVECO_SDK_HOME=$RUNNER_TEMP/ohos-sdk" >> "$GITHUB_ENV"
+          echo "OHOS_SDK_HOME=$RUNNER_TEMP/ohos-sdk" >> "$GITHUB_ENV"
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      # 只构建 HAP（未签名）。**不构建 app** —— 发布版 .app 由本地签名构建后交付。
+      - name: Build unsigned HAP
+        run: flutter build hap --release -t lib/main_ohos.dart
+
+      - name: Rename artifact
+        run: |
+          VERSION="$RELEASE_TAG"
+          mkdir -p ../dist
+          cp ohos/entry/build/default/outputs/default/entry-default-unsigned.hap \
+            "../dist/heinplay-${VERSION}-ohos-unsigned.hap"
+
+      - name: Upload HarmonyOS unsigned HAP
+        if: ${{ inputs.upload-artifacts != false }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-ohos-unsigned-hap
+          path: dist/heinplay-*-ohos-unsigned.hap
+          if-no-files-found: error
+
   release:
     name: Create Release
-    needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux]
+    needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux, build-ohos]
     runs-on: ubuntu-latest
-    if: ${{ inputs.upload-artifacts != false }}
+    # build-ohos 在未配置 OHOS_SDK_URL 时是「skipped」而非失败 —— 此时仍要发布
+    # 其它平台产物，故条件放宽为「全部成功」或「仅鸿蒙被跳过」。
+    if: ${{ inputs.upload-artifacts != false && (success() || needs.build-ohos.result == 'skipped') }}
     permissions:
       contents: write
     env:

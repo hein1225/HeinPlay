@@ -8,13 +8,14 @@ enum DoubanDataSource { direct, cdnTencent, cdnAliyun, corsProxy }
 
 /// 播放后端枚举。
 ///
-/// 【tvLegacy fvp-only】本工程实际只有 [fvp] 可用（见
-/// `player_backend_factory.dart`）。保留 [exo] / [vlc] 两个值的原因：
-/// 1. 用户历史设置里可能存有 `"exo"` / `"vlc"` 字符串，
+/// 【tvLegacy mpv-only】本工程实际只有 [mpv] 可用（见
+/// `player_backend_factory.dart`，fvp 已摘除）。保留 [exo] / [fvp] / [vlc]
+/// 三个历史值的原因：
+/// 1. 用户历史设置里可能存有 `"fvp"` / `"exo"` / `"vlc"` 字符串，
 ///    [UserDataService.getPlayerBackend] 等用 `PlayerBackendType.values.firstWhere`
 ///    解析，枚举缺值会直接落到 orElse 分支；保留可让「自动纠正并写回」逻辑可追踪。
 /// 2. 既有 UI / 远端控制页面的 switch 分支无需改动即可继续编译。
-enum PlayerBackendType { exo, fvp, vlc }
+enum PlayerBackendType { exo, fvp, vlc, mpv }
 
 enum BufferProfile { standard, enhanced, power, lowLatency }
 
@@ -38,7 +39,8 @@ class UserDataService {
   static const String _activeAccountKey = 'active_account';
   static const String _windowsFullscreenAlwaysOnTopKey =
       'windows_fullscreen_always_on_top';
-  static const String _windowsMiniPlayerEnabledKey = 'windows_mini_player_enabled';
+  static const String _windowsMiniPlayerEnabledKey =
+      'windows_mini_player_enabled';
   static const String _autoSelectLowLatencyServerKey =
       'auto_select_low_latency_server';
   static const String _doubanDataSourceKey = 'app_douban_source';
@@ -145,7 +147,8 @@ class UserDataService {
     return prefs.getString(_lastSelectedServerUrlKey);
   }
 
-  static Future<InternetServerDnsPreference> getInternetServerDnsPreference() async {
+  static Future<InternetServerDnsPreference>
+  getInternetServerDnsPreference() async {
     final prefs = await SharedPreferences.getInstance();
     final index = prefs.getInt(_internetServerDnsPreferenceKey);
     // 默认优先解析 IPv4，避免在 IPv6 不完整网络下因系统 Happy Eyeballs 等待过久而加载慢。
@@ -328,11 +331,13 @@ class UserDataService {
     if ((mainAccount == null || mainAccount.password.isEmpty) &&
         password != null &&
         password.isNotEmpty) {
-      await saveMainAccount(AccountInfo(
-        username: username ?? '',
-        password: password,
-        cookies: cookies ?? '',
-      ));
+      await saveMainAccount(
+        AccountInfo(
+          username: username ?? '',
+          password: password,
+          cookies: cookies ?? '',
+        ),
+      );
       await setActiveAccount('main');
       await clearLegacyAccountData();
     }
@@ -354,6 +359,10 @@ class UserDataService {
         await clearLastSelectedServerUrl();
       }
     }
+
+    // 播放后端升级迁移（fvp -> mpv）：必须早于任何读取播放后端的逻辑，
+    // 因此放在此处（迁移总入口）而非各页面 initState。
+    await migratePlayerBackendToMpv();
 
     // 直播默认后端迁移（ExoPlayer -> fvp），独立于账号迁移。
     await migrateLivePlayerBackendDefault();
@@ -466,27 +475,27 @@ class UserDataService {
     await prefs.setString(_playerBackendKey, type.name);
   }
 
-  /// 【tvLegacy fvp-only】点播默认后端：恒为 fvp。
-  ///
-  /// 本工程已移除 ExoPlayer（media3，minSdk 23）与 VLC 后端，
-  /// 见 `player_backend_factory.dart` 的说明。
-  static PlayerBackendType get _platformDefaultBackend => PlayerBackendType.fvp;
+  /// 本工程唯一可用的播放后端。**不能** import `player_backend_factory.dart`
+  /// 取 `availableBackends`（该文件反过来 import 本文件，会形成循环依赖），
+  /// 故在此以常量复述，改动时两处必须同步。
+  static const PlayerBackendType _onlyAvailableBackend = PlayerBackendType.mpv;
 
-  /// 【tvLegacy fvp-only】直播默认后端：恒为 fvp。
+  /// 解析已保存的后端字符串；**任何历史值（null / fvp / exo / vlc）一律
+  /// 纠正为 mpv**。
   ///
-  /// 注：历史上主工程曾因 Shield TV 等设备 ExoPlayer OkHttp 网络栈连外部 IPTV
-  /// 域名超时而把默认切回 ExoPlayer；本工程无 ExoPlayer 运行时，统一走 fvp。
-  static PlayerBackendType get _platformDefaultLiveBackend =>
-      PlayerBackendType.fvp;
+  /// 这是「升级强制切 mpv」的读取侧兜底：即使迁移函数 [migratePlayerBackendToMpv]
+  /// 因故未执行（例如 prefs 被外部工具写回旧值），读取路径也不会把用户留在
+  /// 「选了 fvp 但工程里没有 fvp」的坏状态。
+  ///
+  /// [name] 仅用于文档意图，不参与判定 —— 保留形参是为了让调用点
+  /// 读起来仍是「解析这个存储值」，避免后续有人误以为可以直接返回它。
+  static PlayerBackendType _resolveStoredBackend(String? name) {
+    return _onlyAvailableBackend;
+  }
 
   static Future<PlayerBackendType> getPlayerBackend() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString(_playerBackendKey);
-    if (key == null || key.isEmpty) return _platformDefaultBackend;
-    return PlayerBackendType.values.firstWhere(
-      (e) => e.name == key,
-      orElse: () => _platformDefaultBackend,
-    );
+    return _resolveStoredBackend(prefs.getString(_playerBackendKey));
   }
 
   static Future<void> saveLivePlayerBackend(PlayerBackendType type) async {
@@ -496,12 +505,45 @@ class UserDataService {
 
   static Future<PlayerBackendType> getLivePlayerBackend() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString(_livePlayerBackendKey);
-    if (key == null || key.isEmpty) return _platformDefaultLiveBackend;
-    return PlayerBackendType.values.firstWhere(
-      (e) => e.name == key,
-      orElse: () => _platformDefaultLiveBackend,
-    );
+    return _resolveStoredBackend(prefs.getString(_livePlayerBackendKey));
+  }
+
+  /// 【tvLegacy fvp -> mpv 升级迁移】把用户已保存的播放后端**强制**改写为 mpv。
+  ///
+  /// 背景：本工程 1.4.0 起把唯一播放后端从 **fvp** 替换为 **mpv**（官方 mpv 内核
+  /// 经本工程 `.mpv-android/` 交叉编译 + 自写 Kotlin/JNI 壳），fvp 插件已从
+  /// `pubspec.yaml` 整体摘除。老用户 prefs 里存的是 `"fvp"`（旧版唯一可选值，
+  /// 因此几乎人人都是这个值），若不迁移，设置页会显示一个本工程根本没有的后端。
+  ///
+  /// 与主工程历史上的「尊重用户选择」式迁移不同，这里**必须强制覆盖**：
+  /// 因为 mpv 是本工程唯一存在的后端，保留 `"fvp"` 不是「尊重选择」而是坏数据。
+  /// 覆盖范围：
+  /// 1. 全局点播后端 `player_backend`；
+  /// 2. 全局直播后端 `live_player_backend`；
+  /// 3. 所有单视频级后端 `per_video_player_backend_*`（旧版可能逐个记过 fvp）。
+  ///
+  /// 读取侧 [_resolveStoredBackend] 是同一语义的兜底，两者共同保证
+  /// 「无论 prefs 里是什么，运行时永远是 mpv」。
+  static const String _mpvMigrationKey = 'player_backend_migrated_to_mpv_v1';
+
+  static Future<void> migratePlayerBackendToMpv() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_mpvMigrationKey) ?? false) return;
+
+    await prefs.setString(_playerBackendKey, _onlyAvailableBackend.name);
+    await prefs.setString(_livePlayerBackendKey, _onlyAvailableBackend.name);
+
+    // 清掉所有单视频级后端记录：本工程只有 mpv，留着旧值只会在
+    // 设置页/诊断日志里显示成「每集单独设过后端」的假象。
+    final perVideoKeys = prefs
+        .getKeys()
+        .where((k) => k.startsWith(_perVideoPlayerBackendPrefix))
+        .toList();
+    for (final k in perVideoKeys) {
+      await prefs.remove(k);
+    }
+
+    await prefs.setBool(_mpvMigrationKey, true);
   }
 
   /// 直播默认后端历史迁移：曾把 Android 默认从 ExoPlayer 迁到 fvp，
@@ -636,9 +678,7 @@ class UserDataService {
   static Future<BufferProfile> getBufferProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final index = prefs.getInt(_bufferProfileKey);
-    if (index != null &&
-        index >= 0 &&
-        index < BufferProfile.values.length) {
+    if (index != null && index >= 0 && index < BufferProfile.values.length) {
       return BufferProfile.values[index];
     }
     return BufferProfile.standard;
@@ -746,15 +786,10 @@ class UserDataService {
     String id, {
     PlayerBackendType? fallback,
   }) async {
-    final effectiveFallback = fallback ?? _platformDefaultBackend;
     final prefs = await SharedPreferences.getInstance();
-    final key = _perVideoBackendKey(source, id);
-    final name = prefs.getString(key);
-    if (name == null || name.isEmpty) return effectiveFallback;
-    return PlayerBackendType.values.firstWhere(
-      (e) => e.name == name,
-      orElse: () => effectiveFallback,
-    );
+    final name = prefs.getString(_perVideoBackendKey(source, id));
+    // 单视频级设置同样强制收敛到 mpv（旧版可能存了 fvp）。
+    return _resolveStoredBackend(name);
   }
 
   static Future<void> saveSkippedVersion(String version) async {

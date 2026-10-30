@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'ad_filter_service.dart';
 import 'local_m3u8_proxy.dart';
 import 'm3u8_ad_filter.dart';
+import 'm3u8_utils.dart';
 import 'user_data_service.dart';
 import '../platform/device_utils.dart';
 import '../player/player_backend_factory.dart';
@@ -47,7 +48,7 @@ class AdFilterEngine {
         useFvp && (isComputer || Platform.operatingSystem == 'ohos');
 
     final lowerUrl = originalUrl.toLowerCase();
-    final isM3u8 =
+    var isM3u8 =
         lowerUrl.contains('.m3u8') ||
         lowerUrl.contains('/hls/') ||
         lowerUrl.contains('application/vnd.apple.mpegurl') ||
@@ -55,8 +56,22 @@ class AdFilterEngine {
     // 透传平台（fvp/Windows/Linux/鸿蒙）即便 URL 没有 .m3u8 后缀（如 catchup
     // 回放地址 ?playbackbegin=...）也可能返回 M3U8/TS 流，需要下载后按内容判定，
     // 不能仅凭后缀就跳过；其余平台保持历史行为：不像 M3U8 直接跳过。
-    if (!isM3u8 && !needProxyPassthrough) {
-      WindowsLogger.log('AdFilterEngine', ' 非 M3U8 地址，跳过');
+    // 🔴🔴 2026-10-23：**HTML 播放器页入口**也不能跳过。
+    //
+    // 实测（Windows 真机，jinyingzy.com 源）：
+    //   播放地址 `https://hd.kuktxu.com/play/eXD5yD8e` 无 .m3u8 后缀，
+    //   服务器返回 1593 字节的 HTML（content-type: text/html），
+    //   页面内用 hls.js 播放 `.../eXD5yD8e/index.m3u8`。
+    //
+    // 旧逻辑在这里直接 return null → 播放器**直连 HTML**：
+    //   mpv 把 HTML 当媒体打开 → **画面卡住、总时长读不出来**。
+    //
+    // 现在改为：像直链媒体文件（.mp4/.ts/…）的 URL 才直接跳过；
+    // 其余（无后缀/未知后缀）先限量嗅探内容，确认是 HTML 就把内嵌的
+    // m3u8 取出来继续走代理流程。
+    final skipByExtension = M3u8Utils.looksLikeDirectMediaUrl(originalUrl);
+    if (!isM3u8 && !needProxyPassthrough && skipByExtension) {
+      WindowsLogger.log('AdFilterEngine', ' 直链媒体地址，跳过');
       return null;
     }
 
@@ -91,27 +106,110 @@ class AdFilterEngine {
         WindowsLogger.log('AdFilterEngine', ' 使用 M3U8 代理下载: $fetchUrl');
       }
 
-      WindowsLogger.log('AdFilterEngine', ' 开始下载 M3U8: $fetchUrl (去广告=$enabled)');
-      final response = await http
-          .get(Uri.parse(fetchUrl), headers: requestHeaders)
-          .timeout(const Duration(seconds: 15));
-      WindowsLogger.log(
-        'AdFilterEngine',
-        ' M3U8 下载完成 status=${response.statusCode} length=${response.bodyBytes.length}',
-      );
+      var effectiveUrl = originalUrl;
+      var effectiveContent = '';
 
-      if (response.statusCode != 200) {
-        WindowsLogger.log('AdFilterEngine', ' 下载 M3U8 失败 ${response.statusCode}');
-        return null;
+      if (isM3u8) {
+        // URL 已带 .m3u8 特征 → 直接完整下载（M3U8 文本很小）。
+        WindowsLogger.log('AdFilterEngine', ' 开始下载 M3U8: $fetchUrl (去广告=$enabled)');
+        final response = await http
+            .get(Uri.parse(fetchUrl), headers: requestHeaders)
+            .timeout(const Duration(seconds: 15));
+        WindowsLogger.log(
+          'AdFilterEngine',
+          ' M3U8 下载完成 status=${response.statusCode} length=${response.bodyBytes.length}',
+        );
+        if (response.statusCode != 200) {
+          WindowsLogger.log('AdFilterEngine', ' 下载 M3U8 失败 ${response.statusCode}');
+          return null;
+        }
+        effectiveContent = utf8.decode(response.bodyBytes, allowMalformed: true);
+      } else {
+        // 🔴🔴 2026-10-23：**限量嗅探**（最多 64KB），不整份下载。
+        //
+        // 为什么要限量：URL 不带 .m3u8 后缀时，可能是
+        //   (a) HTML 播放器页 → 里面藏着真正的 m3u8；
+        //   (b) 直链媒体（mp4/flv…）→ 整份下载可能几百 MB，绝不能这么干。
+        // 所以先只读 64KB 判断内容类型，再决定下一步。
+        WindowsLogger.log(
+          'AdFilterEngine',
+          ' 开始嗅探内容: $fetchUrl (去广告=$enabled)',
+        );
+        final head = await _fetchHeadBytes(
+          fetchUrl,
+          requestHeaders,
+          64 * 1024,
+        );
+        if (head == null) {
+          WindowsLogger.log('AdFilterEngine', ' 嗅探失败，跳过代理');
+          return null;
+        }
+        if (!M3u8Utils.looksLikeM3u8Content(head.text)) {
+          // 🔴🔴 2026-10-23：HTML 播放器页 → 取出内嵌的真正 m3u8。
+          //
+          // 实测（jinyingzy.com）：`https://hd.kuktxu.com/play/eXD5yD8e` 返回
+          // 1593 字节的 HTML 播放器页，真正的 m3u8 是页面里 hls.js 用的
+          // `https://hd.kuktxu.com/play/eXD5yD8e/index.m3u8`。
+          //
+          // 不处理的话：mpv 直连 HTML → 画面卡住、总时长读不出来。
+          final embedded = M3u8Utils.extractM3u8FromHtml(
+            head.text,
+            baseUrl: originalUrl,
+          );
+          if (embedded == null) {
+            WindowsLogger.log(
+              'AdFilterEngine',
+              ' 内容不是 M3U8 且未内嵌 m3u8，跳过代理（按原 URL 直连）',
+            );
+            return null;
+          }
+          WindowsLogger.log('AdFilterEngine', ' HTML 播放器页 → 内嵌 m3u8: $embedded');
+          effectiveUrl = embedded;
+          final m3u8Response = await http
+              .get(Uri.parse(embedded), headers: requestHeaders)
+              .timeout(const Duration(seconds: 15));
+          if (m3u8Response.statusCode != 200) {
+            WindowsLogger.log(
+              'AdFilterEngine',
+              ' 内嵌 m3u8 下载失败 ${m3u8Response.statusCode}',
+            );
+            return null;
+          }
+          effectiveContent = utf8.decode(
+            m3u8Response.bodyBytes,
+            allowMalformed: true,
+          );
+        } else {
+          // 内容确实是 M3U8（URL 无后缀的 catchup 回放地址常见）
+          WindowsLogger.log('AdFilterEngine', ' 内容判定为 M3U8（URL 无后缀）');
+          if (head.complete) {
+            // 嗅探时已把整个 playlist 读完了，直接用，不用再下一次。
+            effectiveContent = head.text;
+          } else {
+            final response = await http
+                .get(Uri.parse(fetchUrl), headers: requestHeaders)
+                .timeout(const Duration(seconds: 15));
+            if (response.statusCode != 200) {
+              WindowsLogger.log(
+                'AdFilterEngine',
+                ' M3U8 下载失败 ${response.statusCode}',
+              );
+              return null;
+            }
+            effectiveContent = utf8.decode(
+              response.bodyBytes,
+              allowMalformed: true,
+            );
+          }
+        }
       }
 
-      var effectiveUrl = originalUrl;
-      var effectiveContent = utf8.decode(
-        response.bodyBytes,
-        allowMalformed: true,
-      );
       if (effectiveContent.isEmpty) {
         WindowsLogger.log('AdFilterEngine', ' M3U8 内容为空');
+        return null;
+      }
+      if (!M3u8Utils.looksLikeM3u8Content(effectiveContent)) {
+        WindowsLogger.log('AdFilterEngine', ' 最终内容仍不是 M3U8，跳过代理');
         return null;
       }
       WindowsLogger.log(
@@ -178,7 +276,10 @@ class AdFilterEngine {
         finalContent =
             '#EXTM3U\n#EXTINF:-1,\n$baseUrl/segment?url=${Uri.encodeComponent(effectiveUrl)}\n';
       }
-      _proxy!.setPlaylist(finalContent, requestHeaders);
+      // 🔴 2026-10-29：mpv 后端**提前**启动「建索引头部段」预热
+      //   （plist0 是 mpv 建索引的阻塞项，必须在 open 之前备好）。
+      _proxy!.setPlaylist(finalContent, requestHeaders,
+          primeHead: effectiveBackend == PlayerBackendType.mpv);
 
       final playlistUrl = '$baseUrl/playlist.m3u8';
       WindowsLogger.log('AdFilterEngine', ' 代理地址: $playlistUrl');
@@ -186,6 +287,47 @@ class AdFilterEngine {
     } catch (e, stack) {
       WindowsLogger.log('AdFilterEngine', ' 过滤/代理失败 $e');
       debugPrint('$stack');
+      return null;
+    }
+  }
+
+  /// 🔴🔴 2026-10-23：限量读取响应的前 [maxBytes] 字节，用于内容嗅探。
+  ///
+  /// 返回 `({String text, bool complete})`：
+  ///   · `text`     —— 已读到的内容（UTF-8 解码，容错）
+  ///   · `complete` —— 是否**读完了整个响应体**（true 时内容可直接使用）
+  ///
+  /// 失败（网络异常 / 非 200）返回 null。
+  static Future<({String text, bool complete})?> _fetchHeadBytes(
+    String url,
+    Map<String, String> headers,
+    int maxBytes,
+  ) async {
+    try {
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', Uri.parse(url));
+        if (headers.isNotEmpty) request.headers.addAll(headers);
+        final response = await client.send(request).timeout(
+          const Duration(seconds: 15),
+        );
+        if (response.statusCode != 200) {
+          return null;
+        }
+        final bytes = <int>[];
+        await for (final chunk in response.stream) {
+          bytes.addAll(chunk);
+          if (bytes.length >= maxBytes) break;
+        }
+        return (
+          text: utf8.decode(bytes, allowMalformed: true),
+          complete: bytes.length < maxBytes,
+        );
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      WindowsLogger.log('AdFilterEngine', ' 嗅探请求失败: $e');
       return null;
     }
   }

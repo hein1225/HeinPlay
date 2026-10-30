@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'log_redactor.dart';
+
 import '../services/portable_storage_windows.dart';
 import '../services/user_data_service.dart';
 
@@ -95,9 +97,12 @@ class AppLogger {
     if (_originalDebugPrint != null) return;
     _originalDebugPrint = debugPrint;
     debugPrint = (String? message, {int? wrapWidth}) {
-      _originalDebugPrint?.call(message, wrapWidth: wrapWidth);
-      if (message != null && _enabled) {
-        _write(message);
+      // 🔒 隐私：控制台与文件统一脱敏（服务器地址 / 用户名 / 密码），
+      //    保证「获取日志」导出的内容里不含任何可定位到用户的信息。
+      final safe = message == null ? message : LogRedactor.redact(message);
+      _originalDebugPrint?.call(safe, wrapWidth: wrapWidth);
+      if (safe != null && _enabled) {
+        _write(safe);
       }
     };
   }
@@ -215,7 +220,7 @@ class AppLogger {
 
   /// 写入日志。无论是否开启文件日志，都会通过 [debugPrint] 输出。
   static void log(String tag, String message) {
-    final line = '[${_now()}] [$tag] $message';
+    final line = LogRedactor.redact('[${_now()}] [$tag] $message');
     debugPrint(line);
     // ⚠️ 仅在 debugPrint **未被钩子接管**时才自己写文件：`_hookDebugPrint` 安装的
     // 钩子已经写过一次，此处再写会让日志文件整体翻倍（同一行出现两次）。
@@ -235,7 +240,7 @@ class AppLogger {
   /// 注意此处**不能**复用 [log] 里「钩子未安装时兜底写入」的写法：`print`
   /// 不经过 [debugPrint]，不会触发钩子，所以只要开启就必须自己写。
   static void logDirect(String tag, String message) {
-    final line = '[${_now()}] [$tag] $message';
+    final line = LogRedactor.redact('[${_now()}] [$tag] $message');
     // ignore: avoid_print
     print(line);
     if (_enabled) {
@@ -250,12 +255,12 @@ class AppLogger {
 
   static void _write(String line) {
     if (!_enabled) return;
-    _pendingLines.add(line);
+    _pendingLines.add(LogRedactor.redact(line));
     scheduleMicrotask(_flushPending);
   }
 
   static void _writeToFile(String line) {
-    _pendingLines.add(line);
+    _pendingLines.add(LogRedactor.redact(line));
     _flushPending();
   }
 

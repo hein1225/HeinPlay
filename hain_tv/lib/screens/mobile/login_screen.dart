@@ -4,6 +4,7 @@ import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
+import 'package:hain_tv/widgets/common/hidden_scrollbar.dart';
 
 class MobileLoginScreen extends StatefulWidget {
   const MobileLoginScreen({super.key});
@@ -141,7 +142,8 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
               ),
             ),
             Center(
-              child: SingleChildScrollView(
+              child: HiddenScrollbar(
+                child: SingleChildScrollView(
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
@@ -175,6 +177,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
                       ),
                     ],
                   ),
+                ),
                 ),
               ),
             ),
