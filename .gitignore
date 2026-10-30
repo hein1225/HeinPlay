@@ -220,3 +220,5 @@ libs/
 hain_tv/linux/hein_mpv/
 # 鸿蒙 mpv 移植用的上游第三方源码（simdjson）→ HeinPlayMPV/thirdparty/simdjson
 hain_tv_ohos/ohos/mpv_arkts/src/main/cpp/third_party/simdjson/
+# tvLegacy 工程的 mpv 依赖目录（头文件等，由 CI 从 HeinPlayMPV 资产解出）
+hain_tv_legacy/third_party/

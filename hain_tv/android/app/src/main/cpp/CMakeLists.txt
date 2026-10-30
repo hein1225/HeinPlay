@@ -7,7 +7,7 @@ project(heinplay_mpv_jni)
 # 回退路径：CI / 干净环境没有本机 mpv-android 源码树，
 # 改用 HeinPlayMPV 发布的头文件（third_party/include/mpv/*.h，由 CI 从 Release 资产解出）。
 if(NOT DEFINED MPV_INCLUDE_DIR)
-  set(MPV_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../../../../../../third_party" CACHE PATH "mpv include dir")
+  set(MPV_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../../../../../third_party" CACHE PATH "mpv include dir")
 endif()
 
 add_library(heinplay_mpv_jni SHARED heinplay_mpv_jni.cpp)

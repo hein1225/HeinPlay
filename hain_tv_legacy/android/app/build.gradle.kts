@@ -65,7 +65,7 @@ android {
                 val mpvInclude = if (mpvIncludeSrc.resolve("include/mpv/client.h").exists()) {
                     mpvIncludeSrc
                 } else {
-                    rootProject.file("../../third_party")
+                    rootProject.file("../third_party")
                 }
                 arguments += listOf("-DMPV_INCLUDE_DIR=${mpvInclude.absolutePath}")
                 cppFlags += listOf("-std=c++17")

@@ -61,7 +61,8 @@ jobs:
         run: |
           set -euo pipefail
           BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
-          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          # Android 用 mpv 0.41.0 头文件（必须与 libmpv.so 同源）
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers-android.tar.gz"
           curl -fsSL --retry 3 -o android-arm64-v8a.tar.gz "$BASE/android-arm64-v8a.tar.gz"
           curl -fsSL --retry 3 -o android-armeabi-v7a.tar.gz "$BASE/android-armeabi-v7a.tar.gz"
           mkdir -p third_party android/app/src/main/jniLibs
@@ -147,7 +148,8 @@ jobs:
         run: |
           set -euo pipefail
           BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
-          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          # tvLegacy 同样用 mpv 0.41.0 头文件（与 libmpv.so 同源）
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers-android.tar.gz"
           curl -fsSL --retry 3 -o android-tvlegacy-arm64-v8a.tar.gz "$BASE/android-tvlegacy-arm64-v8a.tar.gz"
           curl -fsSL --retry 3 -o android-tvlegacy-armeabi-v7a.tar.gz "$BASE/android-tvlegacy-armeabi-v7a.tar.gz"
           mkdir -p third_party android/app/src/main/jniLibs
@@ -231,7 +233,8 @@ jobs:
         run: |
           set -euo pipefail
           BASE="$MPV_DEPS_BASE/$MPV_DEPS_TAG"
-          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers.tar.gz"
+          # Android 用 mpv 0.41.0 头文件（必须与 libmpv.so 同源）
+          curl -fsSL --retry 3 -o mpv-headers.tar.gz "$BASE/mpv-headers-android.tar.gz"
           curl -fsSL --retry 3 -o android-arm64-v8a.tar.gz "$BASE/android-arm64-v8a.tar.gz"
           curl -fsSL --retry 3 -o android-armeabi-v7a.tar.gz "$BASE/android-armeabi-v7a.tar.gz"
           mkdir -p third_party android/app/src/main/jniLibs
