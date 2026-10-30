@@ -455,87 +455,18 @@ jobs:
           name: heinplay-linux-appimage
           path: dist/heinplay-*-linux-x86_64.AppImage
           if-no-files-found: error
-
-  # 【独立工程】HarmonyOS NEXT HAP 由仓库根的 hain_tv_ohos/ 构建（与其它平台平级）。
-  #
-  # 与其它平台的三个关键差异：
-  #   1) 需要**专用 Flutter SDK**（OpenHarmony 移植版 flutter_flutter）与 DevEco
-  #      工具链（ohpm / hvigor / node），官方 Flutter 不含 ohos 平台支持；
-  #   2) HarmonyOS SDK（API 26）为华为**商业分发**，需登录下载，无法公开拉取 ——
-  #      故由仓库变量 `vars.OHOS_SDK_URL` 提供下载地址；未配置时本 job **自动跳过**，
-  #      不影响其它平台出包（`release` 的条件已相应放宽，见下）；
-  #   3) 线上**没有鸿蒙签名材料** —— 因此**只出 unsigned.hap**（侧载用，由用户自行
-  #      用 hokit 等工具签名后安装），**不构建 app**。
-  #      发布版 .app 由本地签名构建后单独交付。
-  build-ohos:
-    name: Build HarmonyOS unsigned HAP
-    runs-on: ubuntu-latest
-    if: ${{ vars.OHOS_SDK_URL != '' }}
-    defaults:
-      run:
-        working-directory: hain_tv_ohos
-    env:
-      FLUTTER_OHOS_TAG: '3.41.10-ohos-1.0.1'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      # OpenHarmony 移植版 Flutter（与本地构建使用同一版本，避免产物差异）。
-      - name: Setup Flutter (OpenHarmony)
-        run: |
-          git clone --depth 1 --branch "$FLUTTER_OHOS_TAG" \
-            https://gitcode.com/CPF-Flutter/flutter_flutter.git "$RUNNER_TEMP/flutter_flutter"
-          echo "$RUNNER_TEMP/flutter_flutter/bin" >> "$GITHUB_PATH"
-          echo "FLUTTER_OHOS_HOME=$RUNNER_TEMP/flutter_flutter" >> "$GITHUB_ENV"
-
-      # HarmonyOS SDK（商业分发，地址由仓库变量提供）。
-      - name: Setup HarmonyOS SDK
-        run: |
-          mkdir -p "$RUNNER_TEMP/ohos-sdk"
-          curl -fL --retry 3 "${{ vars.OHOS_SDK_URL }}" -o "$RUNNER_TEMP/ohos-sdk.tar.gz"
-          tar -xzf "$RUNNER_TEMP/ohos-sdk.tar.gz" -C "$RUNNER_TEMP/ohos-sdk"
-          echo "DEVECO_SDK_HOME=$RUNNER_TEMP/ohos-sdk" >> "$GITHUB_ENV"
-          echo "OHOS_SDK_HOME=$RUNNER_TEMP/ohos-sdk" >> "$GITHUB_ENV"
-
-      - name: Get Flutter dependencies
-        run: flutter pub get
-
-      # 只构建 HAP（未签名）。**不构建 app** —— 发布版 .app 由本地签名构建后交付。
-      - name: Build unsigned HAP
-        run: flutter build hap --release -t lib/main_ohos.dart
-
-      - name: Rename artifact
-        run: |
-          VERSION="$RELEASE_TAG"
-          mkdir -p ../dist
-          cp ohos/entry/build/default/outputs/default/entry-default-unsigned.hap \
-            "../dist/heinplay-${VERSION}-ohos-unsigned.hap"
-
-      - name: Upload HarmonyOS unsigned HAP
-        if: ${{ inputs.upload-artifacts != false }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: heinplay-ohos-unsigned-hap
-          path: dist/heinplay-*-ohos-unsigned.hap
-          if-no-files-found: error
-
   release:
     name: Create Release
-    needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux, build-ohos]
+    needs: [build-tv, build-tvlegacy, build-mobile, build-windows, build-linux]
     runs-on: ubuntu-latest
     # 🔴 发布纪律：**全部平台构建成功后才发版**，缺一个都不发。
     #   （旧条件 success() || needs.build-ohos.result == 'skipped' 会在
     #     Linux/Windows 失败时因「鸿蒙被跳过」而误判为可发布 →
     #      结果就是只带 3 个 APK 的残缺 Release 被挂到 tag 上。）
-    #   build-ohos 未配置 OHOS_SDK_URL 时是「skipped」，不算失败；
-    #   其余五个平台必须全部 success。
-    if: ${{ inputs.upload-artifacts != false && needs.build-tv.result == 'success' && needs.build-tvlegacy.result == 'success' && needs.build-mobile.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' && (needs.build-ohos.result == 'success' || needs.build-ohos.result == 'skipped') }}
+    #   线上只构建这五个平台；鸿蒙因 HarmonyOS SDK 为商业分发、无法在
+    #   GitHub runner 上公开拉取，其构建脚本已从本 workflow 移除，
+    #   鸿蒙产物（unsigned.hap 与发布版 app）一律本地构建后交付。
+    if: ${{ inputs.upload-artifacts != false && needs.build-tv.result == 'success' && needs.build-tvlegacy.result == 'success' && needs.build-mobile.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
     permissions:
       contents: write
     env:
