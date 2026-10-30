@@ -159,6 +159,12 @@ mpv 内核的**源码、鸿蒙移植补丁、构建脚本与预编译产物**不
   资产清单与落地路径见 [`HeinPlayMPV/docs/heinplay-integration.md`](https://github.com/hein1225/HeinPlayMPV/blob/main/docs/heinplay-integration.md)。
 - 本仓库只保留播放业务的**胶水层**（`mpv_backend.dart`、各平台 JNI / ArkTS 壳、桌面壳）。
 
+> 🔴 **依赖契约（防漂移，务必先看）**
+> 本仓库侧的 mpv 内核来源约定见 **[`docs/mpv-dependency-contract.md`](docs/mpv-dependency-contract.md)**：
+> 内核只认独立仓 HeinPlayMPV 的固定 tag（当前 `mpv-v1.4.1`）；头文件必须与二进制同源；
+> `.mpv-build/`（鸿蒙交叉编译树，mpv master）**禁止**用作 Android 头文件来源 —— 构建脚本已加硬断言拦截。
+> 构建 / 发版前可一键巡检：`bash tools/check_mpv_deps.sh`。
+
 ### Linux 版说明（面向掌机）
 
 Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-linux-x86_64.AppImage`），免安装、双击即用，已纳入自动构建，可直接从 Release 下载。

@@ -360,6 +360,14 @@ A：桌面播放器的原生内核来自**仓库内的 `hain_tv/third_party/`**�
 > 「`media_kit` 下载 Windows 原生依赖失败」的说法已失效，遇到上述报错请按本条排查
 > `third_party/` 是否齐全。
 
+> 🔴 **mpv 内核来源契约（防漂移）**
+> `third_party/` 的内容来自独立仓 [**HeinPlayMPV**](https://github.com/hein1225/HeinPlayMPV) 的固定 tag
+> （当前 `mpv-v1.4.1`）Release 资产，落地路径与校验见
+> [`docs/mpv-dependency-contract.md`](docs/mpv-dependency-contract.md)。
+> Android 侧头文件**必须与 `libmpv.so` 同源**（0.41.0），**不得**用 `.mpv-build/`（鸿蒙 mpv master 树）里的头文件；
+> 构建脚本已对后者加硬断言，构建会直接失败并给出指引。
+> 构建 / 发版前先跑：`bash tools/check_mpv_deps.sh`。
+
 **Q：Release 构建提示 `Keystore file not found for signing config 'mobile'`？**  
 A：请检查 `android/key-mobile.properties` 中的 `storeFile` 路径是否正确，且 keystore 文件确实存在于 `android/` 目录下。
 

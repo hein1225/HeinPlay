@@ -72,6 +72,21 @@ android {
                 } else {
                     rootProject.file("../third_party")
                 }
+                // 🔴 防漂移断言（2026-10-30 加固）：
+                //    mpv 内核的**唯一权威来源是独立仓 HeinPlayMPV**（固定 tag mpv-v1.4.1），
+                //    契约见 docs/mpv-dependency-contract.md 与 HeinPlayMPV/docs/heinplay-integration.md。
+                //    本机 .mpv-android/ 只是该仓资产的本地构建树；.mpv-build/ 是**鸿蒙交叉编译树**
+                //    （mpv master），与 Android 的 0.41.0 不同源 —— 历史上曾误指这里导致头/二进制漂移。
+                require(!mpvInclude.absolutePath.replace('\\', '/').contains("/.mpv-build/")) {
+                    "mpv 头文件来源非法（指向 .mpv-build 鸿蒙源码树，与 Android 0.41.0 不同源）: ${mpvInclude.absolutePath}\n" +
+                        "请改用 HeinPlayMPV（tag mpv-v1.4.1）的资产；契约见 docs/mpv-dependency-contract.md"
+                }
+                require(mpvInclude.resolve("include/mpv/client.h").exists()) {
+                    "找不到 mpv 头文件: ${mpvInclude.absolutePath}/include/mpv/client.h\n" +
+                        "本地请先构建 .mpv-android（mpv 0.41.0），或从 HeinPlayMPV Release 资产解包到 third_party/；" +
+                        "契约见 docs/mpv-dependency-contract.md"
+                }
+                println("[HeinPlay mpv] 头文件来源 = ${mpvInclude.absolutePath}（契约: docs/mpv-dependency-contract.md）")
                 arguments += listOf("-DMPV_INCLUDE_DIR=${mpvInclude.absolutePath}")
                 cppFlags += listOf("-std=c++17")
             }

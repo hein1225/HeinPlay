@@ -10,6 +10,23 @@ if(NOT DEFINED MPV_INCLUDE_DIR)
   set(MPV_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../../../../../third_party" CACHE PATH "mpv include dir")
 endif()
 
+# 🔴 防漂移硬断言（2026-10-30 加固）：
+#    mpv 内核唯一权威来源 = 独立仓 HeinPlayMPV（固定 tag mpv-v1.4.1），
+#    契约见 docs/mpv-dependency-contract.md。
+#    .mpv-build 是**鸿蒙**交叉编译树（mpv master），与 Android 的 0.41.0 不同源，禁止使用。
+if(MPV_INCLUDE_DIR MATCHES "/\\.mpv-build/")
+  message(FATAL_ERROR
+    "mpv 头文件来源非法（指向 .mpv-build 鸿蒙源码树，与 Android 0.41.0 不同源）: ${MPV_INCLUDE_DIR}\n"
+    "请改用 HeinPlayMPV（tag mpv-v1.4.1）的资产；契约见 docs/mpv-dependency-contract.md")
+endif()
+if(NOT EXISTS "${MPV_INCLUDE_DIR}/include/mpv/client.h")
+  message(FATAL_ERROR
+    "找不到 mpv/client.h: ${MPV_INCLUDE_DIR}/include/mpv/client.h\n"
+    "本地请先构建 .mpv-android（mpv 0.41.0），或从 HeinPlayMPV Release 资产解包到 third_party/；"
+    "契约见 docs/mpv-dependency-contract.md")
+endif()
+message(STATUS "MPV_INCLUDE_DIR = ${MPV_INCLUDE_DIR}（契约: docs/mpv-dependency-contract.md）")
+
 add_library(heinplay_mpv_jni SHARED heinplay_mpv_jni.cpp)
 
 target_include_directories(heinplay_mpv_jni PRIVATE
