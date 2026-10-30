@@ -466,7 +466,7 @@ jobs:
     #   线上只构建这五个平台；鸿蒙因 HarmonyOS SDK 为商业分发、无法在
     #   GitHub runner 上公开拉取，其构建脚本已从本 workflow 移除，
     #   鸿蒙产物（unsigned.hap 与发布版 app）一律本地构建后交付。
-    if: ${{ inputs.upload-artifacts != false && needs.build-tv.result == 'success' && needs.build-tvlegacy.result == 'success' && needs.build-mobile.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
+    if: ${{ always() && inputs.upload-artifacts != false && needs.build-tv.result == 'success' && needs.build-tvlegacy.result == 'success' && needs.build-mobile.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
     permissions:
       contents: write
     env:
