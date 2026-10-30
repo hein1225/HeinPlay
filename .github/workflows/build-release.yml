@@ -417,7 +417,16 @@ jobs:
           # 链接期需要 libmpv.so（符号链接），运行期用 libmpv.so.2
           sudo ln -sf libmpv.so.2 /opt/heinplay-mpv/lib/libmpv.so
           echo "PKG_CONFIG_PATH=/opt/heinplay-mpv" >> "$GITHUB_ENV"
-          ls -l /opt/heinplay-mpv
+          # 桌面 mpv 壳的依赖收集脚本按固定顺序找 libmpv.so.2：
+          #   ① <工程>/third_party/mpv-linux/libmpv.so.2
+          #   ② /usr/local/lib/x86_64-linux-gnu/libmpv.so.2   ← 这里装到这里
+          # 找不到它，依赖收集整段会提前 return，连带 libX11 / libasound 也不进包，
+          # 打包自检就会报「bundle 缺少必需依赖」而失败。
+          sudo mkdir -p /usr/local/lib/x86_64-linux-gnu /usr/local/include/mpv
+          sudo cp -f /opt/heinplay-mpv/lib/libmpv.so.2 /usr/local/lib/x86_64-linux-gnu/
+          sudo cp -f /opt/heinplay-mpv/include/mpv/*.h /usr/local/include/mpv/
+          sudo ldconfig
+          ls -l /opt/heinplay-mpv /usr/local/lib/x86_64-linux-gnu/libmpv.so.2
 
       - name: Install appimage-builder
         run: |
