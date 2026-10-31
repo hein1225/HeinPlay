@@ -61,8 +61,13 @@ jobs:
         run: |
           $base = "$env:MPV_DEPS_BASE/$env:MPV_DEPS_TAG"
           Invoke-WebRequest -Uri "$base/windows-mpv-x86_64.tar.gz" -OutFile "mpv-windows.tar.gz"
+          Write-Output ("downloaded {0} bytes" -f (Get-Item "mpv-windows.tar.gz").Length)
           New-Item -ItemType Directory -Force -Path "third_party" | Out-Null
           tar -xzf "mpv-windows.tar.gz" -C "third_party"
+          Write-Output "third_party tree:"
+          Get-ChildItem -Recurse "third_party" -File | ForEach-Object {
+            Write-Output ("  {0}  {1}" -f $_.FullName, $_.Length)
+          }
 
       - name: Build Windows release
         run: flutter build windows --target lib/main_windows.dart --release
@@ -76,6 +81,33 @@ jobs:
           $sourceDir = "build\windows\x64\runner\Release"
           $destZip = "$distDir\heinplay-$version-windows-portable.zip"
           if (Test-Path $destZip) { Remove-Item $destZip -Force }
+
+          # ---- 桌面 mpv 运行库必须与可执行文件同目录 ----
+          # CI 上 `install(FILES ...)` 规则未把 libmpv-2.dll / 壳 DLL 带进
+          # Release 目录，导致包内缺 mpv 内核（桌面默认后端无法播放）。
+          # 这里显式补齐，缺任何一个都直接失败，避免再发出残缺包。
+          $releaseDir = (Resolve-Path $sourceDir).Path
+
+          $mpvCore = Join-Path $releaseDir "libmpv-2.dll"
+          if (-not (Test-Path $mpvCore)) {
+            $src = "third_party\mpv-windows\bin\libmpv-2.dll"
+            if (-not (Test-Path $src)) { throw "缺少 mpv 内核：$src 不存在" }
+            Copy-Item $src $mpvCore -Force
+            Write-Output "已补齐 libmpv-2.dll"
+          }
+
+          $mpvShell = Join-Path $releaseDir "heinplay_mpv_desktop.dll"
+          if (-not (Test-Path $mpvShell)) {
+            $found = Get-ChildItem -Path "build\windows\x64" -Filter "heinplay_mpv_desktop.dll" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $found) { throw "缺少桌面 mpv 壳 DLL：heinplay_mpv_desktop.dll" }
+            Copy-Item $found.FullName $mpvShell -Force
+            Write-Output "已补齐 heinplay_mpv_desktop.dll（来自 $($found.FullName)）"
+          }
+
+          Write-Output "Release 目录文件:"
+          Get-ChildItem $releaseDir -File | ForEach-Object {
+            Write-Output ("  {0}  {1}" -f $_.Name, $_.Length)
+          }
 
           # 分发包只收程序产物，排除运行期数据（登录态 / 日志 / 缓存 / 偏好）。
           $runtimeDataExcludes = @(
@@ -116,6 +148,20 @@ jobs:
 
           Write-Output "已生成: $destZip"
           Write-Output "MD5: $((Get-FileHash $destZip -Algorithm MD5).Hash)"
+
+          # 打包后再校验一遍 zip 内容，确保 mpv 内核与壳都在包里。
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipRead = [System.IO.Compression.ZipFile]::OpenRead($destZip)
+          try {
+            $names = $zipRead.Entries | ForEach-Object { $_.FullName }
+            foreach ($need in @("libmpv-2.dll", "heinplay_mpv_desktop.dll")) {
+              if ($names -notcontains $need) { throw "打包校验失败：缺少 $need" }
+            }
+            Write-Output "打包校验通过：libmpv-2.dll + heinplay_mpv_desktop.dll 均在包内"
+          }
+          finally {
+            $zipRead.Dispose()
+          }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
