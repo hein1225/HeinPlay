@@ -29,6 +29,10 @@ jobs:
   build-windows:
     name: Build Windows Portable
     runs-on: windows-latest
+    # 追加资产到既有 Release 需要写权限（默认只读会导致
+    # HTTP 403 Resource not accessible by integration）。
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: hain_tv
@@ -130,4 +134,6 @@ jobs:
         run: |
           $zip = Get-ChildItem "..\dist\heinplay-*-windows-portable.zip" | Select-Object -First 1
           gh release upload $env:TARGET $zip.FullName --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }
           gh release view $env:TARGET --repo $env:GITHUB_REPOSITORY --json tagName,name,assets
+          if ($LASTEXITCODE -ne 0) { throw "gh release view failed with exit code $LASTEXITCODE" }
