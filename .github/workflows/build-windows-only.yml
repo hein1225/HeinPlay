@@ -1,0 +1,133 @@
+name: Build Windows Only (hotfix)
+
+# 仅构建 Windows 便携版并上传到**已存在**的 Release（不新建 tag / 不新建 Release、
+# 不改动 Release 说明正文，鸿蒙等其它平台资产一律不动）。
+#
+# 用途：某个平台出问题时单独重建该平台产物并补充到既有发布页，
+#      避免整条流水线重建全部平台。版本号由使用者显式传入，不自动提升。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（与目标 Release 的 tag 一致，例如 1.4.1）'
+        required: true
+        type: string
+      release-tag:
+        description: '目标 Release 的 tag（留空则与 version 相同）'
+        required: false
+        default: ''
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.version }}
+  TARGET_TAG: ${{ inputs.release-tag != '' && inputs.release-tag || inputs.version }}
+  MPV_DEPS_TAG: 'mpv-v1.4.1'
+  MPV_DEPS_BASE: 'https://github.com/hein1225/HeinPlayMPV/releases/download'
+
+jobs:
+  build-windows:
+    name: Build Windows Portable
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: hain_tv
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Windows 默认禁用长路径（MAX_PATH=260），flutter 插件 git 依赖的
+      # example 路径超过限制会导致 `git checkout` 失败（Filename too long）。
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        run: git config --global core.longpaths true && flutter pub get
+
+      # 桌面 mpv 壳的构建输入 `hain_tv/third_party/mpv-windows/`
+      # （未纳入 git，现从独立仓库 hein1225/HeinPlayMPV 的固定 tag 资产下载）
+      - name: Fetch mpv dependencies (HeinPlayMPV)
+        shell: pwsh
+        run: |
+          $base = "$env:MPV_DEPS_BASE/$env:MPV_DEPS_TAG"
+          Invoke-WebRequest -Uri "$base/windows-mpv-x86_64.tar.gz" -OutFile "mpv-windows.tar.gz"
+          New-Item -ItemType Directory -Force -Path "third_party" | Out-Null
+          tar -xzf "mpv-windows.tar.gz" -C "third_party"
+
+      - name: Build Windows release
+        run: flutter build windows --target lib/main_windows.dart --release
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG
+          $distDir = "..\dist"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          $sourceDir = "build\windows\x64\runner\Release"
+          $destZip = "$distDir\heinplay-$version-windows-portable.zip"
+          if (Test-Path $destZip) { Remove-Item $destZip -Force }
+
+          # 分发包只收程序产物，排除运行期数据（登录态 / 日志 / 缓存 / 偏好）。
+          $runtimeDataExcludes = @(
+            'data\shared_preferences.json',
+            'data\prefs_big',
+            'data\app_logs',
+            'data\cache',
+            'data\support',
+            'data\temp',
+            'data\documents',
+            'data\downloads',
+            'data\windows_logs',
+            'update'
+          )
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $sourceRoot = (Resolve-Path $sourceDir).Path.TrimEnd('\')
+          $excludedRel = New-Object System.Collections.Generic.List[string]
+          $zipArchive = [System.IO.Compression.ZipFile]::Open(
+              $destZip, [System.IO.Compression.ZipArchiveMode]::Create)
+          try {
+            foreach ($file in Get-ChildItem -Path $sourceRoot -Recurse -File -Force) {
+              $rel = $file.FullName.Substring($sourceRoot.Length + 1)
+              $skip = $false
+              foreach ($ex in $runtimeDataExcludes) {
+                if (($rel -ieq $ex) -or ($rel -ilike "$ex\*")) { $skip = $true; break }
+              }
+              if ($skip) { $excludedRel.Add($rel); continue }
+              $entryName = $rel.Replace('\', '/')
+              [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                  $zipArchive, $file.FullName, $entryName,
+                  [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+            }
+          }
+          finally {
+            $zipArchive.Dispose()
+          }
+
+          Write-Output "已生成: $destZip"
+          Write-Output "MD5: $((Get-FileHash $destZip -Algorithm MD5).Hash)"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: heinplay-windows-portable
+          path: dist/heinplay-*-windows-portable.zip
+          if-no-files-found: error
+
+      # 只追加资产到既有 Release：--clobber 同名覆盖，不改动 Release 正文，
+      # 不触碰其它平台资产（鸿蒙 HAP / APK / AppImage 等）。
+      - name: Upload to existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.release-tag != '' && inputs.release-tag || inputs.version }}
+        run: |
+          $zip = Get-ChildItem "..\dist\heinplay-*-windows-portable.zip" | Select-Object -First 1
+          gh release upload $env:TARGET $zip.FullName --clobber --repo $env:GITHUB_REPOSITORY
+          gh release view $env:TARGET --repo $env:GITHUB_REPOSITORY --json tagName,name,assets

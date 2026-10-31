@@ -1,5 +1,7 @@
 # 海因影视
 
+> ⚠️ **重要提醒（Windows 版 1.4.1）**：此前发布的 **1.4.1 Windows 版**在连接**互联网服务器**时**搜索会报握手失败**（`CERTIFICATE_VERIFY_FAILED`，搜索结果为空），局域网服务器不受影响。该问题已修复，**请 Windows 版用户重新下载 1.4.1 发布页中最新的 `heinplay-1.4.1-windows-portable.zip`** 覆盖安装。Android 手机版 / TV 版、鸿蒙版不受影响，无需重下。
+
 基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT（鸿蒙）版本已发布，现阶段以侧载方式提供安装包**（应用商店上架整改中：服务器登录已改为可选）。
 
 | TV / Windows 版界面预览                                          | 手机版界面预览                                     |
