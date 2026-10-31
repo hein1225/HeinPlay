@@ -110,9 +110,9 @@ class SettingsSchema {
             'server',
             'internetUrl',
             '互联网服务器地址',
-            '电视通过此地址访问云端影视服务，例如 https://your-lunatv-server.com',
+            '电视通过此地址访问云端影视服务，例如 https://your-server.com',
             internet,
-            'https://your-lunatv-server.com',
+            'https://your-server.com',
           ),
           _text(
             'server',
@@ -247,8 +247,8 @@ class SettingsSchema {
           _switch(
             'live',
             'lunaTvEnabled',
-            '启用 LunaTV 服务器直播源',
-            '关闭后将不再获取 LunaTV 服务端提供的直播频道',
+            '启用服务器直播源',
+            '关闭后将不再获取服务器提供的直播频道',
             luna,
           ),
           _switch(

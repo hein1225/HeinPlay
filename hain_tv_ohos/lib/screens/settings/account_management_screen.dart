@@ -7,6 +7,7 @@ import 'package:hain_tv/models/account_info.dart';
 import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/remote_input_service.dart';
+import 'package:hain_tv/services/app_mode_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/platform/device_utils.dart';
@@ -751,8 +752,11 @@ class _AccountManagementScreenState extends State<AccountManagementScreen> {
 
   Future<void> _logout() async {
     await UserDataService.clearUserData();
+    // 退出登录后回到首页并进入游客态（服务器登录为可选），
+    // 不再强制跳登录页。🔴 2026-10-31 上架整改。
+    await AppModeService.instance.refresh();
     if (mounted) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
     }
   }
 

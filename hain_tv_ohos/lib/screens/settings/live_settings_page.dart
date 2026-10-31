@@ -251,8 +251,8 @@ class _LiveSettingsPageState extends State<LiveSettingsPage> {
           _buildLivePlayerBackendCard(),
           buildSwitchTile(
             context: context,
-            title: '启用 LunaTV 服务器直播源',
-            subtitle: '关闭后将不再获取 LunaTV 服务端提供的直播频道',
+            title: '启用服务器直播源',
+            subtitle: '关闭后将不再获取服务器提供的直播频道',
             value: _lunaTvLiveEnabled,
             onChanged: _setLunaTvLiveEnabled,
           ),

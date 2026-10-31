@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:hain_tv/services/app_mode_service.dart';
 import 'package:hain_tv/services/home_data_preload.dart';
 import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
@@ -98,6 +99,9 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
       // 登录页入口不经过 SplashScreen，首页“首次进入”标记不会被重置；
       // 此处主动从服务器同步播放记录与收藏夹到本地缓存，并据此处理标记，
       // 确保登录后首页能加载“继续观看/播放记录/收藏夹”。
+      // 切到服务器态：首页/分类页据此刷新出海报与影视分类。
+      // 🔴 2026-10-31 上架整改（登录页已不再是进入应用的必经之路，仅供主动登录）。
+      await AppModeService.instance.refresh();
       final synced = await HomeDataPreload.syncAllUserData();
       // 清除可能残留的上一次预加载数据，避免首页直接消费旧账号/旧会话快照；
       // 无残留时首页会走自身 _loadData 兜底，用当前账号的本地缓存渲染。
@@ -249,7 +253,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
         _buildInputField(
           controller: _usernameController,
           label: '用户名',
-          hint: 'LunaTV 登录用户名',
+          hint: '用户名',
           icon: Icons.person_outline,
           textInputAction: TextInputAction.next,
         ),
@@ -257,7 +261,7 @@ class _MobileLoginScreenState extends State<MobileLoginScreen> {
         _buildInputField(
           controller: _passwordController,
           label: '密码',
-          hint: 'LunaTV 登录密码',
+          hint: '密码',
           icon: Icons.lock_outline,
           obscureText: _obscurePassword,
           textInputAction: TextInputAction.done,

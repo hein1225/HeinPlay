@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:hain_tv/widgets/tv/focusable.dart';
 import 'package:hain_tv/models/search_result.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
+import 'package:hain_tv/services/lunatv_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/utils/windows_logger.dart';
@@ -122,7 +123,9 @@ class SearchScreenState extends State<SearchScreen> {
 
     // 取消上一个未完成的搜索请求
     _searchClient?.close();
-    final client = http.Client();
+    // 使用带电脑端证书兼容处理的独立客户端，避免自建 http.Client()
+    // 绕过证书校验兼容逻辑导致握手失败。
+    final client = await LunaTVService.createSearchClient();
     _searchClient = client;
 
     setState(() {

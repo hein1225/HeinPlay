@@ -7,8 +7,6 @@ import 'package:hain_tv/screens/mobile/home_screen.dart';
 import 'package:hain_tv/screens/mobile/live_screen.dart';
 import 'package:hain_tv/screens/mobile/profile_screen.dart';
 import 'package:hain_tv/screens/mobile/search_screen.dart';
-import 'package:hain_tv/services/update_service.dart';
-import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
@@ -39,9 +37,6 @@ class _MobileShellState extends State<MobileShell> {
     GlassStyleService.instance.load();
     GlassStyleService.instance.addListener(_onGlassChanged);
     ThemeModeService.instance.addListener(_onThemeChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (mounted) await _checkUpdate();
-    });
   }
 
   void _onGlassChanged() {
@@ -51,19 +46,6 @@ class _MobileShellState extends State<MobileShell> {
   void _onThemeChanged() {
     // 切主题时重建自身，重读 AppColors 实现整页刷新。播放页是独立路由，不受影响。
     if (mounted) setState(() {});
-  }
-
-  Future<void> _checkUpdate() async {
-    final channel = await UserDataService.getDefaultUpdateChannel();
-    final updateChannel = channel == 'github'
-        ? UpdateChannel.github
-        : UpdateChannel.domestic;
-    await UpdateService.checkAndPrompt(
-      context,
-      silent: true,
-      channel: updateChannel,
-      platform: 'mobile',
-    );
   }
 
   final List<NavigationDestination> _destinations = const [

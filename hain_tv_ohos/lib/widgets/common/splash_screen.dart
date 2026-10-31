@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/app_bootstrap.dart';
 import '../../services/app_info_service.dart';
+import '../../services/app_mode_service.dart';
 import '../../utils/app_logger.dart';
 import '../../services/bangumi_service.dart';
 import '../../services/home_data_preload.dart';
@@ -13,6 +14,7 @@ import '../../services/server_latency_service.dart';
 import '../../services/user_data_service.dart';
 import '../../services/version_migration_service.dart';
 import '../../theme.dart';
+import 'privacy_consent_dialog.dart';
 
 /// 应用启动目标平台。
 enum SplashTarget {
@@ -78,7 +80,8 @@ class SplashCover {
 /// - 手机竖屏 → 手机风格背景 + 竖直胶囊进度。
 ///
 /// 进度条覆盖软件初始化（应用信息、日志、版本迁移、账号迁移、服务器测速、
-/// 首页数据预加载、Bangumi 代理等）与登录状态判定；完成后自动进入首页或登录页。
+/// 首页数据预加载、Bangumi 代理等）与登录状态判定；完成后自动进入首页
+/// （未登录服务器也可进入，见 2026-10-31 上架整改）。
 class SplashScreen extends StatefulWidget {
   final SplashTarget target;
 
@@ -172,6 +175,14 @@ class _SplashScreenState extends State<SplashScreen>
 
       // 4. 旧账号模型迁移。
       await UserDataService.migrateLegacyAccount();
+
+      // 4.5 登录态判定（游客态 / 服务器态）。
+      //
+      // 🔴 2026-10-31 上架整改：服务器登录不再是进入应用的前置条件。
+      // 判定提前到预加载之前，游客态即可跳过所有服务器/网络预取，
+      // 冷启动直接进入应用，不再被登录页挡住（AppGallery 审核要求）。
+      final loggedIn = await UserDataService.isLoggedIn();
+      await AppModeService.instance.refresh();
       _setProgress(0.52);
 
       // 5. 服务器测速 / 连接确认（如果用户开启自动选优）。
@@ -202,16 +213,24 @@ class _SplashScreenState extends State<SplashScreen>
       //    让进入首页时直接展示内容，不再出现单独加载圈。
       //    双保险超时：preload 内部已对同步/拉取各加 ~10s 硬超时，这里再兜底一层，
       //    确保任何极端情况下 SplashScreen 都不会因首页数据而卡死、进不了首页。
-      await HomeDataPreload.preload()
-          .timeout(const Duration(seconds: 15), onTimeout: () => false);
+      //
+      //    游客态（未登录服务器）不预取影视数据：既无海报可展示，也避免为拿不到的
+      //    内容白等网络超时；本地播放记录由首页自行读取本地缓存。
+      if (loggedIn) {
+        await HomeDataPreload.preload()
+            .timeout(const Duration(seconds: 15), onTimeout: () => false);
+      }
       _setProgress(0.90);
 
       // 8. Bangumi 代理设置加载。
       await BangumiService.loadProxySettings().catchError((_) {});
       _setProgress(0.96);
 
-      // 9. 登录状态判定。
-      final loggedIn = await UserDataService.isLoggedIn();
+      // 9. 进入应用。
+      //
+      // 🔴 2026-10-31 上架整改：不再按登录态分流到登录页 —— 未配置/未登录服务器
+      // 也直接进入首页（游客态：无海报、无影视分类，服务器可在应用内「加号」添加）。
+      // 登录页仍保留在路由表中，供用户主动从「我的 → 账号管理」进入。
       _setProgress(1.0);
 
       // 等待进度条动画到达 1.0，给用户“已加载完成”的视觉反馈。
@@ -219,7 +238,12 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (!mounted) return;
 
-      final route = loggedIn ? '/home' : '/login';
+      const route = '/home';
+
+      // 8.5 首启动隐私政策与用户协议同意（AppGallery 上架合规要求）。
+      // 未同意则不进入应用（弹窗内可查看完整条款后返回继续）。
+      await ensurePrivacyConsent(context);
+      if (!mounted) return;
 
       // 标记引导完成并记录跳转目标：运行期切主题重建 Navigator 时，初始路由据此
       // 直接落到 /home 或 /login，而不会重新显示载入页、也不会重复初始化。

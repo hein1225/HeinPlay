@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:hain_tv/models/search_result.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
+import 'package:hain_tv/services/app_mode_service.dart';
 import 'package:hain_tv/services/local_storage_service.dart';
 import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/services/search_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/mobile_poster_grid.dart';
 import 'package:hain_tv/widgets/common/video_grid.dart';
+import 'package:hain_tv/widgets/common/add_menu_sheet.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 class MobileSearchScreen extends StatefulWidget {
@@ -47,9 +49,21 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
     }
   }
 
+  /// 游客态（未连接服务器）：搜索依赖服务器内容源，游客态不可用。
+  /// 🔴 2026-10-31 上架整改。
+  bool get _guest => AppModeService.instance.isGuest;
+
   Future<void> _search(String keyword) async {
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
+    if (_guest) {
+      setState(() {
+        _error = '搜索需要连接服务器后使用';
+        _loading = false;
+        _progressText = null;
+      });
+      return;
+    }
 
     // 取消上一个未完成的搜索请求
     _searchClient?.close();
@@ -167,8 +181,9 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
       textInputAction: TextInputAction.search,
       style: TextStyle(color: AppColors.textPrimary),
       onSubmitted: (value) => _search(value),
+      readOnly: _guest,
       decoration: InputDecoration(
-        hintText: '输入关键词搜索',
+        hintText: _guest ? '搜索需要连接服务器后使用' : '输入关键词搜索',
         prefixIcon: Icon(Icons.search, color: AppColors.textSecondary),
         suffixIcon: ValueListenableBuilder<TextEditingValue>(
           valueListenable: _controller,
@@ -285,13 +300,25 @@ class _MobileSearchScreenState extends State<MobileSearchScreen> {
             Icon(Icons.search, size: 64, color: AppColors.textMuted),
             SizedBox(height: AppSpacing.md),
             Text(
-              '输入关键词开始搜索',
+              _guest ? '连接服务器后可搜索影视内容' : '输入关键词开始搜索',
               style: TextStyle(
                 fontFamily: 'NotoSansSC',
                 fontSize: 16,
                 color: AppColors.textMuted,
               ),
             ),
+            if (_guest) ...[
+              const SizedBox(height: AppSpacing.md),
+              ElevatedButton.icon(
+                onPressed: () => showAddMenuSheet(context),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('添加服务器'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
           ],
         ),
       );

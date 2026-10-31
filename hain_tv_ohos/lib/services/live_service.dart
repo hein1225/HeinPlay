@@ -7,6 +7,7 @@ import 'package:xml/xml.dart';
 import '../models/api_response.dart';
 import '../models/live_channel.dart';
 import '../models/live_source_config.dart';
+import 'app_mode_service.dart';
 import 'cache_service.dart';
 import 'live_source_storage.dart';
 import 'lunatv_service.dart';
@@ -84,7 +85,7 @@ class LiveService {
   static LiveSourceConfig get lunaTvBuiltinSource {
     return LiveSourceConfig(
       id: lunaTvBuiltinSourceId,
-      name: _lunaTvServerSourceName ?? 'LunaTV 直播',
+      name: _lunaTvServerSourceName ?? '服务器直播源',
       url: '',
       epgUrl: _lunaTvEpgUrl,
       sourceKey: defaultLunaTvSourceKey,
@@ -110,7 +111,7 @@ class LiveService {
       }
       final result = sources.map((s) {
         final key = s['key']?.toString() ?? defaultLunaTvSourceKey;
-        final name = s['name']?.toString() ?? 'LunaTV 直播';
+        final name = s['name']?.toString() ?? '服务器直播源';
         final url = s['url']?.toString() ?? '';
         final epgUrl = s['epgUrl']?.toString() ?? s['epg_url']?.toString();
         return LiveSourceConfig(
@@ -143,6 +144,12 @@ class LiveService {
     final userConfigs = await LiveSourceStorage.getConfigs();
     final lunaTvEnabled = await UserDataService.getLunaTvLiveEnabled();
     if (!lunaTvEnabled) {
+      return userConfigs;
+    }
+    // 游客态（未连接服务器）：只返回本地直播源，不请求服务端内置源。
+    // 服务端源依赖已登录的 LunaTV 服务器，游客态请求必然失败并拖慢列表加载。
+    // 🔴 2026-10-31 上架整改。
+    if (AppModeService.instance.isGuest) {
       return userConfigs;
     }
     final builtinSources = await _fetchBuiltinSources();

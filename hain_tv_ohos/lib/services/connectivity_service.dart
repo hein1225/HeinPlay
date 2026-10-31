@@ -23,7 +23,20 @@ class ConnectivityService {
   static const Duration _requestTimeout = Duration(seconds: 5);
 
   /// 当前是否已与 LunaTV 服务器建立有效连接。
-  final ValueNotifier<bool> isServerConnected = ValueNotifier<bool>(true);
+  ///
+  /// 初值为 **false**（而非 true）：未配置服务器时本就不存在「已连接」，
+  /// 若初值取 true，首帧会误显示「互联网已连接」，再被探测结果翻成
+  /// 「无服务器」，造成标签闪一下。
+  final ValueNotifier<bool> isServerConnected = ValueNotifier<bool>(false);
+
+  /// 当前**已配置**的服务器地址（主/备用/测速选中的任一），空串表示
+  /// 用户从未配置过服务器。
+  ///
+  /// 🔴 2026-10-31：用于区分「无服务器」与「未连接」两种状态：
+  ///   · 从未配置服务器 → 顶栏显示「无服务器」（中性灰），属游客态；
+  ///   · 配置了服务器但连不上 → 显示「未连接」（红）。
+  /// 二者对用户的含义完全不同，不能混为一谈。
+  final ValueNotifier<String> configuredServerUrl = ValueNotifier<String>('');
 
   /// 当前连接的服务器类型：'internet' | 'lan' | 'none'。
   final ValueNotifier<String> serverType = ValueNotifier<String>('none');
@@ -34,6 +47,9 @@ class ConnectivityService {
 
   /// 启动周期性探测。
   void startMonitoring() {
+    // 先同步一次「是否配置过服务器」，让顶栏标签在首个探测周期前就能
+    // 正确区分「无服务器」与「未连接」。
+    _loadConfiguredServerUrl();
     _timer?.cancel();
     _checkConnection();
     _timer = Timer.periodic(_checkInterval, (_) => _checkConnection());
@@ -68,6 +84,24 @@ class ConnectivityService {
     }
   }
 
+  /// 读取已配置的服务器地址（主 → 备用），供「无服务器」判定使用。
+  Future<void> _loadConfiguredServerUrl() async {
+    try {
+      final primary = await UserDataService.getServerUrl();
+      final backup = await UserDataService.getBackupServerUrl();
+      final selected = await UserDataService.getLastSelectedServerUrl();
+      final url = (selected != null && selected.trim().isNotEmpty)
+          ? selected
+          : (primary != null && primary.trim().isNotEmpty)
+              ? primary
+              : (backup.trim().isNotEmpty ? backup : '');
+      _setConfiguredServerUrl(url);
+    } catch (_) {
+      // 读取失败按「无服务器」处理，不阻塞探测。
+      _setConfiguredServerUrl('');
+    }
+  }
+
   Future<void> _checkConnection() async {
     if (_checking) return;
     _checking = true;
@@ -84,9 +118,11 @@ class ConnectivityService {
               ? primary
               : (backup.trim().isNotEmpty ? backup : null);
       if (serverUrl == null || serverUrl.trim().isEmpty) {
+        _setConfiguredServerUrl('');
         _updateStatus(false, 'internet');
         return;
       }
+      _setConfiguredServerUrl(serverUrl);
 
       // 必须已登录才算有效连接
       final loggedIn = await UserDataService.isLoggedIn();
@@ -187,6 +223,14 @@ class ConnectivityService {
       }
     } finally {
       _checking = false;
+    }
+  }
+
+  /// 更新「已配置服务器地址」状态（仅在值变化时通知，避免多余重建）。
+  void _setConfiguredServerUrl(String url) {
+    final normalized = url.trim();
+    if (configuredServerUrl.value != normalized) {
+      configuredServerUrl.value = normalized;
     }
   }
 

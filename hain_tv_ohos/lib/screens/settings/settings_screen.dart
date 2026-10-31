@@ -36,7 +36,7 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           buildActionTile(
             title: '直播设置',
-            subtitle: '直播播放器、LunaTV 直播源、EPG、缓存时间',
+            subtitle: '直播播放器、服务器直播源、EPG、缓存时间',
             icon: Icons.live_tv_outlined,
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const LiveSettingsPage()),

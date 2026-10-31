@@ -379,15 +379,34 @@ export class VideoPlayer {
           // prepared 阶段（上次的慢是水位被放大导致的，与容量无关）。
           // 这里钳到 120MB 是**防呆双保险**，防止 Dart 侧配置写错时下发越界值。
           const rawBufferSec: number = Math.ceil(this.bufferDurationMs / 1000);
-          playbackStrategy.preferredBufferDuration = Math.min(120, Math.max(5, rawBufferSec));
+          // 🔴 2026-10-31（第二十五轮）：下限 5 → 2。
+          //   直播档需要 3MB（起播后「卡一下」的时长 ≈ 容量/到达速率），
+          //   5 的下限会把它顶回 5MB。
+          playbackStrategy.preferredBufferDuration = Math.min(120, Math.max(2, rawBufferSec));
           diag("下发缓冲档位 preferredBufferDuration=" + playbackStrategy.preferredBufferDuration
             + "MB (源 " + this.bufferDurationMs + "ms → " + rawBufferSec + "s)");
         }
-        if (playbackStrategy !== undefined && this.bufferDurationForPlayingMs > 0) {
+        if (playbackStrategy !== undefined) {
           // 起播/重缓冲阈值：低于它在起播或重缓时继续等待。
           // 官方语义为"起播或重启播放的缓冲阈值"，不是水位；
           // 取该档位配置的 min（与 exo 的 exoBufferForPlaybackMs 对应），向上取整秒。
-          // 同样钳到 ≥1 秒：传 0 会被当作未设置，反而退回系统默认（可能更激进）。
+          //
+          // 🔴🔴🔴 2026-10-31（第二十四轮）：条件由 `> 0` 改为**恒下发**。
+          //
+          // 【为什么要改】原条件 `bufferDurationForPlayingMs > 0` 意味着直播档
+          //   （水位置 0）时**整个字段不进入 PlaybackStrategy** ⇒ AVPlayer 退回
+          //   **系统默认的动态起播水位线**。华为官方《在线视频播放卡顿优化》
+          //   给出的默认算法是：
+          //     · 下载速率 ≥ 码率 → 起播水位线 = 0.3 秒 × 码率
+          //     · 下载速率 < 码率 → 起播水位线 = 5 秒 × 码率
+          //   本地 iptv 组播源（裸 TS，8.72Mbps）下载速率 ≈ 码率，统计窗口抖动
+          //   就落进第二分支 ⇒ 水位线 = 5.45MB；而直播档缓冲只有 5MB ⇒
+          //   水位线永远达不到，AVPlayer 只能等缓冲区写满才起播
+          //   ⇒ 实测 4.6 秒（与真机日志里 3~4 秒 buffering 吻合）。
+          //
+          // 【改成恒下发的好处】门槛固定、可预期，不再随下载速率测量在
+          //   0.3s / 5s 两分支间跳变；且直播档现已改为 1000ms ⇒ 实际下发 1 秒。
+          //   单位是秒（整数），钳到 ≥1 秒。
           playbackStrategy.preferredBufferDurationForPlaying =
             Math.max(1, Math.ceil(this.bufferDurationForPlayingMs / 1000));
           diag("下发缓冲档位 preferredBufferDurationForPlaying="
@@ -466,11 +485,17 @@ export class VideoPlayer {
               const rawBufferSec: number = Math.ceil(this.bufferDurationMs / 1000);
               // 与主路径完全一致：容量钳制 5~120MB（5~20 是官方推荐区间、非上限，
               // 2026-09-29 起按档位放开到 30/60/120MB 以加强弱网预缓冲）。
-              playbackStrategy.preferredBufferDuration = Math.min(120, Math.max(5, rawBufferSec));
+              // 🔴 2026-10-31（第二十五轮）：下限 5 → 2。
+          //   直播档需要 3MB（起播后「卡一下」的时长 ≈ 容量/到达速率），
+          //   5 的下限会把它顶回 5MB。
+          playbackStrategy.preferredBufferDuration = Math.min(120, Math.max(2, rawBufferSec));
               diag("IDLE 重新 setMediaSource 补下缓冲档位 preferredBufferDuration="
                 + playbackStrategy.preferredBufferDuration + "MB (源 " + this.bufferDurationMs + "ms)");
             }
-            if (playbackStrategy !== undefined && this.bufferDurationForPlayingMs > 0) {
+            if (playbackStrategy !== undefined) {
+              // 与主路径完全一致：起播水位**恒下发**（原为 `> 0`，直播档 0 时
+              // 不下发 ⇒ 退回 AVPlayer 动态默认水位线 ⇒ 直播起播卡 3~4 秒）。
+              // 详见主路径 2026-10-31（第二十四轮）注释。
               playbackStrategy.preferredBufferDurationForPlaying =
                 Math.max(1, Math.ceil(this.bufferDurationForPlayingMs / 1000));
               diag("IDLE 重新 setMediaSource 补下缓冲档位 preferredBufferDurationForPlaying="

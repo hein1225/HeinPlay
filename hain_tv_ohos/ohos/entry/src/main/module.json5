@@ -108,7 +108,7 @@
     // 鸿蒙侧对应关系见 docs/OHOS_BUILD_SETUP.md 第 6 节。
     "requestPermissions": [
       {
-        // 联网（安卓 INTERNET）：访问 LunaTV 服务器、加载图片与视频流
+        // 联网（安卓 INTERNET）：访问用户配置的服务器、加载图片与视频流
         "name": "ohos.permission.INTERNET"
       },
       {

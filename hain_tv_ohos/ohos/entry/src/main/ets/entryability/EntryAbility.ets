@@ -4,6 +4,7 @@ import { MpvPlugin } from '@mpv-ohos/mpv-arkts/MpvBridge';
 import common from '@ohos.app.ability.common';
 import window from '@ohos.window';
 import audio from '@ohos.multimedia.audio';
+import { picker, fileIo as fs } from '@kit.CoreFileKit';
 
 /// 与安卓 MainActivity.kt 中 SPLASH_CHANNEL 完全一致的 channel 名。
 /// Dart 侧 SplashScreen._notifyCoverReady 用同一名字调用，无需按平台分支。
@@ -40,6 +41,22 @@ const SCREEN_WAKE_CHANNEL = 'hain_tv/screen_wake';
 ///
 /// 【语义】Dart 侧传 0..1 归一化音量；原生侧换算为 0..100 百分比。
 const VOLUME_CHANNEL = 'hain_tv/volume';
+
+/// 🔴 2026-10-31 新增：本地视频选择通道。
+///
+/// 【用途】让用户在**无服务器**（游客态）下也能添加本机视频文件并播放。
+///   本应用为单机使用工具，不接入任何第三方服务，本地媒体是核心能力之一。
+///
+/// 【实现】用系统 DocumentViewPicker 让用户从「文件管理」中选一个视频文件，
+///   选中后把文件**复制到应用私有目录**（filesDir/local_media/），
+///   再把沙箱内绝对路径回传给 Dart —— 这样播放器（AVPlayer / mpv）
+///   可以直接按普通文件路径读取，不依赖任何临时授权或第三方库。
+///
+/// 【为什么不申请 READ_IMAGEVIDEO 等媒体权限】
+///   系统文件选择器对用户明确选中的单个文件授予一次性访问权，
+///   本应用不需要长期读取相册/媒体库，因此不申请任何媒体读取权限，
+///   也就不需要在隐私政策里声明敏感权限（保持单机工具的最小权限面）。
+const LOCAL_MEDIA_CHANNEL = 'hain_tv/local_media';
 
 export default class EntryAbility extends FlutterAbility {
   configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -112,6 +129,88 @@ export default class EntryAbility extends FlutterAbility {
             console.error(`[HeinPlay] setWindowKeepScreenOn(${keep}) 失败: ${err}`);
             result.error('KEEP_SCREEN_ON_FAILED', err?.message ?? 'unknown', null);
           });
+        } else {
+          result.notImplemented();
+        }
+      }
+    });
+
+    // ── 本地视频选择通道（2026-10-31 新增）────────────────────────
+    //
+    // 方法：
+    //   pickVideo  → 弹出系统文件选择器，选中视频后复制进沙箱，
+    //                 返回 { path, name, size }；用户取消返回 null。
+    //   deleteFile → 删除沙箱内已复制的视频文件（参数 path）。
+    //
+    // ⚠️ result.success(null) / result.error(...) 必须回执，
+    //    漏掉回执会让 Dart 侧 await 永久挂起（见上方 SPLASH_CHANNEL 注释）。
+    const localMediaChannel = new MethodChannel(flutterEngine.dartExecutor, LOCAL_MEDIA_CHANNEL);
+
+    localMediaChannel.setMethodCallHandler({
+      onMethodCall: (call: MethodCall, result: MethodResult) => {
+        if (call.method === 'pickVideo') {
+          const ctx = this.context as common.UIAbilityContext;
+          const docPicker = new picker.DocumentViewPicker();
+          const options: picker.DocumentSelectOptions = {
+            maxSelectNumber: 1,
+            fileSuffixFilters: ['Video|.mp4,.mkv,.mov,.avi,.ts,.flv,.wmv,.webm,.m4v,.3gp,.rmvb']
+          };
+          docPicker.select(options).then((uris: string[]) => {
+            if (!uris || uris.length === 0) {
+              result.success(null);
+              return;
+            }
+            const uri = uris[0];
+            // 取文件名（URI 末段，可能带百分号编码）
+            let rawName = uri.substring(uri.lastIndexOf('/') + 1);
+            let fileName = 'local_video.mp4';
+            try {
+              fileName = decodeURIComponent(rawName);
+            } catch (e) {
+              fileName = rawName;
+            }
+            if (!fileName || fileName.length === 0) {
+              fileName = 'local_video.mp4';
+            }
+            try {
+              const dir = `${ctx.filesDir}/local_media`;
+              if (!fs.accessSync(dir)) {
+                fs.mkdirSync(dir, true);
+              }
+              // 加时间戳避免同名覆盖
+              const stamp = Date.now();
+              const destPath = `${dir}/${stamp}_${fileName}`;
+              const src = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+              try {
+                fs.copyFileSync(src.fd, destPath, 0);
+              } finally {
+                fs.closeSync(src);
+              }
+              const stat = fs.statSync(destPath);
+              console.info(`[HeinPlay] 已复制本地视频到沙箱: ${destPath}`);
+              result.success({ path: destPath, name: fileName, size: stat.size });
+            } catch (err) {
+              const e = err as Error;
+              console.error(`[HeinPlay] 复制本地视频失败: ${e?.message ?? e}`);
+              result.error('COPY_LOCAL_VIDEO_FAILED', e?.message ?? 'unknown', null);
+            }
+          }).catch((err: Error) => {
+            // 用户取消选择也走这里（Picker 取消会 reject）
+            console.info(`[HeinPlay] 用户取消选择本地视频: ${err?.message ?? err}`);
+            result.success(null);
+          });
+        } else if (call.method === 'deleteFile') {
+          const path = call.argument('path') as string;
+          try {
+            if (path && fs.accessSync(path)) {
+              fs.unlinkSync(path);
+            }
+            result.success(null);
+          } catch (err) {
+            const e = err as Error;
+            console.error(`[HeinPlay] 删除本地视频失败: ${e?.message ?? e}`);
+            result.success(null);
+          }
         } else {
           result.notImplemented();
         }

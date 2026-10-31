@@ -195,7 +195,7 @@ class RemoteInputService {
 </head>
 <body>
   <h3>电视直播源管理</h3>
-  <p>显示 LunaTV 服务器直播源与本地直播源，可分段排序与清除缓存</p>
+  <p>显示服务器直播源与本地直播源，可分段排序与清除缓存</p>
   <div id="editor" class="card">
     <input type="hidden" id="editId" />
     <div class="field">
@@ -250,7 +250,7 @@ class RemoteInputService {
         return;
       }
       if (builtins.length > 0) {
-        html += '<div class="group-title">LunaTV 服务器直播源</div>';
+        html += '<div class="group-title">服务器直播源</div>';
         builtins.forEach(function(s, i) {
           html += itemHtml(s, i, builtins.length, true);
         });
@@ -450,7 +450,7 @@ class RemoteInputService {
     <p>输入服务器地址、用户名和密码，电视将自动登录</p>
     <div class="field">
       <label>互联网服务器地址</label>
-      <input id="server" placeholder="https://your-lunatv-server.com" />
+      <input id="server" placeholder="https://your-server.com" />
     </div>
     <div class="field">
       <label>局域网服务器地址（选填）</label>
@@ -462,7 +462,7 @@ class RemoteInputService {
     </div>
     <div class="field">
       <label>密码</label>
-      <input id="password" type="password" placeholder="LunaTV 登录密码" />
+      <input id="password" type="password" placeholder="登录密码" />
     </div>
     <button onclick="sendLogin()">登录</button>
     <div id="status"></div>
@@ -556,7 +556,7 @@ class RemoteInputService {
     <p>输入互联网/局域网服务器地址后，电视将自动保存</p>
     <div class="field">
       <label>互联网服务器地址</label>
-      <input id="server" placeholder="https://your-lunatv-server.com" value="${currentServerUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}" />
+      <input id="server" placeholder="https://your-server.com" value="${currentServerUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}" />
     </div>
     <div class="field">
       <label>局域网服务器地址（选填）</label>
@@ -647,7 +647,7 @@ class RemoteInputService {
     </div>
     <div class="field">
       <label>密码</label>
-      <input id="password" type="password" placeholder="LunaTV 登录密码" />
+      <input id="password" type="password" placeholder="登录密码" />
     </div>
     <button onclick="sendSubAccount()">保存</button>
     <div id="status"></div>
@@ -1124,8 +1124,8 @@ class RemoteInputService {
           sw(
             "live",
             "lunaTvEnabled",
-            "启用 LunaTV 服务器直播源",
-            "关闭后将不再获取 LunaTV 服务端提供的直播频道",
+            "启用服务器直播源",
+            "关闭后将不再获取服务器提供的直播频道",
             live['lunaTvEnabled'] == true,
           ) +
           sw(

@@ -127,9 +127,27 @@ class AvPlayerBackend implements VideoPlayerBackend {
     // 🔴 2026-09-28：缓冲档位改为**真正下发**（此前一直只打日志）。
     // 详见下方 setNextBufferProfile 调用的说明。
     _applyBufferProfile(effectiveConfig);
+
+    // 🔴 2026-10-31（第二十五轮）：**撤销本地环形缓冲代理，直播回归直连**。
+    //
+    // 【为什么撤】那一版代理的根因判断是错的：
+    //   原判断「源是 1.0x 实时供给 ⇒ 缓冲余量零增长 ⇒ 必须靠代理攒历史」。
+    //   2026-10-31 原始 socket 实测 30 秒推翻了它：
+    //     · 1660 个数据块，最大间隔 **67ms**，每秒稳定 1.06~1.14MB
+    //     · 速率 **8.83Mbps**，**高于**该流码率 8.56Mbps ⇒ 供给充足、无断流
+    //   而代理本身反而把直播**彻底播不出来**（真机：avp 停在 initialized，
+    //   24 秒从未 prepared —— 代理用了 chunked 编码，avp 的 HTTP 层不解帧，
+    //   TS 同步字节找不到）。
+    // ⇒ 供给本来就够，代理是白做的，只有副作用：撤掉，直播直连。
+    //
+    // 直播「卡一下」的真正成因与调节旋钮见 buffer_profile_config.dart：
+    //   **卡住时长 ≈ 缓冲区容量 / 到达速率**（20MB→6.4s、5MB→3~4s）
+    //   ⇒ 直播档容量调小到 3MB（≈2.8s），同时直播延迟从 ~19s 降到 ~3s。
+    final effectiveUrl = url;
+
     try {
       await _impl.open(
-        url,
+        effectiveUrl,
         startAt: startAt,
         headers: stripInternalRequestHeaders(headers, force: true),
         proxyMode: proxyMode,
@@ -144,7 +162,7 @@ class AvPlayerBackend implements VideoPlayerBackend {
       debugPrint('AvPlayerBackend 缓冲档位（已下发 PlaybackStrategy）: $cfgDesc');
       WindowsLogger.log(
         'AvPlayerBackend',
-        'open 成功: $url${isLive ? ' [直播]' : ' [点播/回放]'} 档位=$cfgDesc',
+        'open 成功: $effectiveUrl${isLive ? ' [直播]' : ' [点播/回放]'} 档位=$cfgDesc',
       );
     } catch (e, stack) {
       debugPrint('AvPlayerBackend open error: $e');

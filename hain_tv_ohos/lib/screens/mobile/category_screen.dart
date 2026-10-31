@@ -6,11 +6,13 @@ import 'package:hain_tv/models/bangumi_calendar_item.dart';
 import 'package:hain_tv/models/douban_movie.dart';
 import 'package:hain_tv/models/douban_recommends_params.dart';
 import 'package:hain_tv/screens/mobile/detail_screen.dart';
+import 'package:hain_tv/services/app_mode_service.dart';
 import 'package:hain_tv/services/bangumi_service.dart';
 import 'package:hain_tv/services/douban_service.dart';
 import 'package:hain_tv/services/glass_style_service.dart';
 import 'package:hain_tv/services/theme_mode_service.dart';
 import 'package:hain_tv/theme.dart';
+import 'package:hain_tv/widgets/common/add_menu_sheet.dart';
 import 'package:hain_tv/widgets/mobile/mobile_poster_grid.dart';
 import 'package:hain_tv/widgets/common/video_grid.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
@@ -438,7 +440,31 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
     _applyCache(_currentKind);
     _scrollController.addListener(_onScroll);
     GlassStyleService.instance.addListener(_onGlassChanged);
-    _loadData(refresh: true);
+    AppModeService.instance.addListener(_onModeChanged);
+    // 游客态（未连接服务器）不加载影视分类，直接显示空态。
+    if (!_guest) {
+      _loadData(refresh: true);
+    }
+  }
+
+  /// 游客态（未连接服务器）：分类页不展示电影 / 电视剧 / 综艺 / 动漫等影视分类。
+  /// 🔴 2026-10-31 上架整改。
+  bool get _guest => AppModeService.instance.isGuest;
+
+  /// 运行态切换：连上服务器后加载分类；断开后回到空态。
+  void _onModeChanged() {
+    if (!mounted) return;
+    if (_guest) {
+      setState(() {
+        _movies = [];
+        _loading = false;
+        _loadingMore = false;
+        _error = null;
+        _hasMore = false;
+      });
+    } else {
+      _loadData(refresh: true);
+    }
   }
 
   void _onGlassChanged() {
@@ -515,6 +541,7 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
   @override
   void dispose() {
     GlassStyleService.instance.removeListener(_onGlassChanged);
+    AppModeService.instance.removeListener(_onModeChanged);
     _scrollController.dispose();
     super.dispose();
   }
@@ -1285,6 +1312,15 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 游客态（未连接服务器）：不展示影视分类导航与分类内容，仅给出说明与添加入口。
+    // 🔴 2026-10-31 上架整改。
+    if (_guest) {
+      return Scaffold(
+        backgroundColor: AppColors.bgApp,
+        body: SafeArea(child: _buildGuestEmpty(context)),
+      );
+    }
+
     // 顶栏实测高度尚未就绪时用 0，首帧后立刻补齐，避免闪跳。
     _measureFilterBar();
 
@@ -1305,6 +1341,56 @@ class _MobileCategoryScreenState extends State<MobileCategoryScreen> {
             child: _buildTopFilterBar(),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 游客态分类页空态：不显示任何影视分类，提供「添加服务器」入口。
+  Widget _buildGuestEmpty(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.category_outlined,
+              size: 48,
+              color: AppColors.textMuted,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              '未连接服务器',
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              '影视分类需要连接服务器后使用。\n你仍可在「直播」页添加本地直播源，在「首页」查看本地播放记录。',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'NotoSansSC',
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            ElevatedButton.icon(
+              onPressed: () => showAddMenuSheet(context),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加服务器'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

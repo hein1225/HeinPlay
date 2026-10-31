@@ -1,6 +1,6 @@
 # 海因影视
 
-基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT（鸿蒙）版本已发布，现阶段以侧载方式提供安装包**（应用商店上架正在审批中）。
+基于 Flutter 开发的跨平台影视播放应用。TV 版面向 Android TV 及大屏设备优化，支持遥控器焦点导航；tvLegacy 版兼容 Android 5.0+ 低版本电视设备；手机版为竖屏触屏版本，与 TV 版共用业务层。桌面端提供 Web、Windows 与 **Linux（AppImage，重点服务 Steam Deck 等掌机）**，其中 Windows / Linux 统一为功能一致的「电脑版」；此外 **HarmonyOS NEXT（鸿蒙）版本已发布，现阶段以侧载方式提供安装包**（应用商店上架整改中：服务器登录已改为可选）。
 
 | TV / Windows 版界面预览                                          | 手机版界面预览                                     |
 |:----------------------------------------------------------- |:------------------------------------------- |
@@ -140,7 +140,7 @@
 | Web              | 支持     | 现代浏览器                   | 仅用于本地测试，受浏览器 CORS 限制，部分图片资源可能无法加载                                        |
 | Windows          | 已发布    | Windows 10 1809+        | 桌面端便携版，默认使用 `mpv`（D3D11 零拷贝），备用 `VLC`；与 Linux 共用同一套「电脑版」功能与交互                |
 | Linux            | 已发布    | 桌面 Linux（x86_64）        | 单文件 AppImage，**重点服务 Steam Deck 等掌机 / 手持设备**；功能与 Windows 一致，使用 `mpv` 播放后端 |
-| HarmonyOS NEXT   | 侧载测试中 | HarmonyOS NEXT（手机 / 平板） | 独立工程，默认 **AVPlayer**（系统原生，起播快、兼容性最稳）+ **mpv** 备选，基于 flutter_flutter 3.41.10-ohos 工具链构建。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架正在审批中，不一定能通过。** |
+| HarmonyOS NEXT   | 侧载测试中 | HarmonyOS NEXT（手机 / 平板） | 独立工程，默认 **AVPlayer**（系统原生，起播快、兼容性最稳）+ **mpv** 备选，基于 flutter_flutter 3.41.10-ohos 工具链构建。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架整改中：按审核意见已将「服务器登录」改为可选，未配置服务器也可进入应用使用本地功能。** |
 | iOS              | 计划中    | —                       | 移动端版本后续支持                                                                |
 
 ### 渲染后端说明（Android TV / 手机 / 平板）
@@ -185,7 +185,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 - **支持 HLS 并发分片预取**：开启后并发预取后续分片，弱网与换段时缓冲更快。
 - **磨砂玻璃导航栏**：底部导航栏可切换为浮动磨砂玻璃层 + 沉浸光感，透明度四档可调（默认关闭）。
 - **安装方式（重要）**：现阶段**仅提供未签名 HAP**（`heinplay-<版本>-ohos-unsigned.hap`），需使用 **hokit** 等侧载软件自行签名后安装到设备；**未签名包无法直接安装**，请按侧载工具的指引操作。
-- **应用商店上架正在审批中**：HarmonyOS 应用商店的提交审核已启动，但**不保证一定能通过**；在通过之前，鸿蒙版以侧载方式提供。
+- **应用商店上架整改中**：HarmonyOS 应用商店的首次提交被驳回，原因是「无服务器账号即无法进入应用，审核人员无法体验」。整改方案是把**服务器登录改为可选** —— 未配置服务器也能进入应用（使用本地播放记录、本地直播源与**本地视频**，不展示影视海报与分类），服务器地址改由应用内右上角「加号」按需添加；顶栏状态在未配置服务器时显示「无服务器」。应用为用户自身单机使用，服务器由用户自行搭建，隐私政策与用户协议中不含任何第三方服务表述。在通过之前，鸿蒙版仍以侧载方式提供。
 - 1.4.1 起提供两种产物：**未签名 HAP**（侧载用，见上）与**发布版 APP 包**（`.app`，用于应用市场分发），见上方「Release 文件说明」。
 
 ### Release 文件说明
@@ -198,7 +198,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 | `heinplay-1.4.1-windows-portable.zip`  | Windows 10/11 电脑  | Windows 10 1809+      | 解压即用，无需安装。                                                     |
 | `heinplay-1.4.1-linux-x86_64.AppImage` | Linux 电脑 / 掌机     | 桌面 Linux（x86_64）      | 单文件免安装，双击即用，**面向 Steam Deck 等掌机优化**；建议用安装脚本部署（见上方「Linux 版说明」）。 |
 | `heinplay-1.4.1-ohos-unsigned.hap`    | HarmonyOS NEXT 设备  | HarmonyOS NEXT         | 鸿蒙版**未签名**单应用安装包（HAP）。**现阶段仅提供此包**，需用 **hokit** 等侧载软件签名后安装，不能直接安装。 |
-| `heinplay-1.4.1-ohos-release.app`      | HarmonyOS NEXT 设备  | HarmonyOS NEXT         | 鸿蒙版**发布版应用包**（APP，已签名），用于应用市场分发；应用商店上架正在审批中，不一定能通过。 |
+| `heinplay-1.4.1-ohos-release.app`      | HarmonyOS NEXT 设备  | HarmonyOS NEXT         | 鸿蒙版**发布版应用包**（APP，已签名），用于应用市场分发；应用商店上架整改中（服务器登录已改为可选）。 |
 
 **Steam 封面素材**：仓库 [`steamos-covers/`](steamos-covers) 目录另附一套符合 Steam 标准规格的封面图 —— `library_600x900.png`（竖版库封面）、`library_hero.png`（库背景横幅）、`icon.png`（应用图标），已按比例裁切、可直接使用，每次发布也会随本 Release 一并提供。把 HeinPlay 以「非 Steam 游戏」添加进 Steam 后，右键该条目 → **管理 → 设置自定义艺术作品** 即可套用，详见上方「Linux 版说明」。
 
@@ -210,7 +210,7 @@ Linux 版已正式发布，产物为单文件 **AppImage**（`heinplay-<版本>-
 
 ### 1.4.1
 
-- **新增鸿蒙（HarmonyOS NEXT）版**：独立工程，提供**未签名 HAP**（侧载用）与**发布版 APP 包**两种产物；默认使用系统原生 **AVPlayer**，并保留 **mpv** 作为可选后端。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架正在审批中，不一定能通过。**
+- **新增鸿蒙（HarmonyOS NEXT）版**：独立工程，提供**未签名 HAP**（侧载用）与**发布版 APP 包**两种产物；默认使用系统原生 **AVPlayer**，并保留 **mpv** 作为可选后端。**现阶段仅提供未签名 HAP，需用 hokit 等侧载工具安装；应用商店上架整改中：按审核意见已将「服务器登录」改为可选，未配置服务器也可进入应用使用本地功能。**
 - **引入 mpv 播放内核，为后续功能扩展做准备**：Windows / Linux 默认后端改为 mpv（Windows 保留 VLC 备用）；Android 手机 / TV 新增 mpv 可选（默认仍为 ExoPlayer）；tvLegacy 内核由 fvp 换为 mpv（老用户后端设置自动切换并正常续播）；fvp（libmdk）依赖与后端实现已全面移除。
 - **mpv 渲染默认 Vulkan 优先**（Android 手机 / TV），并新增「强制 OpenGL ES 渲染」开关用于设备 Vulkan 异常时兜底。
 - **新增 HLS 并发分片预取开关**（Android 手机 / TV / 鸿蒙）：开启后并发预取后续分片，起播与拖动后的等待明显缩短。

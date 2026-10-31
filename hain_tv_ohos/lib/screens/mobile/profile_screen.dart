@@ -10,7 +10,7 @@ import 'package:hain_tv/screens/mobile/detail_screen.dart';
 import 'package:hain_tv/screens/settings/settings_screen.dart';
 import 'package:hain_tv/screens/settings/account_management_screen.dart';
 import 'package:hain_tv/screens/settings/server_management_screen.dart';
-import 'package:hain_tv/screens/settings/update_screen.dart';
+import 'package:hain_tv/screens/settings/privacy_policy_screen.dart';
 import 'package:hain_tv/services/favorite_refresh_notifier.dart';
 import 'package:hain_tv/services/favorite_service.dart';
 import 'package:hain_tv/services/glass_style_service.dart';
@@ -18,7 +18,6 @@ import 'package:hain_tv/services/play_record_refresh_notifier.dart';
 import 'package:hain_tv/services/play_record_service.dart';
 import 'package:hain_tv/services/profile_refresh_notifier.dart';
 import 'package:hain_tv/services/app_info_service.dart';
-import 'package:hain_tv/services/update_service.dart';
 import 'package:hain_tv/services/user_data_service.dart';
 import 'package:hain_tv/theme.dart';
 import 'package:hain_tv/widgets/mobile/record_manage_view.dart';
@@ -151,10 +150,11 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
     ).push(MaterialPageRoute(builder: (_) => const ServerManagementScreen()));
   }
 
-  void _openUpdateScreen() {
+  /// 打开隐私政策与用户协议（上架合规要求）。
+  void _openPrivacyPolicy() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const UpdateScreen()));
+    ).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
   }
 
   void _showFavorites() {
@@ -446,10 +446,10 @@ class _MobileProfileScreenState extends State<MobileProfileScreen> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 _buildMenuTile(
-                  icon: Icons.system_update,
-                  title: '更新设置',
-                  subtitle: '当前版本 ${UpdateService.currentVersion}',
-                  onTap: _openUpdateScreen,
+                  icon: Icons.privacy_tip_outlined,
+                  title: '隐私政策与用户协议',
+                  subtitle: '了解数据处理与使用约定',
+                  onTap: _openPrivacyPolicy,
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 _buildFooter(),

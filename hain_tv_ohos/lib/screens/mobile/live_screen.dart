@@ -8,6 +8,7 @@ import '../../services/live_source_refresh_notifier.dart';
 import '../../services/live_source_storage.dart';
 import '../../theme.dart';
 import '../live_player_screen.dart';
+import 'package:hain_tv/widgets/common/live_source_dialog.dart';
 import 'package:hain_tv/widgets/common/tech_loading_indicator.dart';
 
 /// Mobile 直播首页：直播源管理界面。
@@ -89,7 +90,8 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
   }
 
   Future<void> _editSource(LiveSourceConfig source) async {
-    final result = await _showSourceDialog(
+    final result = await showLiveSourceDialog(
+      context,
       title: '编辑直播源',
       initialName: source.name,
       initialUrl: source.url,
@@ -170,77 +172,6 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
     );
   }
 
-  Future<({String name, String url})?> _showSourceDialog({
-    required String title,
-    String initialName = '',
-    String initialUrl = '',
-  }) async {
-    final nameCtrl = TextEditingController(text: initialName);
-    final urlCtrl = TextEditingController(text: initialUrl);
-    final result = await showDialog<({String name, String url})>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.bgSurface,
-        title: Text(
-          title,
-          style: TextStyle(
-            fontFamily: 'NotoSansSC',
-            color: AppColors.textPrimary,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: InputDecoration(
-                labelText: '直播源名称',
-                labelStyle: TextStyle(color: AppColors.textSecondary),
-                border: OutlineInputBorder(),
-              ),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextField(
-              controller: urlCtrl,
-              decoration: InputDecoration(
-                labelText: '直播源地址（M3U/M3U8/JSON 链接或内容）',
-                labelStyle: TextStyle(color: AppColors.textSecondary),
-                border: OutlineInputBorder(),
-              ),
-              style: TextStyle(color: AppColors.textPrimary),
-              maxLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(
-              '取消',
-              style: TextStyle(color: AppColors.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              final name = nameCtrl.text.trim();
-              final url = urlCtrl.text.trim();
-              if (name.isEmpty || url.isEmpty) return;
-              Navigator.of(ctx).pop((name: name, url: url));
-            },
-            child: Text(
-              '保存',
-              style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-    nameCtrl.dispose();
-    urlCtrl.dispose();
-    return result;
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -257,7 +188,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
             icon: const Icon(Icons.add),
             tooltip: '添加直播源',
             onPressed: () async {
-              final result = await _showSourceDialog(title: '添加直播源');
+              final result = await showLiveSourceDialog(context, title: '添加直播源');
               if (result == null) return;
               final config = LiveSourceConfig(
                 id: LiveSourceConfig.generateId(),
@@ -375,7 +306,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
           const SizedBox(height: AppSpacing.md),
           ElevatedButton.icon(
             onPressed: () async {
-              final result = await _showSourceDialog(title: '添加直播源');
+              final result = await showLiveSourceDialog(context, title: '添加直播源');
               if (result == null) return;
               final config = LiveSourceConfig(
                 id: LiveSourceConfig.generateId(),
@@ -450,7 +381,7 @@ class _MobileLiveScreenState extends State<MobileLiveScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      source.isBuiltin ? 'LunaTV 服务端直播源' : source.url,
+                      source.isBuiltin ? '服务器直播源' : source.url,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

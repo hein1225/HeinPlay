@@ -45,6 +45,9 @@ class AppColors {
   static const Color error = Color(0xFFEF4444);
   static const Color info = Color(0xFF3B82F6);
 
+  /// 中性灰（用于「无服务器」这类非错误状态标签）。
+  static const Color neutral = Color(0xFF6B7280);
+
   /// 当前是否处于明亮主题，依据 [ThemeModeService] 的实际亮度动态返回。
   static bool get _light => ThemeModeService.instance.effectiveIsLight;
 

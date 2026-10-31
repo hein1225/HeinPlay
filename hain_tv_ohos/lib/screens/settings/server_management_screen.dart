@@ -358,7 +358,7 @@ class _ServerManagementScreenState extends State<ServerManagementScreen> {
         builder: (context) => FocusableWidget(
           onTap: () => _showTextInputDialog(
             title: '互联网服务器地址',
-            hint: '例如 https://your-lunatv-server.com（建议填写公网可访问域名）',
+            hint: '例如 https://your-server.com（建议填写公网可访问域名）',
             current: _primaryServerUrl,
             onSave: _setPrimaryServerUrl,
           ),

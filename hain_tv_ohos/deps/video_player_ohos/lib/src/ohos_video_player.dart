@@ -54,7 +54,14 @@ class OhosVideoPlayer extends VideoPlayerPlatform {
   /// 设置「下一次 create 的点播缓冲档位」（毫秒）。
   ///
   /// [bufferDurationMs] 起播前缓冲时长；[bufferDurationForPlayingMs] 播放中缓冲水位。
-  /// 任一路传 null / ≤0 即表示该项不下发、沿用系统默认。
+  /// 任一路传 null / ≤0 时，原生侧会下发 **1 秒兜底值**，而不是完全不下发。
+  ///
+  /// 🔴 2026-10-31：为什么不再「不下发、沿用系统默认」——
+  ///   AVPlayer 的 `preferredBufferDurationForPlaying` 有**系统动态默认值**
+  ///   （华为《在线视频播放卡顿优化》：下载速率 < 码率时 = 5 秒 × 码率），
+  ///   直播高码率源上该默认值会超过缓冲区容量 ⇒ 起播永远达不到门槛 ⇒
+  ///   表现为「起播后卡 3~4 秒」。故改为「缺省也下发 1 秒」，门槛固定可预期。
+  ///
   /// 只影响紧随其后的第一次 [create]，消费后自动清空。
   void setNextBufferProfile({int? bufferDurationMs, int? bufferDurationForPlayingMs}) {
     _nextBufferDurationMs =

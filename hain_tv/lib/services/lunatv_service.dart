@@ -480,6 +480,31 @@ class LunaTVService {
     return http.Client();
   }
 
+  /// 搜索/可取消请求专用的独立 HTTP 客户端（由调用方负责关闭）。
+  ///
+  /// 搜索界面需要「取消上一次请求」的能力，因此不能复用共享客户端，
+  /// 但也不能直接用 `http.Client()`：那会绕过电脑端的证书兼容处理
+  /// （badCertificateCallback）与自定义 DNS 偏好，导致自建服务器证书链
+  /// 不完整时握手失败（桌面版表现为搜索报 HandshakeException）。
+  static Future<http.Client> createSearchClient() async {
+    if (DeviceUtils.isComputer) {
+      try {
+        final httpClient = HttpClient()
+          ..badCertificateCallback =
+              (X509Certificate cert, String host, int port) => true;
+        httpClient.idleTimeout = const Duration(seconds: 30);
+        await _applyInternetServerDnsPreference(
+          httpClient,
+          bypassCert: true,
+        );
+        return IOClient(httpClient);
+      } catch (_) {
+        return http.Client();
+      }
+    }
+    return http.Client();
+  }
+
   static Future<String?> _baseUrl() async {
     final last = await UserDataService.getLastSelectedServerUrl();
     if (last != null && last.trim().isNotEmpty) {

@@ -18,13 +18,24 @@ class ConnectionStatusBadge extends StatelessWidget {
       valueListenable: ConnectivityService.instance.isServerConnected,
       builder: (context, connected, child) {
         return ValueListenableBuilder<String>(
-          valueListenable: ConnectivityService.instance.serverType,
-          builder: (context, serverType, child) {
+          valueListenable: ConnectivityService.instance.configuredServerUrl,
+          builder: (context, configuredUrl, child) {
+            return ValueListenableBuilder<String>(
+              valueListenable: ConnectivityService.instance.serverType,
+              builder: (context, serverType, child) {
             final String label;
             final Color bgColor;
             if (!connected) {
-              label = '未连接';
-              bgColor = AppColors.error;
+              // 🔴 2026-10-31：区分「无服务器」与「未连接」。
+              //   · 从未配置服务器 → 「无服务器」（中性灰），属游客态正常形态；
+              //   · 配置了服务器但连不上 → 「未连接」（红），需要用户处理。
+              if (configuredUrl.trim().isEmpty) {
+                label = '无服务器';
+                bgColor = AppColors.neutral;
+              } else {
+                label = '未连接';
+                bgColor = AppColors.error;
+              }
             } else if (serverType == 'lan') {
               label = '局域网已连接';
               bgColor = AppColors.success;
@@ -50,6 +61,8 @@ class ConnectionStatusBadge extends StatelessWidget {
                   color: Colors.white,
                 ),
               ),
+            );
+              },
             );
           },
         );

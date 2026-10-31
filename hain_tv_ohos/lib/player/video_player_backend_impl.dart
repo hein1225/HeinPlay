@@ -337,6 +337,18 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
   DateTime? _seekIssuedAt;
   Duration _seekIssuedFrom = Duration.zero;
 
+  /// 🔴 2026-10-31（第二十四轮）：本次会话**是否真的发过 seek**。
+  ///
+  /// 【为什么需要】seek 三判据原先没有任何「是否发过 seek」的前置条件，
+  ///   而它的第一个判据是「当前 position 与目标的距离 < 2500ms 即视为已到位」。
+  ///   直播流里 AVPlayer **不提供进度语义**（position 恒 -1ms、duration 恒 -1ms），
+  ///   于是 `|-1 - 0| = 1 < 2500` 恒成立 ⇒ 直播每次起播都被判成
+  ///   「seek 已到位」（[AVP-SEEK-OK]），随后判据③又因 position/buffered
+  ///   恒定不动而每 200ms 刷一次 [AVP-SEEK-STUCK]。
+  ///   直播页目前没接 onSeekRebuildRequested ⇒ 只是日志风暴；一旦接上，
+  ///   就会**把直播反复重建**。故加此闸门：没发过 seek ⇒ 整块三判据不参与。
+  bool _avpSeekIssued = false;
+
   // ══════════════════════════════════════════════════════════════════
   // 🔴🔴🔴 2026-10-26（第二十一轮）：**原生 seek 结果三判据**。
   //
@@ -541,6 +553,8 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     //   否则上一会话残留的 _seekIssuedAt 会让新会话刚起播就被误判为 seek 失败。
     _seekIssuedAt = null;
     _seekIssuedFrom = Duration.zero;
+    // 🔴 2026-10-31（第二十四轮）：新会话 ⇒ 本次会话尚未发过任何 seek。
+    _avpSeekIssued = false;
     // 🔴 2026-10-26（第二十一轮）：新会话 ⇒ 清掉 seek 三判据的状态。
     _sfTargetRelMs = 0;
     _sfReachedTarget = false;
@@ -1192,7 +1206,17 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       //   I 帧重解（position 4670 = seek 前的值）。
       //   旧判据只看「当前 position」⇒ 100% 误判为 seek 失败。
       // ══════════════════════════════════════════════════════════════
-      if (_avpMode && !_avpRecoveryFired) {
+      // 🔴 2026-10-31（第二十四轮）：加两道闸门。
+      //   ① _avpSeekIssued：本次会话确实发过 seek 吗？直播流**从不 seek**，
+      //      而直播的 position 恒 -1ms ⇒ 判据①「|position-target| < 2500」
+      //      恒成立 ⇒ 每次起播都被误判「seek 已到位」，随后判据③又恒成立
+      //      ⇒ 每 200ms 刷一次 [AVP-SEEK-STUCK]（真机 17:19:18~17:19:28）。
+      //   ② position >= 0：直播流 AVPlayer 不给进度语义（position 恒 -1ms），
+      //      基于「position 推进」的一切判据对直播都无意义。
+      if (_avpMode &&
+          !_avpRecoveryFired &&
+          _avpSeekIssued &&
+          value.position.inMilliseconds >= 0) {
         final _sfPosMs = value.position.inMilliseconds;
         final _sfBufEndMs = value.buffered.isNotEmpty
             ? value.buffered.last.end.inMilliseconds
@@ -1311,7 +1335,16 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
       }
 
       // 卡顿探测：正在播放但 position 连续 ≥2s 无推进 → 解码/渲染卡死。
-      if (value.isPlaying) {
+      //
+      // 🔴 2026-10-31（第二十四轮）：加 `position >= 0` 闸门。
+      //   直播流 AVPlayer **不返回进度语义**（position 恒 -1ms、duration 恒 -1ms），
+      //   而本判据的前提是「position 在推进」⇒ 对直播 100% 误报
+      //   （真机 17:19:11 起每次换台必打一条 ⚠️ AVP_DECODE_STALL）。
+      //   同理，下方 [AVP-FREEZE-RECOVER] 的「position 与 buffered 同时冻结」
+      //   在直播下也恒成立（position=-1、buffered=0 恒定）⇒ 6 秒后必然上抛
+      //   onUnrecoverableStall **真的重建播放器**，直播会被反复重建。
+      //   故直播一律不走基于 position 推进的判据。
+      if (value.isPlaying && value.position.inMilliseconds >= 0) {
         if (value.position > _lastStallPosition) {
           _lastStallPosition = value.position;
           _lastStallCheck = now;
@@ -1383,6 +1416,7 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
           if (_avpMode && // ⚠️ 仅 avp 后端：mpv/fvp 的冻结语义不同，不在此自愈
               _avpFrozenAt != null &&
               !_avpRecoveryFired &&
+              value.position.inMilliseconds >= 0 && // 🔴 2026-10-31：直播无进度语义
               now.difference(_avpFrozenAt).inMilliseconds >=
                   _avpFreezeRecoverMs.inMilliseconds) {
             _avpRecoveryFired = true;
@@ -1637,6 +1671,9 @@ class VideoPlayerBackendImpl implements VideoPlayerBackend {
     //   供 [positionTimer] 里的「seek 快速失败」判据使用（见字段注释）。
     _seekIssuedAt = t0;
     _seekIssuedFrom = before;
+    // 🔴 2026-10-31（第二十四轮）：标记本次会话确实发过 seek，
+    //   三判据块据此设闸门（直播流 position 恒 -1 ⇒ 没发过 seek 就不参与判定）。
+    _avpSeekIssued = true;
     // 🔴 2026-10-26（第二十一轮）：重置 seek 三判据的状态，并缓存本次目标
     //   （代理相对轴）供进度回调反复比对，避免每次重算。
     _sfTargetRelMs = (position.inMilliseconds - trimOffsetMs).clamp(0, 1 << 30);
