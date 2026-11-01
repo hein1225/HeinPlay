@@ -317,6 +317,28 @@ jobs:
           $destZip = "$distDir\heinplay-$version-windows-portable.zip"
           if (Test-Path $destZip) { Remove-Item $destZip -Force }
 
+          # ---- 桌面 mpv 运行库必须与可执行文件同目录 ----
+          # CI 上 `install(FILES ...)` 规则未把 libmpv-2.dll / 壳 DLL 带进
+          # Release 目录，导致发布包里缺 mpv 内核（桌面默认后端无法播放，
+          # 1.4.0 / 1.4.1 早期 CI 产物均有此问题）。这里显式补齐。
+          $releaseDir = (Resolve-Path $sourceDir).Path
+
+          $mpvCore = Join-Path $releaseDir "libmpv-2.dll"
+          if (-not (Test-Path $mpvCore)) {
+            $src = "third_party\mpv-windows\bin\libmpv-2.dll"
+            if (-not (Test-Path $src)) { throw "缺少 mpv 内核：$src 不存在" }
+            Copy-Item $src $mpvCore -Force
+            Write-Output "已补齐 libmpv-2.dll"
+          }
+
+          $mpvShell = Join-Path $releaseDir "heinplay_mpv_desktop.dll"
+          if (-not (Test-Path $mpvShell)) {
+            $found = Get-ChildItem -Path "build\windows\x64" -Filter "heinplay_mpv_desktop.dll" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $found) { throw "缺少桌面 mpv 壳 DLL：heinplay_mpv_desktop.dll" }
+            Copy-Item $found.FullName $mpvShell -Force
+            Write-Output "已补齐 heinplay_mpv_desktop.dll（来自 $($found.FullName)）"
+          }
+
           # 分发包只收程序产物，排除运行期数据（登录态 / 日志 / 缓存 / 偏好）。
           # 否则解压覆盖时会用打包机的数据顶掉用户数据（症状：每次更新后都要重新登录）。
           $runtimeDataExcludes = @(
@@ -358,6 +380,20 @@ jobs:
           Write-Output "已生成: $destZip"
           if ($excludedRel.Count -gt 0) {
             Write-Output "已排除运行期数据 $($excludedRel.Count) 项（不进入分发包）"
+          }
+
+          # 打包后再校验一遍 zip 内容，确保 mpv 内核与壳都在包里。
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipRead = [System.IO.Compression.ZipFile]::OpenRead($destZip)
+          try {
+            $names = $zipRead.Entries | ForEach-Object { $_.FullName }
+            foreach ($need in @("libmpv-2.dll", "heinplay_mpv_desktop.dll")) {
+              if ($names -notcontains $need) { throw "打包校验失败：缺少 $need" }
+            }
+            Write-Output "打包校验通过：libmpv-2.dll + heinplay_mpv_desktop.dll 均在包内"
+          }
+          finally {
+            $zipRead.Dispose()
           }
 
       - name: Upload Windows artifact
