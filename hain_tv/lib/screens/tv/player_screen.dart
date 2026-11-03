@@ -542,7 +542,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
   ///   否则会与 [_openEpisodeImpl] 形成递归（建后端 → 起播 → 释放后端 → 重建 → …）。
   Future<void> _initBackend({bool autoOpen = true}) async {
     final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+    // 🔴 2026-11-02：「强制 OpenGL ES」必须在**视图创建之前**读到最新值。
+    //
+    //   原生在**构造期**（mpv_initialize 之前）就用它定死渲染路线
+    //   （applyRendererOptions 早于 initialize，晚下发一律无效），
+    //   而视频层 widget 是在首次 build 时才创建的 ⇒ 若此时快照还是旧值，
+    //   用户在设置里打开「强制 OpenGL ES」后**本次播放依旧走旧路线**。
+    //   这里在建后端后、挂载视图前先刷一次快照。
+    try {
+      final dynamic dyn = backend;
+      await dyn.refreshForceOpenGl?.call();
+    } catch (_) {}
     _backend = backend;
+    // 延后挂载视频层 ⇒ 需要主动触发一次重建，让视频层按新快照创建。
+    if (mounted) setState(() {});
     _backend?.fit = _videoFit;
     // 🔴 换后端必须丢弃旧的 eager 视频层缓存，否则会继续渲染已被 dispose 的
     //    上一个后端 widget，画面永远出不来。
@@ -961,6 +974,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final filteredUrl = await AdFilterEngine.filterM3u8(
       sourceType: _currentVideoDetail.source,
       originalUrl: url,
+      backend: _currentPlayerBackend,
       // 🔴 把起播位置告诉探测逻辑：源 PTS 轴错乱的取样点应落在用户真正要看的
       //   那一段附近，而不是播放列表开头。只探测开头会漏判后段才有的错乱。
       probeAtMs: _pendingInitialPositionMs > 0 ? _pendingInitialPositionMs : null,
@@ -1199,6 +1213,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final filteredUrl = await AdFilterEngine.filterM3u8(
         sourceType: _currentVideoDetail.source,
         originalUrl: url,
+        backend: _currentPlayerBackend,
       );
       if (filteredUrl != null && filteredUrl.isNotEmpty) {
         url = filteredUrl;

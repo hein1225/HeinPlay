@@ -380,7 +380,16 @@ class MpvBackend implements VideoPlayerBackend {
       'isLive': isLive,
       'hardwareDecoding': hardwareDecoding,
       'cacheSecs': cacheSecs,
-    });
+      // 🔴 2026-11-02：原生 open 是「loadfile」，正常在百毫秒级回包。
+      //   这里加一道超时兜底：**宁可播放失败，也不要整台设备卡死**。
+      //   （TV 版 mpv 起播卡死排查结论：UI isolate 被占满 ⇒ 原生收不到 open，
+      //    表现为整机 ANR。现在若回包超时，直接抛错让播放页提示失败。）
+    }).timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => throw TimeoutException(
+        'mpv open 超时（20s 未收到原生回包）',
+      ),
+    );
 
     // 🔴 open 之后重新下发当前缩放模式。原生 setFit 改的是 mpv 运行期属性
     //    （keepaspect/panscan），而每次 open 都可能是新实例或属性被重置，

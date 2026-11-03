@@ -556,7 +556,15 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
   ///   否则会与 [_openEpisodeImpl] 形成递归（建后端 → 起播 → 释放后端 → 重建 → …）。
   Future<void> _initBackend({bool autoOpen = true}) async {
     final backend = PlayerBackendFactory.create(_currentPlayerBackend);
+    // 🔴 2026-11-02：「强制 OpenGL ES」必须在**视图创建之前**读到最新值
+    //   （原生在构造期就据此定死渲染路线，晚下发无效）。详见 TV 版同名注释。
+    try {
+      final dynamic dyn = backend;
+      await dyn.refreshForceOpenGl?.call();
+    } catch (_) {}
     _backend = backend;
+    // 延后挂载视频层 ⇒ 需要主动触发一次重建，让视频层按新快照创建。
+    if (mounted) setState(() {});
     // 🔴 换后端必须丢弃旧的 eager 视频层缓存，否则会继续渲染上一个后端的
     //    widget（其 PlatformView 已被 dispose），画面永远出不来。
     _eagerVideoLayer = null;
@@ -996,6 +1004,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
     final filteredUrl = await AdFilterEngine.filterM3u8(
       sourceType: _currentVideoDetail.source,
       originalUrl: url,
+      backend: _currentPlayerBackend,
     );
     if (filteredUrl != null && filteredUrl.isNotEmpty) {
       url = filteredUrl;
@@ -1215,6 +1224,7 @@ class _MobilePlayerScreenState extends State<MobilePlayerScreen> {
       final filteredUrl = await AdFilterEngine.filterM3u8(
         sourceType: _currentVideoDetail.source,
         originalUrl: url,
+        backend: _currentPlayerBackend,
       );
       if (filteredUrl != null && filteredUrl.isNotEmpty) {
         url = filteredUrl;

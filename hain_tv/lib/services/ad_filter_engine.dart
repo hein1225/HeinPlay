@@ -36,6 +36,19 @@ class AdFilterEngine {
     required String originalUrl,
     Map<String, String> headers = const {},
     bool? ptsNormalize,
+    /// 🔴 2026-11-02：**本次实际生效的播放后端**（点播页按视频选出的那个）。
+    ///
+    /// 为什么必须传：此引擎原先一律读**全局默认后端**
+    ///（`UserDataService.getPlayerBackend()`）判定 primeHead / PTS 归一化 /
+    /// discontinuity 清理 / 分段重编号，而实际播放用的是**按视频保存的后端**
+    ///（`getPlayerBackendForVideo`）。两者不一致时（例：全局默认 exo，但某剧
+    /// 在详情页被切到 mpv），整条过滤链会按 exo 的规则跑，而播放器却是 mpv
+    /// ⇒ 起播预热头部段不提前备、PTS 不归一化、discontinuity 不清理、
+    /// 分段不重编号，与 legacy / 手机版行为完全不一致（TV 版 mpv 起播卡死
+    /// 排查中的关键差异之一）。
+    ///
+    /// 传 null 时回退到全局默认（保持旧行为）。
+    PlayerBackendType? backend,
     /// 起播位置（ms）。用于把「源 PTS 轴探测」的取样点放在**用户实际要看
     /// 的那一段附近**，而不是播放列表开头。
     ///
@@ -50,7 +63,7 @@ class AdFilterEngine {
     // 去广告后残留的孤立 EXT-X-DISCONTINUITY 会让 fvp/libmpv 重置时间轴、从头重播，
     // 仅特定后端需要清理 discontinuity；ExoPlayer(安卓/TV 默认) 依赖 discontinuity 避免
     // UnexpectedDiscontinuityException，必须保留。按"实际生效的后端"判定，而非仅 Windows。
-    final selBackend = await UserDataService.getPlayerBackend();
+    final selBackend = backend ?? await UserDataService.getPlayerBackend();
     final effectiveBackend =
         PlayerBackendFactory.availableBackends.contains(selBackend)
             ? selBackend

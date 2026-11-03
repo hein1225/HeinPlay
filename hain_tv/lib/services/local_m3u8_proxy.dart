@@ -9,6 +9,7 @@ import 'package:pointycastle/block/aes_fast.dart';
 import 'package:pointycastle/block/modes/cbc.dart';
 
 import 'm3u8_ad_filter.dart';
+import 'prime_downloader.dart';
 import 'ts_pts_normalizer.dart';
 import 'hls_prefetch_window.dart';
 import '../utils/windows_logger.dart';
@@ -192,6 +193,25 @@ class LocalM3u8Proxy {
   final Set<String> _primePriority = <String>{};
   final Set<String> _primeQueued = {};
   int _primeWorkers = 0;
+
+  /// 🔴 2026-11-02：预热 worker 的**启动**是否已经排到事件循环后面。
+  ///
+  /// 【为什么延后启动】
+  ///   `primePrefetchAt()` 是由 mpv 后端在 `open()` **之前**调用的；若在它
+  ///   里面同步把 worker 拉起来，worker 的启动开销（+ 早期版本的下载开销）
+  ///   就挡在「把 open 命令发给原生」之前。TV 版 mpv 起播卡死的直接症状正是
+  ///   **native `open url=` 从未下发**（代理端口零连接、mpv 无 vo/vd 线程）。
+  ///   ⇒ 改成：入队照旧，**启动延后一个事件循环回合**，让 open 先出去。
+  bool _primePumpScheduled = false;
+
+  /// 🔴 2026-11-02：预热的**总时限**（毫秒）。
+  ///
+  ///   预热是「锦上添花」，绝不能无限期占用带宽与内存；超时后直接清队列，
+  ///   播放器照常回源播放（宁可不预热，也不要拖累播放）。
+  static const int _kPrimeDeadlineMs = 30000;
+
+  /// 本轮预热的起始时刻（毫秒，null = 未开始）。
+  int? _primeStartedAtMs;
 
   int _prefetchTotalBytes = 0;
   int _prefetchFailCount = 0;
@@ -2016,6 +2036,8 @@ class LocalM3u8Proxy {
     _primePriority.clear();
     _primeBytes = 0;
     _primeRequested = false;
+    _primeStartedAtMs = null;
+    _primePumpScheduled = false;
     _prefetchFailCount = 0;
     _prefetchRunning = false;
     _segmentUrls = const [];
@@ -2154,7 +2176,9 @@ class LocalM3u8Proxy {
     for (var i = idx + 1; i <= idx + _kPrimeDepth; i++) {
       _enqueuePrimeIndex(i);
     }
-    _pumpPrimeWorkers();
+    // 🔴 2026-11-02：启动**延后**一个事件循环回合（见 [_primePumpScheduled]），
+    //   保证「把 open 命令发给原生」不被预热挡在前面。
+    _schedulePrimePump();
   }
 
   /// 🔴 2026-10-29：预热「建索引头部段」（0.._kIndexHeadSegments-1）。
@@ -2175,7 +2199,22 @@ class LocalM3u8Proxy {
     for (var i = 0; i < _kIndexHeadSegments; i++) {
       _enqueuePrimeIndex(i);
     }
-    _pumpPrimeWorkers();
+    // 🔴 2026-11-02：同样延后启动，避免预热挡在 native open 之前。
+    _schedulePrimePump();
+  }
+
+  /// 🔴 2026-11-02：把「启动预热 worker」排到**下一个事件循环回合**。
+  ///
+  /// 目的：让调用方（mpv 后端的 `open()`）先把 native 命令发出去。
+  /// 在 Android 上 Dart UI isolate 与 platform 线程同线程，只要 UI isolate
+  /// 还在忙，原生就拿不到 `open`（TV 版 mpv 起播卡死的直接症状）。
+  void _schedulePrimePump() {
+    if (_primePumpScheduled) return;
+    _primePumpScheduled = true;
+    scheduleMicrotask(() {
+      _primePumpScheduled = false;
+      _pumpPrimeWorkers();
+    });
   }
 
   /// 把指定下标的分片加入预热队列（去重）。
@@ -2207,6 +2246,19 @@ class LocalM3u8Proxy {
 
   /// 启动预热 worker（最多 [_kPrefetchConcurrency] 路并发）。
   void _pumpPrimeWorkers() {
+    if (_closing) return;
+    // 🔴 2026-11-02：预热总时限（见 [_kPrimeDeadlineMs]）——超时直接收手，
+    //   播放器照常回源（预热只是加速，不是播放的前提）。
+    final started = _primeStartedAtMs;
+    if (started != null &&
+        DateTime.now().millisecondsSinceEpoch - started > _kPrimeDeadlineMs) {
+      if (_primeQueue.isNotEmpty) {
+        _log('Prime: 超过 ${_kPrimeDeadlineMs ~/ 1000}s 预热时限，放弃剩余队列');
+        _primeQueue.clear();
+      }
+      return;
+    }
+    _primeStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
     // 关键路径项在队时，多放 [_kPrimePriorityBonus] 路 worker 出去，
     // 让它立刻与已在途的建索引段**并行**下载，而不是排队等它们腾位置。
     final limit = _kPrefetchConcurrency +
@@ -2243,7 +2295,7 @@ class LocalM3u8Proxy {
     } finally {
       _primeWorkers--;
       // 队列里可能还有新项（seek 又来了）⇒ 补拉 worker。
-      if (_primeQueue.isNotEmpty) _pumpPrimeWorkers();
+      if (_primeQueue.isNotEmpty) _schedulePrimePump();
     }
   }
 
@@ -2274,8 +2326,24 @@ class LocalM3u8Proxy {
 
   /// 回源下载单个分片的原始字节（失败返回 null）。
   Future<Uint8List?> _downloadSegmentBytes(String cdnUrl) async {
+    final headers = _segmentRequestHeaders(cdnUrl);
+    // 🔴 2026-11-02：优先走**后台 isolate** 下载（见 [PrimeDownloader]）。
+    //   UI isolate（= Android 主线程）绝不能再碰 socket / gzip 解压 / 字节搬运，
+    //   否则会把「open（loadfile）」的原生通道堵死 ⇒ TV 版 mpv 起播卡死。
     try {
-      final headers = _segmentRequestHeaders(cdnUrl);
+      final bytes = await PrimeDownloader.instance.download(cdnUrl, headers);
+      if (bytes == null) {
+        _log('Prime: 预热失败（后台 isolate） $cdnUrl');
+      }
+      return bytes;
+    } on PrimeDownloaderUnavailable catch (e) {
+      // isolate 不可用 ⇒ 回落旧路径（同 isolate 下载），宁可慢也不能不播。
+      _log('Prime: 后台下载不可用，回落同 isolate 下载（$e）');
+    } catch (e) {
+      _log('Prime: 后台下载异常 $cdnUrl: $e');
+      return null;
+    }
+    try {
       final client = _client ?? http.Client();
       final resp = await client
           .get(Uri.parse(cdnUrl), headers: headers)

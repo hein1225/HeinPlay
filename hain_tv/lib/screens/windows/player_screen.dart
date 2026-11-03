@@ -904,6 +904,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
     final filteredUrl = await AdFilterEngine.filterM3u8(
       sourceType: _currentVideoDetail.source,
       originalUrl: url,
+      backend: _currentPlayerBackend,
     );
     if (filteredUrl != null && filteredUrl.isNotEmpty) {
       url = filteredUrl;
@@ -1142,6 +1143,7 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
       final filteredUrl = await AdFilterEngine.filterM3u8(
         sourceType: _currentVideoDetail.source,
         originalUrl: url,
+        backend: _currentPlayerBackend,
       );
       if (filteredUrl != null && filteredUrl.isNotEmpty) {
         url = filteredUrl;
